@@ -82,6 +82,7 @@ type
     FStatusMessage: string;
     FIsFullScreen: Boolean;
     FSavedBounds: TRect;
+    FSavedWindowState: TWindowState;
     FWasSidePanelVisible: Boolean;
     FSmokeLog: TStringList;
     FHasSmokeFailure: Boolean;
@@ -245,7 +246,8 @@ procedure TMainForm.FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftSta
 begin
   if Key = VK_F4 then
   begin
-    SetSidePanelVisible(not pnlSide.Visible);
+    if not FIsFullScreen then
+      SetSidePanelVisible(not pnlSide.Visible);
     Key := 0;
     Exit;
   end;
@@ -714,6 +716,7 @@ begin
       FFormula.SetParam(Index, Value);
       RenderCurrent;
     end;
+    FStatusMessage := '';
   end
   else
     FStatusMessage := Format('Valeur invalide pour « %s ».', [FFormula.ParamInfo(Index).Caption]);
@@ -744,11 +747,14 @@ procedure TMainForm.ApplyMaxIterEdit;
 var
   Value: Integer;
 begin
-  if TryStrToInt(edMaxIter.Text, Value) and (Value <> FFormula.MaxIter) then
+  if TryStrToInt(edMaxIter.Text, Value) then
   begin
-    FFormula.MaxIter := Value;
     FIsAutoIter := False;
-    RenderCurrent;
+    if Value <> FFormula.MaxIter then
+    begin
+      FFormula.MaxIter := Value;
+      RenderCurrent;
+    end;
   end;
   UpdateMaxIterControls;
 end;
@@ -785,6 +791,8 @@ end;
 
 procedure TMainForm.TogglePanelClick(Sender: TObject);
 begin
+  if FIsFullScreen then
+    Exit;
   SetSidePanelVisible(not pnlSide.Visible);
 end;
 
@@ -816,6 +824,8 @@ begin
   FIsFullScreen := not FIsFullScreen;
   if FIsFullScreen then
   begin
+    FSavedWindowState := WindowState;
+    WindowState := wsNormal;
     FSavedBounds := BoundsRect;
     FWasSidePanelVisible := pnlSide.Visible;
     pnlTop.Visible := False;
@@ -829,6 +839,7 @@ begin
   begin
     BorderStyle := bsSizeable;
     BoundsRect := FSavedBounds;
+    WindowState := FSavedWindowState;
     pnlTop.Visible := True;
     sbStatus.Visible := True;
     pnlCollapse.Visible := True;
