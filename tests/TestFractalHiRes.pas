@@ -14,6 +14,7 @@ type
   published
     procedure TestSmallRenderMatchesDirectColors;
     procedure TestSupersampledRenderHasRequestedSize;
+    procedure TestSupersampleAveragesAcrossBands;
     procedure TestCancelDeletesFile;
     procedure TestInvalidPathReportsError;
     procedure TestEstimateRejectsHugeRender;
@@ -122,6 +123,73 @@ begin
     CheckEquals(50, Png.Height);
   finally
     Png.Free;
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestHiRes.TestSupersampleAveragesAcrossBands;
+const
+  kPixelX = 5;
+  kPixelY = 20;
+  kSS = 2;
+  kBand = 16;
+var
+  FileName: string;
+  V, Band: TViewport;
+  F: TMandelbrotFormula;
+  P: TGradientPalette;
+  Check: TColorMapper;
+  R: THiResRenderer;
+  Png: TPngImage;
+  C: TComplexPoint;
+  SX, SY, Sum, Expected: Integer;
+  Channel: Cardinal;
+  Shift: Integer;
+  Color: Cardinal;
+  Sums: array[0..2] of Integer;
+begin
+  FileName := TestTempFolder + 'hires-bands.png';
+  V := MakeViewport(-0.5, 0, 3, 40, 40);
+  F := TMandelbrotFormula.Create;
+  P := CreateBuiltInPalette(0);
+  Check := TColorMapper.Create(P, DefaultColorMapping);
+  Png := TPngImage.Create;
+  try
+    F.MaxIter := 200;
+    R := RunRenderer(MakeSettings(40, 40, kSS, FileName), V, F);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    Png.LoadFromFile(FileName);
+    Band := V.SubViewport(kSS, kBand, kBand);
+    FillChar(Sums, SizeOf(Sums), 0);
+    for SY := 0 to kSS - 1 do
+      for SX := 0 to kSS - 1 do
+      begin
+        C := Band.PixelToComplex(kPixelX * kSS + SX, (kPixelY - kBand) * kSS + SY);
+        Color := Check.MapValue(F.Iterate(C.X, C.Y));
+        Inc(Sums[0], (Color shr 16) and $FF);
+        Inc(Sums[1], (Color shr 8) and $FF);
+        Inc(Sums[2], Color and $FF);
+      end;
+    Expected := 0;
+    for SX := 0 to 2 do
+    begin
+      Shift := (2 - SX) * 8;  // R, G, B
+      Channel := Cardinal((Sums[SX] + (kSS * kSS) div 2) div (kSS * kSS));
+      Expected := Expected or Integer(Channel shl Shift);
+    end;
+    Sum := Integer(SwapRedBlue(Cardinal(Expected)));
+    CheckEquals(Sum, Integer(Png.Pixels[kPixelX, kPixelY]));
+  finally
+    Png.Free;
+    Check.Free;
+    P.Free;
     F.Free;
   end;
 end;

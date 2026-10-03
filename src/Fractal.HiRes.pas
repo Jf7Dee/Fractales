@@ -51,13 +51,24 @@ implementation
 const
   kWaitSliceMs = 100;
   kBytesPerSample = 5;  // Single + niveau
+  kMinSupersample = 1;
+  kMaxSupersample = 3;
+
+{------------------------------------------------------------------------------}
+
+function ClampSupersample(Value: Integer): Integer;
+begin
+  Result := EnsureRange(Value, kMinSupersample, kMaxSupersample);
+end;
 
 {------------------------------------------------------------------------------}
 
 function EstimateHiResBytes(const Settings: THiResSettings): Int64;
+var
+  SS: Integer;
 begin
-  Result := Int64(Settings.Width) * Settings.Supersample * kHiResBandRows * Settings.Supersample * kBytesPerSample
-    + Int64(Settings.Width) * 3;
+  SS := ClampSupersample(Settings.Supersample);
+  Result := Int64(Settings.Width) * SS * kHiResBandRows * SS * kBytesPerSample + Int64(Settings.Width) * 3;
 end;
 
 {------------------------------------------------------------------------------}
@@ -65,11 +76,11 @@ end;
 constructor THiResRenderer.Create(const ASettings: THiResSettings; const AViewport: TViewport;
   AFormula: TFractalFormula; AMapper: TColorMapper; const ALocationText: RawByteString);
 begin
+  FMapper := AMapper;  // en premier : possession toujours transférée, libérée par Destroy même si Clone échoue
   FSettings := ASettings;
-  FSettings.Supersample := EnsureRange(FSettings.Supersample, 1, 3);
+  FSettings.Supersample := ClampSupersample(FSettings.Supersample);
   FViewport := AViewport.Resized(ASettings.Width, ASettings.Height);
   FFormula := AFormula.Clone;
-  FMapper := AMapper;
   FLocationText := ALocationText;
   inherited Create(False);
 end;
