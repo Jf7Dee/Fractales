@@ -23,6 +23,8 @@ type
     FIsAutoIter: Boolean;
     FMapping: TColorMapping;
     FPalette: TGradientPalette;
+    function DoCreateFormula: TFractalFormula;
+    procedure DoLoadFromText(const AText: string);
   public
     constructor Create;
     destructor Destroy; override;
@@ -76,6 +78,24 @@ const
   kInvalidFileChars = '\/:*?"<>|';
   kUnnamed = 'Sans nom';
   kNoLocationMessage = 'Ce fichier ne contient pas de lieu fractal.';
+
+{------------------------------------------------------------------------------}
+
+// Comme InvariantToFloat, mais refuse ce qui déborde d'un Double (ex. 1e400) : la valeur par défaut est rendue.
+function InvariantToDouble(const S: string; Default: Double): Double;
+var
+  E: TFloat;
+begin
+  Result := Default;
+  try
+    E := InvariantToFloat(S, Default);
+    if (E <= MaxDouble) and (E >= -MaxDouble) then
+      Result := E;
+  except
+    on EMathError do
+      Result := Default;  // le texte déborde même d'un Extended
+  end;
+end;
 
 {------------------------------------------------------------------------------}
 
@@ -135,6 +155,34 @@ end;
 {------------------------------------------------------------------------------}
 
 function TFractalLocation.CreateFormula: TFractalFormula;
+begin
+  try
+    Result := DoCreateFormula;
+  except
+    on E: EFractalFileError do
+      raise;
+    on E: Exception do
+      raise EFractalFileError.CreateFmt('Lieu invalide : %s', [E.Message]);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFractalLocation.LoadFromText(const AText: string);
+begin
+  try
+    DoLoadFromText(AText);
+  except
+    on E: EFractalFileError do
+      raise;
+    on E: Exception do
+      raise EFractalFileError.CreateFmt('Lieu invalide : %s', [E.Message]);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFractalLocation.DoCreateFormula: TFractalFormula;
 var
   FormulaClass: TFractalFormulaClass;
   I, Index: Integer;
@@ -149,7 +197,7 @@ begin
     begin
       Index := Result.IndexOfParam(FParams.Names[I]);
       if Index >= 0 then
-        Result.SetParam(Index, InvariantToFloat(FParams.ValueFromIndex[I], Result.GetParam(Index)));
+        Result.SetParam(Index, InvariantToDouble(FParams.ValueFromIndex[I], Result.GetParam(Index)));
     end;
   except
     Result.Free;
@@ -205,7 +253,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TFractalLocation.LoadFromText(const AText: string);
+procedure TFractalLocation.DoLoadFromText(const AText: string);
 var
   Ini: TMemIniFile;
   Lines: TStringList;
@@ -236,9 +284,9 @@ begin
     Ini.ReadSectionValues(kSectionParams, FParams);
 
     FMapping := DefaultColorMapping;
-    FMapping.Offset := InvariantToFloat(Ini.ReadString(kSectionColors, 'Offset', ''), FMapping.Offset);
-    FMapping.Repeats := InvariantToFloat(Ini.ReadString(kSectionColors, 'Repeats', ''), FMapping.Repeats);
-    FMapping.Stretch := InvariantToFloat(Ini.ReadString(kSectionColors, 'Stretch', ''), FMapping.Stretch);
+    FMapping.Offset := InvariantToDouble(Ini.ReadString(kSectionColors, 'Offset', ''), FMapping.Offset);
+    FMapping.Repeats := InvariantToDouble(Ini.ReadString(kSectionColors, 'Repeats', ''), FMapping.Repeats);
+    FMapping.Stretch := InvariantToDouble(Ini.ReadString(kSectionColors, 'Stretch', ''), FMapping.Stretch);
     FMapping.IsInverted := Ini.ReadBool(kSectionColors, 'Invert', False);
     FMapping := ClampColorMapping(FMapping);
 
@@ -262,12 +310,19 @@ procedure TFractalLocation.SaveToFile(const FileName: string);
 var
   L: TStringList;
 begin
-  L := TStringList.Create;
   try
-    L.Text := SaveToText;
-    L.SaveToFile(FileName, TEncoding.UTF8);
-  finally
-    L.Free;
+    L := TStringList.Create;
+    try
+      L.Text := SaveToText;
+      L.SaveToFile(FileName, TEncoding.UTF8);
+    finally
+      L.Free;
+    end;
+  except
+    on E: EFractalFileError do
+      raise;
+    on E: Exception do
+      raise EFractalFileError.CreateFmt('Enregistrement impossible (%s) : %s', [ExtractFileName(FileName), E.Message]);
   end;
 end;
 

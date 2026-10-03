@@ -22,6 +22,9 @@ type
     procedure TestNumbersAreInvariant;
     procedure TestFavoriteStore;
     procedure TestSanitizeFileName;
+    procedure TestSaveToMissingFolderRaisesFileError;
+    procedure TestHugeParamUsesDefault;
+    procedure TestHugeRepeatsUsesDefault;
   end;
 
 implementation
@@ -278,6 +281,64 @@ procedure TTestPersistence.TestSanitizeFileName;
 begin
   CheckEquals('a_b_c_d_e_f_g_h_i_j', SanitizeFileName('a/b\c:d*e?f"g<h>i|j'));
   CheckEquals('Sans nom', SanitizeFileName('   '));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestSaveToMissingFolderRaisesFileError;
+var
+  A: TFractalLocation;
+  IsRaised: Boolean;
+begin
+  A := SampleLocation;
+  try
+    IsRaised := False;
+    try
+      A.SaveToFile(TestTempFolder + 'absent\sous\x.frac');
+    except
+      on EFractalFileError do
+        IsRaised := True;
+    end;
+    CheckTrue(IsRaised);
+  finally
+    A.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestHugeParamUsesDefault;
+var
+  L: TFractalLocation;
+  F: TFractalFormula;
+begin
+  L := TFractalLocation.Create;
+  try
+    L.LoadFromText('[Fractal]'#13#10'Formula=Multibrot'#13#10'[Params]'#13#10'power=1e400');
+    F := L.CreateFormula;
+    try
+      CheckEquals(3, F.GetParam(0), 1e-12);
+    finally
+      F.Free;
+    end;
+  finally
+    L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestHugeRepeatsUsesDefault;
+var
+  L: TFractalLocation;
+begin
+  L := TFractalLocation.Create;
+  try
+    L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'[Colors]'#13#10'Repeats=1e400');
+    CheckEquals(DefaultColorMapping.Repeats, L.Mapping.Repeats, 0);
+  finally
+    L.Free;
+  end;
 end;
 
 initialization
