@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
-  Fractal.Persistence, Fractal.View;
+  Fractal.Persistence, Fractal.Png, Fractal.View;
 
 const
   kJuliaPreviewWidth = 240;
@@ -20,6 +20,9 @@ const
   kParamLabelWidth = 120;
   kParamEditLeft = 130;
   kParamEditWidth = 120;
+  kExportWaitMs = 60000;
+  kFracFilter = 'Lieu fractal (*.frac)|*.frac';
+  kPngFilter = 'Image PNG (*.png)|*.png';
   kMinCoordDigits = 3;
   kMaxCoordDigits = 18;
 
@@ -85,6 +88,7 @@ type
     FSavedWindowState: TWindowState;
     FWasSidePanelVisible: Boolean;
     FPalettes: TObjectList;
+    FFavorites: TFavoriteStore;
     FSmokeLog: TStringList;
     FHasSmokeFailure: Boolean;
     procedure InitNavigation;
@@ -131,6 +135,18 @@ type
     procedure UpdateColorControls;
     procedure EditPaletteClick(Sender: TObject);
     procedure PaletteEditorChange(Sender: TObject);
+    procedure InitFilePanel;
+    function CaptureLocation: TFractalLocation;
+    procedure ApplyLocation(Location: TFractalLocation);
+    function LocationAsPngText(Location: TFractalLocation): RawByteString;
+    procedure OpenClick(Sender: TObject);
+    procedure SaveClick(Sender: TObject);
+    procedure ExportPngClick(Sender: TObject);
+    procedure ExportViewPng(const FileName: string);
+    procedure AddFavoriteClick(Sender: TObject);
+    procedure FavoritesDblClick(Sender: TObject);
+    procedure FavoritesKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure RefreshFavorites;
     procedure CheckSmokeStep(const StepName: string);
     procedure SmokeException(Sender: TObject; E: Exception);
   public
@@ -208,6 +224,7 @@ begin
   InitNavigation;
   InitFormulaPanel;
   InitColorPanel;
+  InitFilePanel;
   FView.OnResize := ViewResize;
 
   FNavigator.Reset(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth,
@@ -230,6 +247,7 @@ begin
   FreeAndNil(FMapper);
   FreeAndNil(FPalette);
   FreeAndNil(FPalettes);
+  FreeAndNil(FFavorites);
   FreeAndNil(FJuliaFormula);
   FreeAndNil(FFormula);
 end;
@@ -573,6 +591,8 @@ end;
 function TMainForm.RunSmokeTest(const OutputFile: string): Integer;
 var
   Dlg: TPaletteEditorForm;
+  Text: RawByteString;
+  Location: TFractalLocation;
 begin
   Result := 1;
   FSmokeLog := TStringList.Create;
@@ -625,6 +645,22 @@ begin
         Dlg.Free;
       end;
       FSmokeLog.Add('Éditeur de palette OK');
+      ExportViewPng(OutputFile);
+      if not ReadPngText(OutputFile, kLocationKeyword, Text) then
+        raise Exception.Create('lieu absent du PNG exporté');
+      Location := TFractalLocation.Create;
+      try
+        Location.LoadFromText(UTF8ToString(Text));
+        if Location.FormulaName <> FFormula.FormulaName then
+          raise Exception.Create('lieu du PNG incohérent');
+        ApplyLocation(Location);
+      finally
+        Location.Free;
+      end;
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu après réouverture non terminé');
+      CheckSmokeStep('réouverture');
+      FSmokeLog.Add('Export PNG et réouverture OK');
       if not FHasSmokeFailure then
         Result := 0;
     except
@@ -1019,6 +1055,284 @@ procedure TMainForm.PaletteEditorChange(Sender: TObject);
 begin
   FPalette.Assign(TPaletteEditorForm(Sender).Palette);
   ColorsChanged;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.InitFilePanel;
+begin
+  FFavorites := TFavoriteStore.Create(FavoritesFolder);
+  btnOpen.OnClick := OpenClick;
+  btnSave.OnClick := SaveClick;
+  btnExportPng.OnClick := ExportPngClick;
+  btnAddFavorite.OnClick := AddFavoriteClick;
+  lbFavorites.OnDblClick := FavoritesDblClick;
+  lbFavorites.OnKeyDown := FavoritesKeyDown;
+  RefreshFavorites;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMainForm.CaptureLocation: TFractalLocation;
+begin
+  Result := TFractalLocation.Create;
+  Result.CaptureFrom(FFormula, FNavigator.Viewport, FIsAutoIter, FPalette, FMapping);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ApplyLocation(Location: TFractalLocation);
+var
+  V: TViewport;
+  Formula: TFractalFormula;
+begin
+  Formula := Location.CreateFormula;
+  FIsAutoIter := Location.IsAutoIter;
+  FPalette.Assign(Location.Palette);
+  FMapping := Location.Mapping;
+  cbPalette.ItemIndex := -1;
+  UpdateColorControls;
+  ColorsChanged;
+  SetFormula(Formula, False);
+  V := FNavigator.Viewport;
+  Location.ApplyTo(V);
+  FNavigator.Reset(V);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMainForm.LocationAsPngText(Location: TFractalLocation): RawByteString;
+begin
+  Result := UTF8Encode(Location.SaveToText);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.OpenClick(Sender: TObject);
+var
+  Dlg: TOpenDialog;
+  Location: TFractalLocation;
+  Text: RawByteString;
+begin
+  Dlg := TOpenDialog.Create(nil);
+  Location := TFractalLocation.Create;
+  try
+    Dlg.Filter := 'Lieux et images (*.frac;*.png)|*.frac;*.png|' + kFracFilter + '|' + kPngFilter;
+    Dlg.Options := Dlg.Options + [ofFileMustExist];
+    if not Dlg.Execute then
+      Exit;
+    try
+      if SameText(ExtractFileExt(Dlg.FileName), '.png') then
+      begin
+        if not ReadPngText(Dlg.FileName, kLocationKeyword, Text) then
+        begin
+          MessageDlg('Ce PNG ne contient pas de lieu fractal : il ne peut pas être rouvert dans l''application.',
+            mtInformation, [mbOK], 0);
+          Exit;
+        end;
+        Location.LoadFromText(UTF8ToString(Text));
+      end
+      else
+        Location.LoadFromFile(Dlg.FileName);
+      ApplyLocation(Location);
+    except
+      on E: EFractalFileError do
+        MessageDlg(E.Message, mtError, [mbOK], 0);
+    end;
+  finally
+    Location.Free;
+    Dlg.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.SaveClick(Sender: TObject);
+var
+  Dlg: TSaveDialog;
+  Location: TFractalLocation;
+begin
+  Dlg := TSaveDialog.Create(nil);
+  Location := CaptureLocation;
+  try
+    Dlg.Filter := kFracFilter;
+    Dlg.DefaultExt := 'frac';
+    Dlg.Options := Dlg.Options + [ofOverwritePrompt];
+    if not Dlg.Execute then
+      Exit;
+    try
+      Location.SaveToFile(Dlg.FileName);
+    except
+      on E: Exception do
+        MessageDlg(E.Message, mtError, [mbOK], 0);
+    end;
+  finally
+    Location.Free;
+    Dlg.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ExportPngClick(Sender: TObject);
+var
+  Dlg: TSaveDialog;
+begin
+  Dlg := TSaveDialog.Create(nil);
+  try
+    Dlg.Filter := kPngFilter;
+    Dlg.DefaultExt := 'png';
+    Dlg.Options := Dlg.Options + [ofOverwritePrompt];
+    if not Dlg.Execute then
+      Exit;
+    try
+      ExportViewPng(Dlg.FileName);
+    except
+      on E: Exception do
+        MessageDlg('Export impossible : ' + E.Message, mtError, [mbOK], 0);
+    end;
+  finally
+    Dlg.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ExportViewPng(const FileName: string);
+var
+  Stream: TFileStream;
+  Writer: TPngWriter;
+  Location: TFractalLocation;
+  Row: array of Byte;
+  X, Y: Integer;
+  Src: PCardinal;
+  Bmp: TBitmap;
+  IsFileCreated: Boolean;
+begin
+  Screen.Cursor := crHourGlass;
+  try
+    WaitForRender(kExportWaitMs);
+    ColorizeBuffer(FEngine, FView.Bitmap);
+  finally
+    Screen.Cursor := crDefault;
+  end;
+  Bmp := FView.Bitmap;
+  SetLength(Row, Bmp.Width * 3);
+  IsFileCreated := False;
+  Location := CaptureLocation;
+  try
+    try
+      Stream := TFileStream.Create(FileName, fmCreate);
+      IsFileCreated := True;
+      try
+        Writer := TPngWriter.Create(Stream, Bmp.Width, Bmp.Height);
+        try
+          Writer.AddText(kLocationKeyword, LocationAsPngText(Location));
+          for Y := 0 to Bmp.Height - 1 do
+          begin
+            Src := Bmp.ScanLine[Y];
+            for X := 0 to Bmp.Width - 1 do
+            begin
+              Row[X * 3] := (Src^ shr 16) and $FF;
+              Row[X * 3 + 1] := (Src^ shr 8) and $FF;
+              Row[X * 3 + 2] := Src^ and $FF;
+              Inc(Src);
+            end;
+            Writer.WriteRow(@Row[0]);
+          end;
+          Writer.Finish;
+        finally
+          Writer.Free;
+        end;
+      finally
+        Stream.Free;
+      end;
+    except
+      if IsFileCreated then
+        SysUtils.DeleteFile(FileName);
+      raise;
+    end;
+  finally
+    Location.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.RefreshFavorites;
+begin
+  FFavorites.List(lbFavorites.Items);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.AddFavoriteClick(Sender: TObject);
+var
+  Name, Stored: string;
+  Location: TFractalLocation;
+begin
+  Name := '';
+  if not InputQuery('Ajouter aux favoris', 'Nom du favori :', Name) or (Trim(Name) = '') then
+    Exit;
+  if FileExists(FFavorites.FileNameOf(Name))
+    and (MessageDlg(Format('Le favori « %s » existe déjà. Le remplacer ?', [SanitizeFileName(Name)]),
+      mtConfirmation, [mbYes, mbNo], 0) <> mrYes) then
+    Exit;
+  Location := CaptureLocation;
+  try
+    try
+      Stored := FFavorites.Save(Name, Location);
+    except
+      on E: Exception do
+      begin
+        MessageDlg(E.Message, mtError, [mbOK], 0);
+        Exit;
+      end;
+    end;
+  finally
+    Location.Free;
+  end;
+  RefreshFavorites;
+  lbFavorites.ItemIndex := lbFavorites.Items.IndexOf(Stored);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.FavoritesDblClick(Sender: TObject);
+var
+  Location: TFractalLocation;
+begin
+  if lbFavorites.ItemIndex < 0 then
+    Exit;
+  Location := TFractalLocation.Create;
+  try
+    try
+      FFavorites.Load(lbFavorites.Items[lbFavorites.ItemIndex], Location);
+      ApplyLocation(Location);
+    except
+      on E: EFractalFileError do
+        MessageDlg(E.Message, mtError, [mbOK], 0);
+    end;
+  finally
+    Location.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.FavoritesKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+var
+  Name: string;
+begin
+  if (Key <> VK_DELETE) or (lbFavorites.ItemIndex < 0) then
+    Exit;
+  Name := lbFavorites.Items[lbFavorites.ItemIndex];
+  if MessageDlg(Format('Supprimer le favori « %s » ?', [Name]), mtConfirmation, [mbYes, mbNo], 0) = mrYes then
+  begin
+    FFavorites.Delete(Name);
+    RefreshFavorites;
+  end;
+  Key := 0;
 end;
 
 end.
