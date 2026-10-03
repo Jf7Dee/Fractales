@@ -6,16 +6,16 @@ uses
   Windows, Math, Fractal.Types;
 
 type
-  TSingleArray = array of Single;
-  TByteArray = array of Byte;
+  TIterationValues = array of Single;
+  TIterationLevels = array of Byte;
 
   // Tampon d'itérations partagé par les threads de calcul : chaque thread écrit des pixels disjoints.
   TIterationBuffer = class
   private
     FWidth: Integer;
     FHeight: Integer;
-    FValues: TSingleArray;
-    FLevels: TByteArray;
+    FValues: TIterationValues;
+    FLevels: TIterationLevels;
     FDirty: Integer;
   public
     constructor Create(AWidth, AHeight: Integer);
@@ -71,8 +71,8 @@ end;
 
 procedure TIterationBuffer.Shift(DX, DY: Integer);
 var
-  NewValues: TSingleArray;
-  NewLevels: TByteArray;
+  NewValues: TIterationValues;
+  NewLevels: TIterationLevels;
   X, Y, SX, SY, I: Integer;
 begin
   SetLength(NewValues, Length(FValues));
