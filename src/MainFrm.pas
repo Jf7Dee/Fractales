@@ -16,6 +16,8 @@ const
   kKeyZoomFactor = 2.0;
   kSmokeTimeoutMs = 30000;
   kRenderPollMs = 20;
+  kMinCoordDigits = 3;
+  kMaxCoordDigits = 18;
 
 type
   TMainForm = class(TForm)
@@ -74,6 +76,8 @@ type
     FMouseX: Integer;
     FMouseY: Integer;
     FStatusMessage: string;
+    FSmokeLog: TStringList;
+    FHasSmokeFailure: Boolean;
     procedure InitNavigation;
     procedure AppMessage(var Msg: TMsg; var Handled: Boolean);
     procedure ViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -96,6 +100,8 @@ type
     procedure UpdateStatus;
     procedure UpdateHistoryButtons;
     function WaitForRender(TimeoutMs: Cardinal): Boolean;
+    procedure CheckSmokeStep(const StepName: string);
+    procedure SmokeException(Sender: TObject; E: Exception);
   public
     function RunSmokeTest(const OutputFile: string): Integer;
   end;
@@ -151,7 +157,6 @@ begin
   FView.OnMouseDown := ViewMouseDown;
   FView.OnMouseMove := ViewMouseMove;
   FView.OnMouseUp := ViewMouseUp;
-  FView.OnResize := ViewResize;
 
   FEngine := TRenderEngine.Create(CpuCount);
   FJuliaEngine := TRenderEngine.Create(kJuliaThreadCount);
@@ -167,6 +172,7 @@ begin
   FAppEvents.OnMessage := AppMessage;
   tmrDisplay.OnTimer := DisplayTimer;
   InitNavigation;
+  FView.OnResize := ViewResize;
 
   FNavigator.Reset(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth,
     Max(1, FView.ClientWidth), Max(1, FView.ClientHeight)));
@@ -177,6 +183,11 @@ end;
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   tmrDisplay.Enabled := False;
+  FView.OnResize := nil;
+  FView.OnMouseDown := nil;
+  FView.OnMouseMove := nil;
+  FView.OnMouseUp := nil;
+  FAppEvents.OnMessage := nil;
   FreeAndNil(FEngine);
   FreeAndNil(FJuliaEngine);
   FreeAndNil(FNavigator);
@@ -395,8 +406,7 @@ begin
     Bitmap.SetSize(Engine.Buffer.Width, Engine.Buffer.Height);
   end;
   for Y := 0 to Engine.Buffer.Height - 1 do
-    // Windows.PSingle (retourné par RowPtr) et System.PSingle (attendu par MapRow) sont deux types distincts
-    FMapper.MapRow(System.PSingle(Engine.Buffer.RowPtr(Y)), Bitmap.ScanLine[Y], Engine.Buffer.Width);
+    FMapper.MapRow(Engine.Buffer.RowPtr(Y), Bitmap.ScanLine[Y], Engine.Buffer.Width);
 end;
 
 {------------------------------------------------------------------------------}
@@ -446,7 +456,10 @@ var
 begin
   V := FNavigator.Viewport;
   P := V.PixelToComplex(FMouseX, FMouseY);
-  Digits := EnsureRange(Ceil(-Log10(V.PixelSize)) + 1, 3, 18);
+  if IsNan(V.PixelSize) or IsInfinite(V.PixelSize) or not (V.PixelSize > 0) then
+    Digits := kMinCoordDigits
+  else
+    Digits := EnsureRange(Ceil(-Log10(V.PixelSize)) + 1, kMinCoordDigits, kMaxCoordDigits);
   SetPanelText(0, 'x = ' + FloatToStrF(P.X, ffFixed, 18, Digits) + '   y = ' + FloatToStrF(P.Y, ffFixed, 18, Digits));
   SetPanelText(1, 'zoom ' + FormatFloat('0.00e+0', V.Zoom));
   SetPanelText(2, IntToStr(FFormula.MaxIter) + ' it.');
@@ -471,46 +484,73 @@ begin
   repeat
     Application.ProcessMessages;
     if FEngine.WaitUntilComplete(kRenderPollMs) then
-      Exit(True);
+    begin
+      if FEngine.Status.IsComplete then
+        Exit(True);
+      Sleep(1);  // rendu annulé et non relancé : ne pas tourner à vide
+    end;
   until GetTickCount - Start > TimeoutMs;
   Result := False;
 end;
 
 {------------------------------------------------------------------------------}
 
-function TMainForm.RunSmokeTest(const OutputFile: string): Integer;
+procedure TMainForm.CheckSmokeStep(const StepName: string);
 var
-  Log: TStringList;
+  Errors: string;
+begin
+  Errors := FEngine.TakeErrors;  // avant DisplayTimer, qui les consommerait aussi
+  if Errors <> '' then
+    raise Exception.Create(StepName + ' : erreur de calcul : ' + Errors);
+  DisplayTimer(nil);
+  if CountLitPixels(FView.Bitmap) = 0 then
+    raise Exception.Create(StepName + ' : image entièrement noire');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.SmokeException(Sender: TObject; E: Exception);
+begin
+  FSmokeLog.Add('ÉCHEC : exception non gérée : ' + E.Message);
+  FHasSmokeFailure := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMainForm.RunSmokeTest(const OutputFile: string): Integer;
 begin
   Result := 1;
-  Log := TStringList.Create;
+  FSmokeLog := TStringList.Create;
   try
+    Application.OnException := SmokeException;
     try
       Show;
       Application.ProcessMessages;
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu initial non terminé');
-      DisplayTimer(nil);
-      if CountLitPixels(FView.Bitmap) = 0 then
-        raise Exception.Create('image entièrement noire');
-      Log.Add(Format('Rendu initial OK : %d x %d en %d ms', [FView.Bitmap.Width, FView.Bitmap.Height,
+      CheckSmokeStep('rendu initial');
+      FSmokeLog.Add(Format('Rendu initial OK : %d x %d en %d ms', [FView.Bitmap.Width, FView.Bitmap.Height,
         FEngine.Status.ElapsedMs]));
       FNavigator.ZoomCenter(4);
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu après zoom non terminé');
-      Log.Add('Zoom OK');
+      CheckSmokeStep('zoom');
+      FSmokeLog.Add('Zoom OK');
       FNavigator.PanBy(25, -10);
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu après déplacement non terminé');
-      Log.Add('Déplacement OK');
-      Result := 0;
+      CheckSmokeStep('déplacement');
+      FSmokeLog.Add('Déplacement OK');
+      if not FHasSmokeFailure then
+        Result := 0;
     except
       on E: Exception do
-        Log.Add('ÉCHEC : ' + E.Message);
+        FSmokeLog.Add('ÉCHEC : ' + E.Message);
     end;
   finally
-    Log.SaveToFile(OutputFile + '.log', TEncoding.UTF8);
-    Log.Free;
+    Application.OnException := nil;
+    FSmokeLog.SaveToFile(OutputFile + '.log', TEncoding.UTF8);
+    FreeAndNil(FSmokeLog);
   end;
 end;
 

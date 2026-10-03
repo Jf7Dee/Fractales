@@ -26,7 +26,7 @@ type
     function Level(X, Y: Integer): Byte;
     function IsExact(X, Y: Integer): Boolean;
     procedure WriteAnchor(X, Y, Step: Integer; AValue: Single);
-    function RowPtr(Y: Integer): PSingle;
+    function RowPtr(Y: Integer): System.PSingle;
     procedure MarkDirty;
     function TakeDirtyFlag: Boolean;
     property Width: Integer read FWidth;
@@ -149,7 +149,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function TIterationBuffer.RowPtr(Y: Integer): PSingle;
+function TIterationBuffer.RowPtr(Y: Integer): System.PSingle;
 begin
   Result := @FValues[Y * FWidth];
 end;
