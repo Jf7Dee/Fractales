@@ -747,7 +747,7 @@ procedure TMainForm.ApplyMaxIterEdit;
 var
   Value: Integer;
 begin
-  if TryStrToInt(edMaxIter.Text, Value) then
+  if edMaxIter.Modified and TryStrToInt(edMaxIter.Text, Value) then
   begin
     FIsAutoIter := False;
     if Value <> FFormula.MaxIter then
@@ -781,6 +781,7 @@ begin
   FIsUpdating := True;
   try
     edMaxIter.Text := IntToStr(FFormula.MaxIter);
+    edMaxIter.Modified := False;
     chkAutoIter.Checked := FIsAutoIter;
   finally
     FIsUpdating := False;
