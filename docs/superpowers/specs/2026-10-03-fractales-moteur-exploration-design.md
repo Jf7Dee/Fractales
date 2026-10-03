@@ -27,6 +27,9 @@ Critères de réussite du sous-projet 1 :
 | 4 | Vidéo : zoom continu, animation de palette (color cycling), export via `ffmpeg.exe` | futur |
 | 5 | Zoom profond (> 10⁻¹⁶ : haute précision + perturbation) | futur |
 
+Étude parallèle (notions seulement) : le même projet vu en Rust, dans
+`docs/superpowers/specs/2026-10-03-rust-en-parallele.md`.
+
 ## 3. Contraintes et choix techniques
 
 - **Compilateur** : Delphi 2010, Win32 uniquement (pas de Win64 en D2010 ; en Win64, `Extended` = `Double`).
