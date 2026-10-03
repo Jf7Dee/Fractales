@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rayon = "1"
+wide = "0.7"
 
 [profile.release]
 opt-level = 3

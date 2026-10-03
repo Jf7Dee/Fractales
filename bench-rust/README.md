@@ -33,6 +33,13 @@ cargo run --release
 
 Chaque programme dure quelques minutes ; le gros du temps passe dans les rendus sur 1 thread.
 
+Le programme Rust mesure deux modes : **scalaire** (un pixel à la fois, comme Delphi) et **SIMD x4** (quatre pixels
+voisins à la fois avec la crate `wide`). Sans `target-cpu=native`, le SIMD se limite à SSE2 (2 × 2 pixels) ; avec,
+il utilise AVX si le processeur l'a. La première ligne affichée indique lequel est actif.
+
+En parallèle, Rust crée une tâche par ligne (`with_max_len(1)`) : les cœurs libres prennent la ligne suivante, ce qui
+équilibre la charge comme la file de tuiles du moteur Delphi.
+
 ## Lire les résultats
 
 - **ms (méd)** : temps médian d'un rendu complet.
