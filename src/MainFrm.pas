@@ -129,6 +129,8 @@ type
     procedure PaletteComboChange(Sender: TObject);
     procedure ColorSliderChange(Sender: TObject);
     procedure UpdateColorControls;
+    procedure EditPaletteClick(Sender: TObject);
+    procedure PaletteEditorChange(Sender: TObject);
     procedure CheckSmokeStep(const StepName: string);
     procedure SmokeException(Sender: TObject; E: Exception);
   public
@@ -141,6 +143,9 @@ var
 implementation
 
 {$R *.dfm}
+
+uses
+  PaletteEditorFrm;
 
 {------------------------------------------------------------------------------}
 
@@ -566,6 +571,8 @@ end;
 {------------------------------------------------------------------------------}
 
 function TMainForm.RunSmokeTest(const OutputFile: string): Integer;
+var
+  Dlg: TPaletteEditorForm;
 begin
   Result := 1;
   FSmokeLog := TStringList.Create;
@@ -608,6 +615,16 @@ begin
       PaletteComboChange(nil);
       DisplayTimer(nil);
       FSmokeLog.Add('Couleurs OK');
+      Dlg := TPaletteEditorForm.Create(Self);
+      try
+        Dlg.Palette.Assign(FPalette);
+        Dlg.Show;
+        Application.ProcessMessages;
+        Dlg.Close;
+      finally
+        Dlg.Free;
+      end;
+      FSmokeLog.Add('Éditeur de palette OK');
       if not FHasSmokeFailure then
         Result := 0;
     except
@@ -876,6 +893,7 @@ begin
   tbRepeats.OnChange := ColorSliderChange;
   tbStretch.OnChange := ColorSliderChange;
   chkInvert.OnClick := ColorSliderChange;
+  btnEditPalette.OnClick := EditPaletteClick;
   UpdateColorControls;
 end;
 
@@ -965,6 +983,42 @@ begin
   finally
     FIsUpdating := False;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.EditPaletteClick(Sender: TObject);
+var
+  Dlg: TPaletteEditorForm;
+  Saved: TGradientPalette;
+begin
+  Saved := TGradientPalette.Create;
+  Dlg := TPaletteEditorForm.Create(Self);
+  try
+    Saved.Assign(FPalette);
+    Dlg.Palette.Assign(FPalette);
+    Dlg.OnPaletteChange := PaletteEditorChange;
+    if Dlg.ShowModal = mrOk then
+    begin
+      // la palette modifiée n'est pas forcément enregistrée : on recharge la liste sans la sélectionner
+      FillPaletteCombo;
+      cbPalette.ItemIndex := -1;
+    end
+    else
+      FPalette.Assign(Saved);
+    ColorsChanged;
+  finally
+    Dlg.Free;
+    Saved.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.PaletteEditorChange(Sender: TObject);
+begin
+  FPalette.Assign(TPaletteEditorForm(Sender).Palette);
+  ColorsChanged;
 end;
 
 end.
