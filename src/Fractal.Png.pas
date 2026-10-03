@@ -41,6 +41,7 @@ implementation
 const
   kPngSignature: array[0..7] of Byte = (137, 80, 78, 71, 13, 10, 26, 10);
   kIdatFlushSize = 65536;
+  kMaxTextChunkSize = 1024 * 1024;
   kCrcPolynomial = $EDB88320;
   kCrcInit = $FFFFFFFF;
 
@@ -158,8 +159,10 @@ begin
   case Origin of
     soBeginning:
       NewPosition := Offset;
+    soCurrent:
+      NewPosition := FPosition + Offset;
   else
-    NewPosition := FPosition + Offset;
+    raise EPngError.Create('Flux PNG non positionnable');
   end;
   if NewPosition <> FPosition then
     raise EPngError.Create('Flux PNG non positionnable');
@@ -276,6 +279,8 @@ end;
 
 procedure TPngWriter.Finish;
 begin
+  if FIsFinished then
+    raise EPngError.Create('Image PNG déjà terminée');
   if FRowsWritten <> FHeight then
     raise EPngError.CreateFmt('Image PNG incomplète : %d lignes sur %d', [FRowsWritten, FHeight]);
   FreeAndNil(FZip);  // termine le flux deflate dans FPending
@@ -286,7 +291,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function ReadPngText(const FileName: string; const Keyword: AnsiString; out Text: RawByteString): Boolean;
+function DoReadPngText(const FileName: string; const Keyword: AnsiString; out Text: RawByteString): Boolean;
 var
   Stream: TFileStream;
   Signature: array[0..7] of Byte;
@@ -314,7 +319,7 @@ begin
         Exit;
       if CompareMem(@ChunkType, PAnsiChar('IEND'), 4) then
         Exit;
-      if CompareMem(@ChunkType, PAnsiChar('tEXt'), 4) then
+      if CompareMem(@ChunkType, PAnsiChar('tEXt'), 4) and (Len <= kMaxTextChunkSize) then
       begin
         SetLength(Data, Len);
         if Len > 0 then
@@ -341,6 +346,18 @@ begin
     Stream.Free;
   end;
 end;
+
+function ReadPngText(const FileName: string; const Keyword: AnsiString; out Text: RawByteString): Boolean;
+begin
+  try
+    Result := DoReadPngText(FileName, Keyword, Text);
+  except
+    Result := False;
+    Text := '';
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 initialization
   BuildCrcTable;
