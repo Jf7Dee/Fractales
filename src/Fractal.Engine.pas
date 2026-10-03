@@ -26,6 +26,7 @@ type
     TotalJobs: Integer;
     PassCount: Integer;
     ElapsedMs: Cardinal;
+    IsCancelled: Boolean;
     function IsComplete: Boolean;
     function CurrentPass: Integer;
   end;
@@ -58,6 +59,7 @@ type
     FStartTick: Cardinal;
     FElapsedMs: Cardinal;
     FIsShuttingDown: Boolean;
+    FIsCancelled: Boolean;
     FViewport: TViewport;
     FFormula: TFractalFormula;
     FBuffer: TIterationBuffer;
@@ -103,7 +105,7 @@ end;
 
 function TRenderStatus.IsComplete: Boolean;
 begin
-  Result := DoneJobs >= TotalJobs;
+  Result := not IsCancelled and (DoneJobs >= TotalJobs);
 end;
 
 {------------------------------------------------------------------------------}
@@ -180,7 +182,12 @@ var
   I: Integer;
 begin
   StopCurrent;
-  FIsShuttingDown := True;
+  FLock.Enter;
+  try
+    FIsShuttingDown := True;
+  finally
+    FLock.Leave;
+  end;
   for I := 0 to High(FWorkers) do
     FWorkers[I].Terminate;
   FWorkEvent.SetEvent;
@@ -222,6 +229,12 @@ begin
   // clonée avant l'arrêt : si le clonage échoue, le rendu courant reste intact
   NewFormula := Formula.Clone;
   StopCurrent;
+  FLock.Enter;
+  try
+    FErrors.Clear;
+  finally
+    FLock.Leave;
+  end;
   FFormula.Free;
   FFormula := NewFormula;
   FViewport := V;
@@ -245,6 +258,7 @@ begin
     FNextJob := 0;
     FTotalJobs := 0;
     FDoneJobs := 0;
+    FIsCancelled := True;
     FCompleteEvent.ResetEvent;
   finally
     FLock.Leave;
@@ -321,6 +335,7 @@ begin
     FTotalJobs := Length(FJobs);
     FDoneJobs := 0;
     FPassCount := StepCount;
+    FIsCancelled := False;
     FStartTick := GetTickCount;
     FElapsedMs := 0;
     if FTotalJobs = 0 then
@@ -437,6 +452,7 @@ end;
 
 function TRenderEngine.WaitUntilComplete(TimeoutMs: Cardinal): Boolean;
 begin
+  // rend la main quand plus rien ne tourne (terminé OU annulé) : l'appelant vérifie Status.IsComplete
   Result := FCompleteEvent.WaitFor(TimeoutMs) = wrSignaled;
 end;
 
@@ -450,6 +466,7 @@ begin
     Result.DoneJobs := FDoneJobs;
     Result.TotalJobs := FTotalJobs;
     Result.PassCount := FPassCount;
+    Result.IsCancelled := FIsCancelled;
     if FDoneJobs < FTotalJobs then
       Result.ElapsedMs := GetTickCount - FStartTick
     else

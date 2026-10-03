@@ -17,6 +17,7 @@ type
   private
     function SmallViewport: TViewport;
     function CreateHeavyFormula: TFractalFormula;
+    function HeavyViewport: TViewport;
     function CountNegativeValues(E: TRenderEngine): Integer;
   published
     procedure TestRenderCompletesWithExactPixels;
@@ -26,6 +27,7 @@ type
     procedure TestShiftedRenderMatchesFreshRender;
     procedure TestErrorsAreReported;
     procedure TestCancelIsQuick;
+    procedure TestCancelIsNotComplete;
     procedure TestDestroyWhileRendering;
   end;
 
@@ -33,19 +35,20 @@ implementation
 
 const
   kWaitMs = 10000;
+  kRaisingName = 'Raising';
 
 {------------------------------------------------------------------------------}
 
 class function TRaisingFormula.FormulaName: string;
 begin
-  Result := 'Raising';
+  Result := kRaisingName;
 end;
 
 {------------------------------------------------------------------------------}
 
 class function TRaisingFormula.DisplayName: string;
 begin
-  Result := 'Raising';
+  Result := kRaisingName;
 end;
 
 {------------------------------------------------------------------------------}
@@ -62,6 +65,13 @@ end;
 function TTestEngine.SmallViewport: TViewport;
 begin
   Result := MakeViewport(-0.5, 0, 3, 200, 150);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestEngine.HeavyViewport: TViewport;
+begin
+  Result := MakeViewport(0, 0, 1, 160, 120);
 end;
 
 {------------------------------------------------------------------------------}
@@ -186,7 +196,7 @@ begin
   try
     for Round := 1 to 5 do
     begin
-      E.Render(MakeViewport(0, 0, 1, 160, 120), Heavy);
+      E.Render(HeavyViewport, Heavy);
       Sleep(30);
       // tout s'échappe autour de (5, 5) : une valeur négative ne peut venir que du rendu précédent
       E.Render(MakeViewport(5, 5, 1, 160, 120), Light);
@@ -264,12 +274,39 @@ begin
   E := TRenderEngine.Create(CpuCount);
   Heavy := CreateHeavyFormula;
   try
-    E.Render(MakeViewport(0, 0, 1, 160, 120), Heavy);
+    E.Render(HeavyViewport, Heavy);
     Sleep(30);
     T := GetTickCount;
     E.Cancel;
     CheckTrue(GetTickCount - T < 500, Format('%d ms', [GetTickCount - T]));
   finally
+    Heavy.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestCancelIsNotComplete;
+var
+  E: TRenderEngine;
+  Heavy: TFractalFormula;
+  F: TMandelbrotFormula;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  Heavy := CreateHeavyFormula;
+  F := TMandelbrotFormula.Create;
+  try
+    E.Render(HeavyViewport, Heavy);
+    Sleep(30);
+    E.Cancel;
+    CheckFalse(E.Status.IsComplete);
+    CheckTrue(E.WaitUntilComplete(0));
+    E.Render(SmallViewport, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+  finally
+    F.Free;
     Heavy.Free;
     E.Free;
   end;
@@ -286,7 +323,7 @@ begin
   Heavy := CreateHeavyFormula;
   try
     E := TRenderEngine.Create(CpuCount);
-    E.Render(MakeViewport(0, 0, 1, 160, 120), Heavy);
+    E.Render(HeavyViewport, Heavy);
     Sleep(30);
     T := GetTickCount;
     E.Free;
