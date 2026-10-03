@@ -4,8 +4,8 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
-  AppEvnts, Math, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
-  Fractal.View;
+  AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
+  Fractal.Persistence, Fractal.View;
 
 const
   kJuliaPreviewWidth = 240;
@@ -84,6 +84,7 @@ type
     FSavedBounds: TRect;
     FSavedWindowState: TWindowState;
     FWasSidePanelVisible: Boolean;
+    FPalettes: TObjectList;
     FSmokeLog: TStringList;
     FHasSmokeFailure: Boolean;
     procedure InitNavigation;
@@ -123,6 +124,11 @@ type
     procedure TogglePanelClick(Sender: TObject);
     procedure SetSidePanelVisible(IsVisible: Boolean);
     procedure ToggleFullScreen;
+    procedure InitColorPanel;
+    procedure FillPaletteCombo;
+    procedure PaletteComboChange(Sender: TObject);
+    procedure ColorSliderChange(Sender: TObject);
+    procedure UpdateColorControls;
     procedure CheckSmokeStep(const StepName: string);
     procedure SmokeException(Sender: TObject; E: Exception);
   public
@@ -196,6 +202,7 @@ begin
   tmrDisplay.OnTimer := DisplayTimer;
   InitNavigation;
   InitFormulaPanel;
+  InitColorPanel;
   FView.OnResize := ViewResize;
 
   FNavigator.Reset(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth,
@@ -217,6 +224,7 @@ begin
   FreeAndNil(FNavigator);
   FreeAndNil(FMapper);
   FreeAndNil(FPalette);
+  FreeAndNil(FPalettes);
   FreeAndNil(FJuliaFormula);
   FreeAndNil(FFormula);
 end;
@@ -592,6 +600,14 @@ begin
       if not pnlSide.Visible then
         raise Exception.Create('panneau latéral non restauré');
       FSmokeLog.Add('Formules et panneau OK');
+      tbOffset.Position := 500;
+      chkInvert.Checked := True;
+      if not FMapping.IsInverted or (Abs(FMapping.Offset - 0.5) > 1e-9) then
+        raise Exception.Create('réglages de couleur non appliqués');
+      cbPalette.ItemIndex := 1;
+      PaletteComboChange(nil);
+      DisplayTimer(nil);
+      FSmokeLog.Add('Couleurs OK');
       if not FHasSmokeFailure then
         Result := 0;
     except
@@ -845,6 +861,109 @@ begin
     sbStatus.Visible := True;
     pnlCollapse.Visible := True;
     SetSidePanelVisible(FWasSidePanelVisible);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.InitColorPanel;
+begin
+  FPalettes := TObjectList.Create(True);
+  FillPaletteCombo;
+  cbPalette.ItemIndex := 0;
+  cbPalette.OnChange := PaletteComboChange;
+  tbOffset.OnChange := ColorSliderChange;
+  tbRepeats.OnChange := ColorSliderChange;
+  tbStretch.OnChange := ColorSliderChange;
+  chkInvert.OnClick := ColorSliderChange;
+  UpdateColorControls;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.FillPaletteCombo;
+var
+  I: Integer;
+  Folder, Ext: string;
+  SR: TSearchRec;
+  P: TGradientPalette;
+  Lines: TStringList;
+begin
+  FPalettes.Clear;
+  cbPalette.Items.Clear;
+  for I := 0 to BuiltInPaletteCount - 1 do
+    FPalettes.Add(CreateBuiltInPalette(I));
+  Folder := PaletteFolder;
+  if FindFirst(Folder + '*.*', faAnyFile, SR) = 0 then
+    try
+      repeat
+        Ext := LowerCase(ExtractFileExt(SR.Name));
+        if (Ext <> '.pal') and (Ext <> '.map') then
+          Continue;
+        P := TGradientPalette.Create;
+        Lines := TStringList.Create;
+        try
+          try
+            Lines.LoadFromFile(Folder + SR.Name);
+            if Ext = '.map' then
+              P.LoadFromMap(Lines)
+            else
+              P.LoadFromStrings(Lines);
+            if (Ext = '.map') or (P.Name = '') then
+              P.Name := ChangeFileExt(SR.Name, '');
+            FPalettes.Add(P);
+            P := nil;
+          except
+            on E: Exception do
+              FStatusMessage := Format('Palette ignorée (%s) : %s', [SR.Name, E.Message]);
+          end;
+        finally
+          Lines.Free;
+          P.Free;
+        end;
+      until FindNext(SR) <> 0;
+    finally
+      FindClose(SR);
+    end;
+  for I := 0 to FPalettes.Count - 1 do
+    cbPalette.Items.Add(TGradientPalette(FPalettes[I]).Name);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.PaletteComboChange(Sender: TObject);
+begin
+  if cbPalette.ItemIndex < 0 then
+    Exit;
+  FPalette.Assign(TGradientPalette(FPalettes[cbPalette.ItemIndex]));
+  ColorsChanged;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ColorSliderChange(Sender: TObject);
+begin
+  if FIsUpdating then
+    Exit;
+  FMapping := MappingFromSliders(tbOffset.Position, tbRepeats.Position, tbStretch.Position, chkInvert.Checked);
+  ColorsChanged;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.UpdateColorControls;
+var
+  Offset, Repeats, Stretch: Integer;
+begin
+  FIsUpdating := True;
+  try
+    MappingToSliders(FMapping, Offset, Repeats, Stretch);
+    tbOffset.Position := Offset;
+    tbRepeats.Position := Repeats;
+    tbStretch.Position := Stretch;
+    chkInvert.Checked := FMapping.IsInverted;
+  finally
+    FIsUpdating := False;
   end;
 end;
 
