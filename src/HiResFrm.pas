@@ -49,6 +49,8 @@ type
     FMapping: TColorMapping;
     FLocationText: RawByteString;
     FStartTick: Cardinal;
+    FTargetFileName: string;
+    FOnRequestSnapshot: TNotifyEvent;
     function ReadSettings(out Settings: THiResSettings): Boolean;
     procedure StopRenderer;
     procedure UpdateButtons;
@@ -57,6 +59,7 @@ type
       const Mapping: TColorMapping; const LocationText: RawByteString);
     procedure StartRender;
     function IsRunning: Boolean;
+    property OnRequestSnapshot: TNotifyEvent read FOnRequestSnapshot write FOnRequestSnapshot;
   end;
 
 implementation
@@ -180,6 +183,10 @@ begin
     MessageDlg('Indiquez un fichier de destination.', mtWarning, [mbOK], 0);
     Exit;
   end;
+  if FileExists(Settings.FileName)
+    and (MessageDlg(Format('Le fichier « %s » existe déjà. Le remplacer ?', [ExtractFileName(Settings.FileName)]),
+      mtConfirmation, [mbYes, mbNo], 0) <> mrYes) then
+    Exit;
   if ExtractFilePath(Settings.FileName) <> '' then
     ForceDirectories(ExtractFilePath(Settings.FileName));
   Result := True;
@@ -191,8 +198,18 @@ procedure THiResForm.StartRender;
 var
   Settings: THiResSettings;
 begin
-  if IsRunning or (FFormula = nil) or not ReadSettings(Settings) then
+  if IsRunning then
     Exit;
+  if Assigned(FOnRequestSnapshot) then
+    FOnRequestSnapshot(Self);
+  if (FFormula = nil) or not ReadSettings(Settings) then
+    Exit;
+  if (FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample)
+    .PrecisionState = psLimit)
+    and (MessageDlg('Ce rendu dépasse la limite de précision : l''image sera pixelisée. Rendre quand même ?',
+      mtWarning, [mbYes, mbNo], 0) <> mrYes) then
+    Exit;
+  FTargetFileName := Settings.FileName;
   FRenderer := THiResRenderer.Create(Settings, FViewport, FFormula, TColorMapper.Create(FPalette, FMapping),
     FLocationText);
   FStartTick := GetTickCount;
@@ -237,7 +254,7 @@ begin
   tmrPoll.Enabled := False;
   FRenderer.WaitFor;
   if FRenderer.IsSucceeded then
-    lblState.Caption := Format('Terminé en %d s : %s', [Seconds, ExtractFileName(edFile.Text)])
+    lblState.Caption := Format('Terminé en %d s : %s', [Seconds, ExtractFileName(FTargetFileName)])
   else if FRenderer.ErrorMessage <> '' then
     lblState.Caption := 'Erreur : ' + FRenderer.ErrorMessage
   else
@@ -272,6 +289,12 @@ end;
 procedure THiResForm.UpdateButtons;
 begin
   btnStart.Enabled := not IsRunning;
+  edWidth.Enabled := not IsRunning;
+  edHeight.Enabled := not IsRunning;
+  cbPreset.Enabled := not IsRunning;
+  cbSupersample.Enabled := not IsRunning;
+  edFile.Enabled := not IsRunning;
+  btnBrowse.Enabled := not IsRunning;
   if IsRunning then
     btnClose.Caption := 'Annuler'
   else

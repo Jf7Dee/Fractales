@@ -9,6 +9,7 @@ const
   kLutSize = 4096;
   kRefIter = 1000.0;  // u = mu / kRefIter : les couleurs ne dépendent pas du nombre max d'itérations
   kSliderMax = 1000;
+  kStretchSliderMid = 500;  // position du curseur d'étirement qui vaut exactement 1 (chemin rapide)
   kMinRepeats = 1.0;
   kMaxRepeats = 1000.0;
   kRepeatsDecades = 3;  // 10^0 .. 10^3
@@ -407,7 +408,10 @@ function MappingFromSliders(Offset, Repeats, Stretch: Integer; IsInverted: Boole
 begin
   Result.Offset := Offset / kSliderMax;
   Result.Repeats := Power(10, kRepeatsDecades * Repeats / kSliderMax);
-  Result.Stretch := kMinStretch + (kMaxStretch - kMinStretch) * Stretch / kSliderMax;
+  if Stretch <= kStretchSliderMid then
+    Result.Stretch := kMinStretch + (1 - kMinStretch) * Stretch / kStretchSliderMid
+  else
+    Result.Stretch := 1 + (kMaxStretch - 1) * (Stretch - kStretchSliderMid) / (kSliderMax - kStretchSliderMid);
   Result.IsInverted := IsInverted;
   Result := ClampColorMapping(Result);
 end;
@@ -421,7 +425,12 @@ begin
   C := ClampColorMapping(M);
   Offset := Round(C.Offset * kSliderMax);
   Repeats := Round(Log10(C.Repeats) / kRepeatsDecades * kSliderMax);
-  Stretch := Round((C.Stretch - kMinStretch) / (kMaxStretch - kMinStretch) * kSliderMax);
+  if C.Stretch <= 1 then
+    Stretch := Round((C.Stretch - kMinStretch) / (1 - kMinStretch) * kStretchSliderMid)
+  else
+    Stretch := kStretchSliderMid
+      + Round((C.Stretch - 1) / (kMaxStretch - 1) * (kSliderMax - kStretchSliderMid));
+  Stretch := EnsureRange(Stretch, 0, kSliderMax);
 end;
 
 {------------------------------------------------------------------------------}

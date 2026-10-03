@@ -149,6 +149,8 @@ type
     procedure FavoritesKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure RefreshFavorites;
     procedure HiResClick(Sender: TObject);
+    procedure PrepareHiResForm(Sender: TObject);
+    procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
     procedure CheckSmokeStep(const StepName: string);
     procedure SmokeException(Sender: TObject; E: Exception);
   public
@@ -203,6 +205,7 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
+  OnCloseQuery := FormCloseQuery;
   FView := TFractalView.Create(Self);
   FView.Parent := Self;
   FView.Align := alClient;
@@ -374,6 +377,7 @@ procedure TMainForm.NavigatorViewChanged(Sender: TObject; const Change: TViewCha
 var
   V: TViewport;
 begin
+  FStatusMessage := '';
   V := FNavigator.Viewport;
   if FIsAutoIter then
   begin
@@ -1366,18 +1370,36 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TMainForm.HiResClick(Sender: TObject);
+begin
+  if FHiResForm = nil then
+  begin
+    FHiResForm := THiResForm.Create(Self);
+    THiResForm(FHiResForm).OnRequestSnapshot := PrepareHiResForm;
+  end;
+  PrepareHiResForm(nil);
+  FHiResForm.Show;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.PrepareHiResForm(Sender: TObject);
 var
   Location: TFractalLocation;
 begin
-  if FHiResForm = nil then
-    FHiResForm := THiResForm.Create(Self);
   Location := CaptureLocation;
   try
     THiResForm(FHiResForm).Prepare(FNavigator.Viewport, FFormula, FPalette, FMapping, LocationAsPngText(Location));
   finally
     Location.Free;
   end;
-  FHiResForm.Show;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
+begin
+  if (FHiResForm <> nil) and THiResForm(FHiResForm).IsRunning then
+    THiResForm(FHiResForm).FormCloseQuery(Self, CanClose);
 end;
 
 end.

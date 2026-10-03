@@ -75,6 +75,8 @@ const
   kSectionPalette = 'Palette';
   kDefaultFormula = 'Mandelbrot';
   kFormatVersion = 1;
+  kMinLocationWidth: Double = 1e-300;
+  kMaxLocationWidth: Double = 1e300;
   kInvalidFileChars = '\/:*?"<>|';
   kUnnamed = 'Sans nom';
   kNoLocationMessage = 'Ce fichier ne contient pas de lieu fractal.';
@@ -275,7 +277,7 @@ begin
     FCenterX := InvariantToFloat(Ini.ReadString(kSectionFractal, 'CenterX', ''), FormulaClass.DefaultCenterX);
     FCenterY := InvariantToFloat(Ini.ReadString(kSectionFractal, 'CenterY', ''), FormulaClass.DefaultCenterY);
     FWidth := InvariantToFloat(Ini.ReadString(kSectionFractal, 'Width', ''), FormulaClass.DefaultWidth);
-    if not (FWidth > 0) then
+    if not (FWidth >= kMinLocationWidth) or not (FWidth <= kMaxLocationWidth) then
       FWidth := FormulaClass.DefaultWidth;
     FMaxIter := EnsureRange(Ini.ReadInteger(kSectionFractal, 'MaxIter', kDefaultMaxIter), kMinMaxIter, kMaxMaxIter);
     FIsAutoIter := Ini.ReadBool(kSectionFractal, 'AutoIter', True);

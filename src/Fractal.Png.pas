@@ -347,6 +347,8 @@ begin
   end;
 end;
 
+{------------------------------------------------------------------------------}
+
 function ReadPngText(const FileName: string; const Keyword: AnsiString; out Text: RawByteString): Boolean;
 begin
   try

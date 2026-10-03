@@ -25,6 +25,7 @@ type
     procedure TestSaveToMissingFolderRaisesFileError;
     procedure TestHugeParamUsesDefault;
     procedure TestHugeRepeatsUsesDefault;
+    procedure TestTinyWidthUsesDefault;
   end;
 
 implementation
@@ -336,6 +337,21 @@ begin
   try
     L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'[Colors]'#13#10'Repeats=1e400');
     CheckEquals(DefaultColorMapping.Repeats, L.Mapping.Repeats, 0);
+  finally
+    L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestTinyWidthUsesDefault;
+var
+  L: TFractalLocation;
+begin
+  L := TFractalLocation.Create;
+  try
+    L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'Width=1e-4000');
+    CheckTrue(L.Width = TMandelbrotFormula.DefaultWidth, 'largeur par défaut');
   finally
     L.Free;
   end;

@@ -306,13 +306,24 @@ var
   M: TColorMapping;
   O, R, S: Integer;
 begin
-  M := MappingFromSliders(250, 500, 444, True);
+  M := MappingFromSliders(250, 500, 500, True);
   CheckEquals(0.25, M.Offset, 1e-9);
   CheckTrue(M.IsInverted);
+  CheckTrue(M.Stretch = 1, 'Stretch exactement 1');
   MappingToSliders(M, O, R, S);
   CheckEquals(250, O);
   CheckEquals(500, R);
-  CheckEquals(444, S);
+  CheckEquals(500, S);
+  M := MappingFromSliders(0, 0, 200, False);
+  CheckTrue(M.Stretch < 1);
+  MappingToSliders(M, O, R, S);
+  CheckEquals(200, S);
+  M := MappingFromSliders(0, 0, 800, False);
+  CheckTrue(M.Stretch > 1);
+  MappingToSliders(M, O, R, S);
+  CheckEquals(800, S);
+  MappingToSliders(DefaultColorMapping, O, R, S);
+  CheckEquals(500, S);
 end;
 
 {------------------------------------------------------------------------------}
