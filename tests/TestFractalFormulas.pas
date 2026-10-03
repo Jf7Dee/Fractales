@@ -1,0 +1,205 @@
+﻿unit TestFractalFormulas;
+
+interface
+
+uses
+  TestFramework, Fractal.Types, Fractal.Formulas;
+
+type
+  TTestFormulas = class(TTestCase)
+  published
+    procedure TestMandelbrotOriginIsInside;
+    procedure TestMandelbrotPeriod4BulbIsInside;
+    procedure TestMandelbrotFarPointEscapesFast;
+    procedure TestSmoothValueIsContinuous;
+    procedure TestMultibrotPower2MatchesMandelbrot;
+    procedure TestJuliaZeroIsUnitDisk;
+    procedure TestTricornIsSymmetric;
+    procedure TestBurningShip;
+    procedure TestSetParamClampsAndCloneCopies;
+    procedure TestRegistry;
+  end;
+
+implementation
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestMandelbrotOriginIsInside;
+var
+  F: TMandelbrotFormula;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    CheckEquals(kInside, F.Iterate(0, 0), 0);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestMandelbrotPeriod4BulbIsInside;
+var
+  F: TMandelbrotFormula;
+begin
+  // hors cardioïde et bulbe principal : aucun raccourci, il faut vraiment itérer
+  F := TMandelbrotFormula.Create;
+  try
+    CheckEquals(kInside, F.Iterate(-1.3107, 0), 0);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestMandelbrotFarPointEscapesFast;
+var
+  F: TMandelbrotFormula;
+  V: Single;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    V := F.Iterate(10, 10);
+    CheckTrue(V >= 0, 'doit s''échapper');
+    CheckTrue(V < 3, 'doit s''échapper en peu d''itérations');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestSmoothValueIsContinuous;
+var
+  F: TMandelbrotFormula;
+  A, B: Single;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    A := F.Iterate(0.5, 0.5);
+    B := F.Iterate(0.5 + 1e-7, 0.5);
+    CheckTrue(A > 0);
+    CheckEquals(A, B, 1e-3);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestMultibrotPower2MatchesMandelbrot;
+const
+  kPoints: array[0..3, 0..1] of Double = ((0.5, 0.5), (1.0, 1.0), (-2.5, 0.0), (0.0, 1.5));
+var
+  M: TMandelbrotFormula;
+  B: TMultibrotFormula;
+  I: Integer;
+begin
+  M := TMandelbrotFormula.Create;
+  B := TMultibrotFormula.Create;
+  try
+    B.SetParam(B.IndexOfParam('power'), 2);
+    for I := 0 to High(kPoints) do
+      CheckEquals(M.Iterate(kPoints[I, 0], kPoints[I, 1]), B.Iterate(kPoints[I, 0], kPoints[I, 1]), 1e-3);
+    CheckEquals(kInside, B.Iterate(0, 0), 0);
+  finally
+    B.Free;
+    M.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestJuliaZeroIsUnitDisk;
+var
+  J: TJuliaFormula;
+begin
+  J := TJuliaFormula.Create;
+  try
+    J.SetParam(J.IndexOfParam('cx'), 0);
+    J.SetParam(J.IndexOfParam('cy'), 0);
+    CheckEquals(kInside, J.Iterate(0.5, 0), 0);
+    CheckTrue(J.Iterate(1.5, 0) >= 0);
+  finally
+    J.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestTricornIsSymmetric;
+var
+  T: TTricornFormula;
+begin
+  T := TTricornFormula.Create;
+  try
+    CheckEquals(T.Iterate(0.3, 0.7), T.Iterate(0.3, -0.7), 0);
+  finally
+    T.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestBurningShip;
+var
+  B: TBurningShipFormula;
+begin
+  B := TBurningShipFormula.Create;
+  try
+    CheckEquals(kInside, B.Iterate(0, 0), 0);
+    CheckTrue(B.Iterate(2, 2) >= 0);
+  finally
+    B.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestSetParamClampsAndCloneCopies;
+var
+  B: TMultibrotFormula;
+  C: TFractalFormula;
+begin
+  B := TMultibrotFormula.Create;
+  try
+    B.SetParam(0, 99);
+    CheckEquals(10.0, B.GetParam(0), 0);
+    B.MaxIter := 5;
+    CheckEquals(kMinMaxIter, B.MaxIter);
+    C := B.Clone;
+    try
+      CheckTrue(C is TMultibrotFormula);
+      CheckEquals(10.0, C.GetParam(0), 0);
+      CheckEquals(kMinMaxIter, C.MaxIter);
+    finally
+      C.Free;
+    end;
+  finally
+    B.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestRegistry;
+var
+  B: TMultibrotFormula;
+begin
+  CheckTrue(FormulaClassCount >= 5);
+  CheckTrue(FindFormulaClass('mandelbrot') = TMandelbrotFormula);
+  CheckTrue(FindFormulaClass('xyz') = nil);
+  B := TMultibrotFormula.Create;
+  try
+    CheckEquals(0, B.IndexOfParam('power'));
+    CheckEquals(-1, B.IndexOfParam('nope'));
+  finally
+    B.Free;
+  end;
+end;
+
+initialization
+  RegisterTest(TTestFormulas.Suite);
+
+end.

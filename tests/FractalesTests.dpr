@@ -6,7 +6,9 @@ uses
   TestFramework,
   TextTestRunner,
   Fractal.Types in '..\src\Fractal.Types.pas',
-  TestFractalTypes in 'TestFractalTypes.pas';
+  Fractal.Formulas in '..\src\Fractal.Formulas.pas',
+  TestFractalTypes in 'TestFractalTypes.pas',
+  TestFractalFormulas in 'TestFractalFormulas.pas';
 
 begin
   RunRegisteredTests(rxbHaltOnFailures);
