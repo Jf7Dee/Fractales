@@ -13,6 +13,7 @@ uses
   Fractal.Png in '..\src\Fractal.Png.pas',
   Fractal.Persistence in '..\src\Fractal.Persistence.pas',
   Fractal.Navigation in '..\src\Fractal.Navigation.pas',
+  Fractal.HiRes in '..\src\Fractal.HiRes.pas',
   TestFractalTypes in 'TestFractalTypes.pas',
   TestFractalFormulas in 'TestFractalFormulas.pas',
   TestFractalBuffer in 'TestFractalBuffer.pas',
@@ -21,7 +22,8 @@ uses
   TestUtils in 'TestUtils.pas',
   TestFractalPng in 'TestFractalPng.pas',
   TestFractalPersistence in 'TestFractalPersistence.pas',
-  TestFractalNavigation in 'TestFractalNavigation.pas';
+  TestFractalNavigation in 'TestFractalNavigation.pas',
+  TestFractalHiRes in 'TestFractalHiRes.pas';
 
 begin
   RunRegisteredTests(rxbHaltOnFailures);
