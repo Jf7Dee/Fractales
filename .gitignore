@@ -8,3 +8,4 @@ __history/
 *.identcache
 *.dsk
 *.stat
+bench-rust/target/

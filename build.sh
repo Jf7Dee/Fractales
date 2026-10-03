@@ -1,5 +1,5 @@
 #!/bin/sh
-# Compilation en ligne de commande (Delphi 2010).  Usage : ./build.sh tests | app | smoke
+# Compilation en ligne de commande (Delphi 2010).  Usage : ./build.sh tests | app | smoke | bench
 set -e
 cd "$(dirname "$0")"
 DCC="/c/Program Files (x86)/Embarcadero/RAD Studio/7.0/bin/dcc32.exe"
@@ -19,7 +19,10 @@ case "$1" in
     code=$?
     cat bin/smoke.png.log
     exit $code ;;
+  bench)
+    (cd bench && "$DCC" -B -Q -N0../dcu -E../bin FractalesBench.dpr)
+    ./bin/FractalesBench.exe ;;
   *)
-    echo "Usage : $0 tests|app|smoke"
+    echo "Usage : $0 tests|app|smoke|bench"
     exit 2 ;;
 esac
