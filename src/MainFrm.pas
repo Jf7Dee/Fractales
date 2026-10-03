@@ -89,6 +89,7 @@ type
     FWasSidePanelVisible: Boolean;
     FPalettes: TObjectList;
     FFavorites: TFavoriteStore;
+    FHiResForm: TForm;  // THiResForm, déclaré dans l'implémentation pour éviter une dépendance d'interface
     FSmokeLog: TStringList;
     FHasSmokeFailure: Boolean;
     procedure InitNavigation;
@@ -147,6 +148,7 @@ type
     procedure FavoritesDblClick(Sender: TObject);
     procedure FavoritesKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure RefreshFavorites;
+    procedure HiResClick(Sender: TObject);
     procedure CheckSmokeStep(const StepName: string);
     procedure SmokeException(Sender: TObject; E: Exception);
   public
@@ -161,7 +163,7 @@ implementation
 {$R *.dfm}
 
 uses
-  PaletteEditorFrm;
+  PaletteEditorFrm, HiResFrm;
 
 {------------------------------------------------------------------------------}
 
@@ -593,6 +595,9 @@ var
   Dlg: TPaletteEditorForm;
   Text: RawByteString;
   Location: TFractalLocation;
+  HiRes: THiResForm;
+  HiResFile: string;
+  Start: Cardinal;
 begin
   Result := 1;
   FSmokeLog := TStringList.Create;
@@ -661,6 +666,28 @@ begin
         raise Exception.Create('rendu après réouverture non terminé');
       CheckSmokeStep('réouverture');
       FSmokeLog.Add('Export PNG et réouverture OK');
+      HiResClick(nil);
+      HiRes := THiResForm(FHiResForm);
+      HiResFile := ChangeFileExt(OutputFile, '') + '_hd.png';
+      SysUtils.DeleteFile(HiResFile);
+      HiRes.cbPreset.ItemIndex := kPresetCustom;
+      HiRes.cbPresetChange(nil);
+      HiRes.edWidth.Text := '160';
+      HiRes.edHeight.Text := '120';
+      HiRes.cbSupersample.ItemIndex := 1;
+      HiRes.edFile.Text := ExpandFileName(HiResFile);
+      HiRes.StartRender;
+      Start := GetTickCount;
+      while HiRes.IsRunning and (GetTickCount - Start < kSmokeTimeoutMs) do
+      begin
+        Application.ProcessMessages;
+        Sleep(kRenderPollMs);
+      end;
+      if HiRes.IsRunning then
+        raise Exception.Create('rendu HD non terminé');
+      if not FileExists(HiResFile) then
+        raise Exception.Create('fichier du rendu HD absent');
+      FSmokeLog.Add('Rendu HD OK');
       if not FHasSmokeFailure then
         Result := 0;
     except
@@ -1066,6 +1093,7 @@ begin
   btnSave.OnClick := SaveClick;
   btnExportPng.OnClick := ExportPngClick;
   btnAddFavorite.OnClick := AddFavoriteClick;
+  btnHiRes.OnClick := HiResClick;
   lbFavorites.OnDblClick := FavoritesDblClick;
   lbFavorites.OnKeyDown := FavoritesKeyDown;
   RefreshFavorites;
@@ -1333,6 +1361,23 @@ begin
     RefreshFavorites;
   end;
   Key := 0;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.HiResClick(Sender: TObject);
+var
+  Location: TFractalLocation;
+begin
+  if FHiResForm = nil then
+    FHiResForm := THiResForm.Create(Self);
+  Location := CaptureLocation;
+  try
+    THiResForm(FHiResForm).Prepare(FNavigator.Viewport, FFormula, FPalette, FMapping, LocationAsPngText(Location));
+  finally
+    Location.Free;
+  end;
+  FHiResForm.Show;
 end;
 
 end.

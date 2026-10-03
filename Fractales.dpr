@@ -17,7 +17,8 @@ uses
   Fractal.HiRes in 'src\Fractal.HiRes.pas',
   Fractal.View in 'src\Fractal.View.pas',
   MainFrm in 'src\MainFrm.pas' {MainForm},
-  PaletteEditorFrm in 'src\PaletteEditorFrm.pas' {PaletteEditorForm};
+  PaletteEditorFrm in 'src\PaletteEditorFrm.pas' {PaletteEditorForm},
+  HiResFrm in 'src\HiResFrm.pas' {HiResForm};
 
 begin
   Application.Initialize;
