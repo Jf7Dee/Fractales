@@ -17,6 +17,10 @@ const
   kInsideColor = $000000;
   kMaxStops = 1024;
   kMaxMapColors = 256;
+  kMaxColorValue = $FFFFFF;  // masque d'une couleur $00RRGGBB
+  kKeyName = 'Name';
+  kKeyCount = 'Count';
+  kKeyStop = 'Stop';
 
 type
   EPaletteError = class(Exception);
@@ -79,7 +83,6 @@ implementation
 const
   kDefaultRepeats = 25.0;
   kBuiltInCount = 5;
-  kDefaultName = 'Sans nom';
 
 {------------------------------------------------------------------------------}
 
@@ -98,7 +101,7 @@ end;
 function MakeStop(APosition: Double; AColor: Cardinal): TColorStop;
 begin
   Result.Position := EnsureRange(APosition, 0.0, 1.0);
-  Result.Color := AColor and $FFFFFF;
+  Result.Color := AColor and kMaxColorValue;
 end;
 
 {------------------------------------------------------------------------------}
@@ -187,7 +190,7 @@ end;
 
 procedure TGradientPalette.SetStopColor(Index: Integer; AColor: Cardinal);
 begin
-  FStops[Index].Color := AColor and $FFFFFF;
+  FStops[Index].Color := AColor and kMaxColorValue;
 end;
 
 {------------------------------------------------------------------------------}
@@ -249,10 +252,10 @@ procedure TGradientPalette.SaveToStrings(Lines: TStrings);
 var
   I: Integer;
 begin
-  Lines.Add('Name=' + FName);
-  Lines.Add('Count=' + IntToStr(Length(FStops)));
+  Lines.Add(kKeyName + '=' + FName);
+  Lines.Add(kKeyCount + '=' + IntToStr(Length(FStops)));
   for I := 0 to High(FStops) do
-    Lines.Add(Format('Stop%d=%s,%s', [I, FloatToInvariant(FStops[I].Position), IntToHex(FStops[I].Color, 6)]));
+    Lines.Add(Format('%s%d=%s,%s', [kKeyStop, I, FloatToInvariant(FStops[I].Position), IntToHex(FStops[I].Color, 6)]));
 end;
 
 {------------------------------------------------------------------------------}
@@ -264,12 +267,12 @@ var
   Position: TFloat;
   Color: Integer;
 begin
-  FName := Lines.Values['Name'];
-  Count := StrToIntDef(Lines.Values['Count'], kMaxStops);
+  FName := Lines.Values[kKeyName];
+  Count := StrToIntDef(Lines.Values[kKeyCount], kMaxStops);
   Clear;
   for I := 0 to Min(Count, kMaxStops) - 1 do
   begin
-    S := Lines.Values['Stop' + IntToStr(I)];
+    S := Lines.Values[kKeyStop + IntToStr(I)];
     if S = '' then
       Break;
     P := Pos(',', S);
@@ -277,7 +280,7 @@ begin
       Continue;
     Position := InvariantToFloat(Copy(S, 1, P - 1), -1);
     Color := StrToIntDef('$' + Trim(Copy(S, P + 1, MaxInt)), -1);
-    if (Position >= 0) and (Position <= 1) and (Color >= 0) and (Color <= $FFFFFF) then
+    if (Position >= 0) and (Position <= 1) and (Color >= 0) and (Color <= kMaxColorValue) then
       AddStop(Position, Cardinal(Color));
   end;
   if Length(FStops) = 0 then
@@ -345,7 +348,8 @@ var
   U, T: Double;
   I: Integer;
 begin
-  if Mu < 0 then
+  // IsNan d'abord : une comparaison ordonnée avec un NaN lève EInvalidOp quand les exceptions FPU sont actives
+  if IsNan(Mu) or IsInfinite(Mu) or (Mu < 0) then
     Exit(kInsideColor);
   U := Mu / kRefIter;
   if FMapping.Stretch <> 1 then
@@ -411,10 +415,13 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure MappingToSliders(const M: TColorMapping; out Offset, Repeats, Stretch: Integer);
+var
+  C: TColorMapping;
 begin
-  Offset := Round(M.Offset * kSliderMax);
-  Repeats := Round(Log10(M.Repeats) / kRepeatsDecades * kSliderMax);
-  Stretch := Round((M.Stretch - kMinStretch) / (kMaxStretch - kMinStretch) * kSliderMax);
+  C := ClampColorMapping(M);
+  Offset := Round(C.Offset * kSliderMax);
+  Repeats := Round(Log10(C.Repeats) / kRepeatsDecades * kSliderMax);
+  Stretch := Round((C.Stretch - kMinStretch) / (kMaxStretch - kMinStretch) * kSliderMax);
 end;
 
 {------------------------------------------------------------------------------}

@@ -3,7 +3,7 @@
 interface
 
 uses
-  Classes, SysUtils, TestFramework, Fractal.Types, Fractal.Palette;
+  Classes, SysUtils, Math, TestFramework, Fractal.Types, Fractal.Palette;
 
 type
   TTestPalette = class(TTestCase)
@@ -24,6 +24,10 @@ type
     procedure TestSliderRoundTrip;
     procedure TestSwapRedBlue;
     procedure TestBuiltInPalettes;
+    procedure TestMapperNanAndInfinityAreInside;
+    procedure TestMapperStretch;
+    procedure TestClampColorMapping;
+    procedure TestColorAtWrapsPastLastStop;
   end;
 
 implementation
@@ -335,6 +339,97 @@ begin
     finally
       P.Free;
     end;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestMapperNanAndInfinityAreInside;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  V: Single;
+begin
+  P := CreateBuiltInPalette(0);
+  M := TColorMapper.Create(P, DefaultColorMapping);
+  try
+    V := NaN;
+    CheckEquals(0, Integer(M.MapValue(V)));
+    V := Infinity;
+    CheckEquals(0, Integer(M.MapValue(V)));
+    V := NegInfinity;
+    CheckEquals(0, Integer(M.MapValue(V)));
+  finally
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestMapperStretch;
+var
+  P: TGradientPalette;
+  A, B: TColorMapper;
+  MA, MB: TColorMapping;
+begin
+  P := CreateBuiltInPalette(0);
+  MA := DefaultColorMapping;
+  MA.Repeats := 10;
+  MA.Stretch := 0.5;
+  MB := MA;
+  MB.Stretch := 1;
+  A := TColorMapper.Create(P, MA);
+  B := TColorMapper.Create(P, MB);
+  try
+    // mu = 250 : u = 0,25 ; u^0,5 = 0,5 ; équivaut à u = 0,5 (mu = 500) sans étirement
+    CheckEquals(Integer(B.MapValue(500)), Integer(A.MapValue(250)));
+  finally
+    B.Free;
+    A.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestClampColorMapping;
+var
+  M, R: TColorMapping;
+begin
+  M := DefaultColorMapping;
+  M.Repeats := 0;
+  CheckEquals(kMinRepeats, ClampColorMapping(M).Repeats, 1e-12);
+  M.Repeats := 1e6;
+  CheckEquals(kMaxRepeats, ClampColorMapping(M).Repeats, 1e-12);
+  M := DefaultColorMapping;
+  M.Stretch := 0;
+  CheckEquals(kMinStretch, ClampColorMapping(M).Stretch, 1e-12);
+  M.Stretch := 9;
+  CheckEquals(kMaxStretch, ClampColorMapping(M).Stretch, 1e-12);
+  M := DefaultColorMapping;
+  M.Offset := 1.25;
+  CheckEquals(0.25, ClampColorMapping(M).Offset, 1e-12);
+  M.Offset := NaN;
+  R := ClampColorMapping(M);
+  CheckEquals(0, R.Offset, 1e-12);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestColorAtWrapsPastLastStop;
+var
+  P: TGradientPalette;
+  G: Cardinal;
+begin
+  P := CreateTwoStops(0.25, $000000, 0.75, $FFFFFF);
+  try
+    // 0,9 est après le dernier point : entre le blanc (0,75) et le noir qui reboucle (1,25)
+    G := (P.ColorAt(0.9) shr 8) and $FF;
+    CheckTrue((G > 0) and (G < 255), IntToStr(G));
+    CheckTrue(P.ColorAt(0.9) <> P.ColorAt(0.75));
+  finally
+    P.Free;
   end;
 end;
 
