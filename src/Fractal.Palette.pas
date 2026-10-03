@@ -1,0 +1,484 @@
+﻿unit Fractal.Palette;
+
+interface
+
+uses
+  SysUtils, Classes, Math, Fractal.Types;
+
+const
+  kLutSize = 4096;
+  kRefIter = 1000.0;  // u = mu / kRefIter : les couleurs ne dépendent pas du nombre max d'itérations
+  kSliderMax = 1000;
+  kMinRepeats = 1.0;
+  kMaxRepeats = 1000.0;
+  kRepeatsDecades = 3;  // 10^0 .. 10^3
+  kMinStretch = 0.2;
+  kMaxStretch = 2.0;
+  kInsideColor = $000000;
+  kMaxStops = 1024;
+  kMaxMapColors = 256;
+
+type
+  EPaletteError = class(Exception);
+
+  TColorStop = record
+    Position: Double;
+    Color: Cardinal;  // $00RRGGBB
+  end;
+
+  TGradientPalette = class
+  private
+    FName: string;
+    FStops: array of TColorStop;
+    function InsertStop(const S: TColorStop): Integer;
+  public
+    constructor Create;
+    procedure Assign(Source: TGradientPalette);
+    procedure Clear;
+    procedure SetDefault;
+    function AddStop(APosition: Double; AColor: Cardinal): Integer;
+    procedure DeleteStop(Index: Integer);
+    function MoveStop(Index: Integer; APosition: Double): Integer;
+    procedure SetStopColor(Index: Integer; AColor: Cardinal);
+    function StopCount: Integer;
+    function Stop(Index: Integer): TColorStop;
+    function ColorAt(T: Double): Cardinal;
+    procedure SaveToStrings(Lines: TStrings);
+    procedure LoadFromStrings(Lines: TStrings);
+    procedure LoadFromMap(Lines: TStrings);
+    property Name: string read FName write FName;
+  end;
+
+  TColorMapping = record
+    Offset: Double;
+    Repeats: Double;
+    Stretch: Double;
+    IsInverted: Boolean;
+  end;
+
+  TColorMapper = class
+  private
+    FLut: array[0..kLutSize - 1] of Cardinal;
+    FMapping: TColorMapping;
+  public
+    constructor Create(APalette: TGradientPalette; const AMapping: TColorMapping);
+    function MapValue(Mu: Single): Cardinal;
+    procedure MapRow(Src: PSingle; Dest: PCardinal; Count: Integer);
+  end;
+
+function DefaultColorMapping: TColorMapping;
+function ClampColorMapping(const M: TColorMapping): TColorMapping;
+function MappingFromSliders(Offset, Repeats, Stretch: Integer; IsInverted: Boolean): TColorMapping;
+procedure MappingToSliders(const M: TColorMapping; out Offset, Repeats, Stretch: Integer);
+function SwapRedBlue(C: Cardinal): Cardinal;
+function BuiltInPaletteCount: Integer;
+function CreateBuiltInPalette(Index: Integer): TGradientPalette;
+
+implementation
+
+const
+  kDefaultRepeats = 25.0;
+  kBuiltInCount = 5;
+  kDefaultName = 'Sans nom';
+
+{------------------------------------------------------------------------------}
+
+function LerpColor(A, B: Cardinal; F: Double): Cardinal;
+var
+  R, G, Bl: Integer;
+begin
+  R := Round(((A shr 16) and $FF) * (1 - F) + ((B shr 16) and $FF) * F);
+  G := Round(((A shr 8) and $FF) * (1 - F) + ((B shr 8) and $FF) * F);
+  Bl := Round((A and $FF) * (1 - F) + (B and $FF) * F);
+  Result := (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(Bl);
+end;
+
+{------------------------------------------------------------------------------}
+
+function MakeStop(APosition: Double; AColor: Cardinal): TColorStop;
+begin
+  Result.Position := EnsureRange(APosition, 0.0, 1.0);
+  Result.Color := AColor and $FFFFFF;
+end;
+
+{------------------------------------------------------------------------------}
+
+constructor TGradientPalette.Create;
+begin
+  inherited Create;
+  SetDefault;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TGradientPalette.Assign(Source: TGradientPalette);
+begin
+  FName := Source.FName;
+  FStops := Copy(Source.FStops);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TGradientPalette.Clear;
+begin
+  SetLength(FStops, 0);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TGradientPalette.SetDefault;
+begin
+  Clear;
+  AddStop(0, $000000);
+  AddStop(0.5, $FFFFFF);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TGradientPalette.InsertStop(const S: TColorStop): Integer;
+var
+  I: Integer;
+begin
+  Result := Length(FStops);
+  for I := 0 to High(FStops) do
+    if FStops[I].Position > S.Position then
+    begin
+      Result := I;
+      Break;
+    end;
+  SetLength(FStops, Length(FStops) + 1);
+  for I := High(FStops) downto Result + 1 do
+    FStops[I] := FStops[I - 1];
+  FStops[Result] := S;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TGradientPalette.AddStop(APosition: Double; AColor: Cardinal): Integer;
+begin
+  Result := InsertStop(MakeStop(APosition, AColor));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TGradientPalette.DeleteStop(Index: Integer);
+var
+  I: Integer;
+begin
+  if (Index < 0) or (Index > High(FStops)) then
+    Exit;
+  for I := Index to High(FStops) - 1 do
+    FStops[I] := FStops[I + 1];
+  SetLength(FStops, Length(FStops) - 1);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TGradientPalette.MoveStop(Index: Integer; APosition: Double): Integer;
+var
+  S: TColorStop;
+begin
+  S := FStops[Index];
+  DeleteStop(Index);
+  Result := InsertStop(MakeStop(APosition, S.Color));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TGradientPalette.SetStopColor(Index: Integer; AColor: Cardinal);
+begin
+  FStops[Index].Color := AColor and $FFFFFF;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TGradientPalette.StopCount: Integer;
+begin
+  Result := Length(FStops);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TGradientPalette.Stop(Index: Integer): TColorStop;
+begin
+  Result := FStops[Index];
+end;
+
+{------------------------------------------------------------------------------}
+
+function TGradientPalette.ColorAt(T: Double): Cardinal;
+var
+  N, I: Integer;
+  First, Last: TColorStop;
+  Span, Local: Double;
+begin
+  N := Length(FStops);
+  if N = 0 then
+    Exit(0);
+  if N = 1 then
+    Exit(FStops[0].Color);
+  T := T - Floor(T);
+  First := FStops[0];
+  Last := FStops[N - 1];
+  if (T < First.Position) or (T >= Last.Position) then
+  begin
+    // segment qui reboucle du dernier point vers le premier
+    Span := 1 - Last.Position + First.Position;
+    if T >= Last.Position then
+      Local := T - Last.Position
+    else
+      Local := T + 1 - Last.Position;
+    if Span <= 0 then
+      Exit(First.Color);
+    Exit(LerpColor(Last.Color, First.Color, Local / Span));
+  end;
+  for I := 0 to N - 2 do
+    if (T >= FStops[I].Position) and (T < FStops[I + 1].Position) then
+    begin
+      Span := FStops[I + 1].Position - FStops[I].Position;
+      if Span <= 0 then
+        Exit(FStops[I].Color);
+      Exit(LerpColor(FStops[I].Color, FStops[I + 1].Color, (T - FStops[I].Position) / Span));
+    end;
+  Result := Last.Color;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TGradientPalette.SaveToStrings(Lines: TStrings);
+var
+  I: Integer;
+begin
+  Lines.Add('Name=' + FName);
+  Lines.Add('Count=' + IntToStr(Length(FStops)));
+  for I := 0 to High(FStops) do
+    Lines.Add(Format('Stop%d=%s,%s', [I, FloatToInvariant(FStops[I].Position), IntToHex(FStops[I].Color, 6)]));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TGradientPalette.LoadFromStrings(Lines: TStrings);
+var
+  I, Count, P: Integer;
+  S: string;
+  Position: TFloat;
+  Color: Integer;
+begin
+  FName := Lines.Values['Name'];
+  Count := StrToIntDef(Lines.Values['Count'], kMaxStops);
+  Clear;
+  for I := 0 to Min(Count, kMaxStops) - 1 do
+  begin
+    S := Lines.Values['Stop' + IntToStr(I)];
+    if S = '' then
+      Break;
+    P := Pos(',', S);
+    if P = 0 then
+      Continue;
+    Position := InvariantToFloat(Copy(S, 1, P - 1), -1);
+    Color := StrToIntDef('$' + Trim(Copy(S, P + 1, MaxInt)), -1);
+    if (Position >= 0) and (Position <= 1) and (Color >= 0) and (Color <= $FFFFFF) then
+      AddStop(Position, Cardinal(Color));
+  end;
+  if Length(FStops) = 0 then
+    SetDefault;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ReadInteger(const S: string; var P: Integer; out Value: Integer): Boolean;
+var
+  Start: Integer;
+begin
+  while (P <= Length(S)) and ((S[P] = ' ') or (S[P] = #9)) do
+    Inc(P);
+  Start := P;
+  while (P <= Length(S)) and (S[P] >= '0') and (S[P] <= '9') do
+    Inc(P);
+  Result := (P > Start) and TryStrToInt(Copy(S, Start, P - Start), Value);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TGradientPalette.LoadFromMap(Lines: TStrings);
+var
+  Colors: array of Cardinal;
+  I, P, R, G, B, N: Integer;
+begin
+  SetLength(Colors, 0);
+  for I := 0 to Lines.Count - 1 do
+  begin
+    if Length(Colors) >= kMaxMapColors then
+      Break;
+    P := 1;
+    if ReadInteger(Lines[I], P, R) and ReadInteger(Lines[I], P, G) and ReadInteger(Lines[I], P, B)
+      and (R <= 255) and (G <= 255) and (B <= 255) then
+    begin
+      N := Length(Colors);
+      SetLength(Colors, N + 1);
+      Colors[N] := (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(B);
+    end;
+  end;
+  if Length(Colors) < 2 then
+    raise EPaletteError.Create('Fichier .map invalide : moins de deux couleurs lisibles.');
+  Clear;
+  for I := 0 to High(Colors) do
+    AddStop(I / Length(Colors), Colors[I]);
+end;
+
+{------------------------------------------------------------------------------}
+
+constructor TColorMapper.Create(APalette: TGradientPalette; const AMapping: TColorMapping);
+var
+  I: Integer;
+begin
+  inherited Create;
+  FMapping := ClampColorMapping(AMapping);
+  for I := 0 to kLutSize - 1 do
+    FLut[I] := APalette.ColorAt(I / kLutSize);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TColorMapper.MapValue(Mu: Single): Cardinal;
+var
+  U, T: Double;
+  I: Integer;
+begin
+  if Mu < 0 then
+    Exit(kInsideColor);
+  U := Mu / kRefIter;
+  if FMapping.Stretch <> 1 then
+    U := Power(U, FMapping.Stretch);
+  T := Frac(FMapping.Offset + FMapping.Repeats * U);
+  if FMapping.IsInverted then
+    T := 1 - T;
+  I := EnsureRange(Trunc(T * kLutSize), 0, kLutSize - 1);
+  Result := FLut[I];
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TColorMapper.MapRow(Src: PSingle; Dest: PCardinal; Count: Integer);
+var
+  I: Integer;
+begin
+  for I := 0 to Count - 1 do
+  begin
+    Dest^ := MapValue(Src^);
+    Inc(Src);
+    Inc(Dest);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function DefaultColorMapping: TColorMapping;
+begin
+  Result.Offset := 0;
+  Result.Repeats := kDefaultRepeats;
+  Result.Stretch := 1;
+  Result.IsInverted := False;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ClampColorMapping(const M: TColorMapping): TColorMapping;
+begin
+  Result := M;
+  if IsNan(Result.Offset) or IsInfinite(Result.Offset) then
+    Result.Offset := 0;
+  Result.Offset := Result.Offset - Floor(Result.Offset);
+  if IsNan(Result.Repeats) then
+    Result.Repeats := kDefaultRepeats;
+  Result.Repeats := EnsureRange(Result.Repeats, kMinRepeats, kMaxRepeats);
+  if IsNan(Result.Stretch) then
+    Result.Stretch := 1;
+  Result.Stretch := EnsureRange(Result.Stretch, kMinStretch, kMaxStretch);
+end;
+
+{------------------------------------------------------------------------------}
+
+function MappingFromSliders(Offset, Repeats, Stretch: Integer; IsInverted: Boolean): TColorMapping;
+begin
+  Result.Offset := Offset / kSliderMax;
+  Result.Repeats := Power(10, kRepeatsDecades * Repeats / kSliderMax);
+  Result.Stretch := kMinStretch + (kMaxStretch - kMinStretch) * Stretch / kSliderMax;
+  Result.IsInverted := IsInverted;
+  Result := ClampColorMapping(Result);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure MappingToSliders(const M: TColorMapping; out Offset, Repeats, Stretch: Integer);
+begin
+  Offset := Round(M.Offset * kSliderMax);
+  Repeats := Round(Log10(M.Repeats) / kRepeatsDecades * kSliderMax);
+  Stretch := Round((M.Stretch - kMinStretch) / (kMaxStretch - kMinStretch) * kSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+function SwapRedBlue(C: Cardinal): Cardinal;
+begin
+  Result := ((C and $FF) shl 16) or (C and $FF00) or ((C shr 16) and $FF);
+end;
+
+{------------------------------------------------------------------------------}
+
+function BuiltInPaletteCount: Integer;
+begin
+  Result := kBuiltInCount;
+end;
+
+{------------------------------------------------------------------------------}
+
+function CreateBuiltInPalette(Index: Integer): TGradientPalette;
+begin
+  Result := TGradientPalette.Create;
+  Result.Clear;
+  case Index of
+    0:
+      begin
+        Result.Name := 'Classique';
+        Result.AddStop(0, $000764);
+        Result.AddStop(0.16, $206BCB);
+        Result.AddStop(0.42, $EDFFFF);
+        Result.AddStop(0.6425, $FFAA00);
+        Result.AddStop(0.8575, $000200);
+      end;
+    1:
+      begin
+        Result.Name := 'Feu';
+        Result.AddStop(0, $000000);
+        Result.AddStop(0.25, $800000);
+        Result.AddStop(0.5, $FF4000);
+        Result.AddStop(0.75, $FFC000);
+        Result.AddStop(0.9, $FFFFA0);
+      end;
+    2:
+      begin
+        Result.Name := 'Océan';
+        Result.AddStop(0, $000020);
+        Result.AddStop(0.3, $0050A0);
+        Result.AddStop(0.6, $40C0E0);
+        Result.AddStop(0.8, $E0FFFF);
+      end;
+    3:
+      begin
+        Result.Name := 'Arc-en-ciel';
+        Result.AddStop(0, $FF0000);
+        Result.AddStop(1 / 6, $FFFF00);
+        Result.AddStop(2 / 6, $00FF00);
+        Result.AddStop(3 / 6, $00FFFF);
+        Result.AddStop(4 / 6, $0000FF);
+        Result.AddStop(5 / 6, $FF00FF);
+      end;
+  else
+    Result.Name := 'Gris';
+    Result.AddStop(0, $000000);
+    Result.AddStop(0.5, $FFFFFF);
+  end;
+end;
+
+end.
