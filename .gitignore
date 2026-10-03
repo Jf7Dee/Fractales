@@ -1,0 +1,10 @@
+bin/
+dcu/
+*.dcu
+*.exe
+*.~*
+__history/
+*.local
+*.identcache
+*.dsk
+*.stat
