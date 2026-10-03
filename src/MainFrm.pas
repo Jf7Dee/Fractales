@@ -16,6 +16,10 @@ const
   kKeyZoomFactor = 2.0;
   kSmokeTimeoutMs = 30000;
   kRenderPollMs = 20;
+  kParamRowHeight = 28;
+  kParamLabelWidth = 120;
+  kParamEditLeft = 130;
+  kParamEditWidth = 120;
   kMinCoordDigits = 3;
   kMaxCoordDigits = 18;
 
@@ -76,6 +80,9 @@ type
     FMouseX: Integer;
     FMouseY: Integer;
     FStatusMessage: string;
+    FIsFullScreen: Boolean;
+    FSavedBounds: TRect;
+    FWasSidePanelVisible: Boolean;
     FSmokeLog: TStringList;
     FHasSmokeFailure: Boolean;
     procedure InitNavigation;
@@ -100,6 +107,21 @@ type
     procedure UpdateStatus;
     procedure UpdateHistoryButtons;
     function WaitForRender(TimeoutMs: Cardinal): Boolean;
+    procedure InitFormulaPanel;
+    procedure FormulaComboChange(Sender: TObject);
+    procedure SetFormula(AFormula: TFractalFormula; IsResetView: Boolean);
+    procedure BuildParamEditors;
+    procedure ParamEditExit(Sender: TObject);
+    procedure ParamEditKeyPress(Sender: TObject; var Key: Char);
+    procedure ApplyParamEdit(Edit: TEdit);
+    procedure MaxIterEditExit(Sender: TObject);
+    procedure MaxIterEditKeyPress(Sender: TObject; var Key: Char);
+    procedure ApplyMaxIterEdit;
+    procedure AutoIterClick(Sender: TObject);
+    procedure UpdateMaxIterControls;
+    procedure TogglePanelClick(Sender: TObject);
+    procedure SetSidePanelVisible(IsVisible: Boolean);
+    procedure ToggleFullScreen;
     procedure CheckSmokeStep(const StepName: string);
     procedure SmokeException(Sender: TObject; E: Exception);
   public
@@ -172,6 +194,7 @@ begin
   FAppEvents.OnMessage := AppMessage;
   tmrDisplay.OnTimer := DisplayTimer;
   InitNavigation;
+  InitFormulaPanel;
   FView.OnResize := ViewResize;
 
   FNavigator.Reset(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth,
@@ -220,6 +243,18 @@ end;
 
 procedure TMainForm.FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
 begin
+  if Key = VK_F4 then
+  begin
+    SetSidePanelVisible(not pnlSide.Visible);
+    Key := 0;
+    Exit;
+  end;
+  if Key = VK_F11 then
+  begin
+    ToggleFullScreen;
+    Key := 0;
+    Exit;
+  end;
   if Key = VK_ESCAPE then
   begin
     FNavigator.CancelSelection;
@@ -306,7 +341,10 @@ var
 begin
   V := FNavigator.Viewport;
   if FIsAutoIter then
+  begin
     FFormula.MaxIter := AutoMaxIter(V);
+    UpdateMaxIterControls;
+  end;
   if Change.Kind = vckPan then
     FEngine.RenderShifted(V, FFormula, Change.DX, Change.DY)
   else
@@ -541,6 +579,17 @@ begin
         raise Exception.Create('rendu après déplacement non terminé');
       CheckSmokeStep('déplacement');
       FSmokeLog.Add('Déplacement OK');
+      SetFormula(TMultibrotFormula.Create, True);
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu Multibrot non terminé');
+      CheckSmokeStep('Multibrot');
+      if pnlParams.ControlCount <> 2 then
+        raise Exception.Create('éditeur de paramètres Multibrot absent');
+      SetSidePanelVisible(False);
+      SetSidePanelVisible(True);
+      if not pnlSide.Visible then
+        raise Exception.Create('panneau latéral non restauré');
+      FSmokeLog.Add('Formules et panneau OK');
       if not FHasSmokeFailure then
         Result := 0;
     except
@@ -551,6 +600,239 @@ begin
     Application.OnException := nil;
     FSmokeLog.SaveToFile(OutputFile + '.log', TEncoding.UTF8);
     FreeAndNil(FSmokeLog);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.InitFormulaPanel;
+var
+  I: Integer;
+begin
+  for I := 0 to FormulaClassCount - 1 do
+    cbFormula.Items.Add(FormulaClassAt(I).DisplayName);
+  cbFormula.OnChange := FormulaComboChange;
+  edMaxIter.OnExit := MaxIterEditExit;
+  edMaxIter.OnKeyPress := MaxIterEditKeyPress;
+  chkAutoIter.OnClick := AutoIterClick;
+  btnTogglePanel.OnClick := TogglePanelClick;
+  btnCollapse.OnClick := TogglePanelClick;
+  for I := 0 to FormulaClassCount - 1 do
+    if FormulaClassAt(I) = FFormula.ClassType then
+      cbFormula.ItemIndex := I;
+  BuildParamEditors;
+  UpdateMaxIterControls;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.FormulaComboChange(Sender: TObject);
+begin
+  SetFormula(FormulaClassAt(cbFormula.ItemIndex).Create, True);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.SetFormula(AFormula: TFractalFormula; IsResetView: Boolean);
+var
+  I: Integer;
+begin
+  FFormula.Free;
+  FFormula := AFormula;
+  for I := 0 to FormulaClassCount - 1 do
+    if FormulaClassAt(I) = FFormula.ClassType then
+      cbFormula.ItemIndex := I;
+  BuildParamEditors;
+  UpdateMaxIterControls;
+  if IsResetView then
+    FNavigator.Reset(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth,
+      Max(1, FView.ClientWidth), Max(1, FView.ClientHeight)))
+  else
+    RenderCurrent;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.BuildParamEditors;
+var
+  I: Integer;
+  L: TLabel;
+  E: TEdit;
+begin
+  // détacher OnExit avant de libérer : un champ qui perd le focus en mourant ne doit rien appliquer
+  for I := 0 to pnlParams.ControlCount - 1 do
+    if pnlParams.Controls[I] is TEdit then
+      TEdit(pnlParams.Controls[I]).OnExit := nil;
+  while pnlParams.ControlCount > 0 do
+    pnlParams.Controls[0].Free;
+  for I := 0 to FFormula.ParamCount - 1 do
+  begin
+    L := TLabel.Create(Self);
+    L.Parent := pnlParams;
+    L.Caption := FFormula.ParamInfo(I).Caption;
+    L.SetBounds(0, I * kParamRowHeight + 4, kParamLabelWidth, 20);
+    E := TEdit.Create(Self);
+    E.Parent := pnlParams;
+    E.SetBounds(kParamEditLeft, I * kParamRowHeight, kParamEditWidth, 22);
+    E.Text := FloatToStr(FFormula.GetParam(I));
+    E.Tag := I;
+    E.OnExit := ParamEditExit;
+    E.OnKeyPress := ParamEditKeyPress;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ParamEditExit(Sender: TObject);
+begin
+  ApplyParamEdit(TEdit(Sender));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ParamEditKeyPress(Sender: TObject; var Key: Char);
+begin
+  if Key = #13 then
+  begin
+    ApplyParamEdit(TEdit(Sender));
+    Key := #0;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ApplyParamEdit(Edit: TEdit);
+var
+  Value: Double;
+  Index: Integer;
+begin
+  Index := Edit.Tag;
+  if TryStrToFloat(Edit.Text, Value) then
+  begin
+    if Value <> FFormula.GetParam(Index) then
+    begin
+      FFormula.SetParam(Index, Value);
+      RenderCurrent;
+    end;
+  end
+  else
+    FStatusMessage := Format('Valeur invalide pour « %s ».', [FFormula.ParamInfo(Index).Caption]);
+  Edit.Text := FloatToStr(FFormula.GetParam(Index));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.MaxIterEditExit(Sender: TObject);
+begin
+  ApplyMaxIterEdit;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.MaxIterEditKeyPress(Sender: TObject; var Key: Char);
+begin
+  if Key = #13 then
+  begin
+    ApplyMaxIterEdit;
+    Key := #0;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ApplyMaxIterEdit;
+var
+  Value: Integer;
+begin
+  if TryStrToInt(edMaxIter.Text, Value) and (Value <> FFormula.MaxIter) then
+  begin
+    FFormula.MaxIter := Value;
+    FIsAutoIter := False;
+    RenderCurrent;
+  end;
+  UpdateMaxIterControls;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.AutoIterClick(Sender: TObject);
+begin
+  if FIsUpdating then
+    Exit;
+  FIsAutoIter := chkAutoIter.Checked;
+  if FIsAutoIter then
+  begin
+    FFormula.MaxIter := AutoMaxIter(FNavigator.Viewport);
+    RenderCurrent;
+  end;
+  UpdateMaxIterControls;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.UpdateMaxIterControls;
+begin
+  FIsUpdating := True;
+  try
+    edMaxIter.Text := IntToStr(FFormula.MaxIter);
+    chkAutoIter.Checked := FIsAutoIter;
+  finally
+    FIsUpdating := False;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.TogglePanelClick(Sender: TObject);
+begin
+  SetSidePanelVisible(not pnlSide.Visible);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.SetSidePanelVisible(IsVisible: Boolean);
+begin
+  if IsVisible then
+  begin
+    // ordre des contrôles alignés à droite : bande de repli, séparateur, panneau
+    pnlSide.Left := ClientWidth;
+    pnlSide.Visible := True;
+    splSide.Left := pnlSide.Left - 1;
+    splSide.Visible := True;
+    btnCollapse.Caption := #9656;
+  end
+  else
+  begin
+    splSide.Visible := False;
+    pnlSide.Visible := False;
+    btnCollapse.Caption := #9666;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ToggleFullScreen;
+begin
+  FIsFullScreen := not FIsFullScreen;
+  if FIsFullScreen then
+  begin
+    FSavedBounds := BoundsRect;
+    FWasSidePanelVisible := pnlSide.Visible;
+    pnlTop.Visible := False;
+    sbStatus.Visible := False;
+    SetSidePanelVisible(False);
+    pnlCollapse.Visible := False;
+    BorderStyle := bsNone;
+    BoundsRect := Monitor.BoundsRect;
+  end
+  else
+  begin
+    BorderStyle := bsSizeable;
+    BoundsRect := FSavedBounds;
+    pnlTop.Visible := True;
+    sbStatus.Visible := True;
+    pnlCollapse.Visible := True;
+    SetSidePanelVisible(FWasSidePanelVisible);
   end;
 end;
 
