@@ -301,3 +301,26 @@ fractales.
 Le plan Delphi reste un bon choix pour obtenir rapidement une application qui fonctionne. Rust deviendrait
 intéressant si la vitesse brute, le 64 bits ou le zoom profond deviennent prioritaires, c'est-à-dire
 précisément pour les sous-projets 4 et 5.
+
+## 7. Mesures réelles (2026-10-04)
+
+Programmes : `bench\FractalesBench.dpr` (le vrai `Fractal.Engine`, Delphi 2010, Extended 80 bits x87) et
+`bench-rust` (f64, `rayon` avec une tâche par ligne, mode scalaire et mode SIMD `wide` f64x4). Même machine
+(4 cœurs logiques, processeur sans AVX, donc SIMD limité à SSE2), 1920×1080, médiane de 5 rendus. Les sommes de
+contrôle (points intérieurs) sont identiques partout : les deux programmes font le même travail.
+
+| Scène (4 threads) | Delphi | Rust scalaire | Rust SIMD (SSE2) |
+|---|---|---|---|
+| Vue d'ensemble (1 000 it.) | 359 ms | 108 ms (×3,3) | 63 ms (×5,7) |
+| Vue profonde (5 000 it.) | 8 986 ms | 2 872 ms (×3,1) | 1 003 ms (×9,0) |
+| Intérieur lourd (2 000 it.) | 9 596 ms | 3 089 ms (×3,1) | 1 050 ms (×9,1) |
+
+Les rapports sont du même ordre sur 1 thread. Les estimations du §4.2 (2 à 3× en scalaire, 6 à 10× en SIMD) sont
+confirmées ; AVX reste à mesurer sur un processeur qui l'a.
+
+**Pièges rencontrés :**
+- Un programme Rust lancé depuis l'IDE (« Process finished with exit code 0 ») est compilé en **debug** : la mesure ne
+  vaut rien, et le SIMD `wide` y devient 8× plus lent que le scalaire. Toujours mesurer avec `cargo run --release`.
+- Dans PowerShell, `set VAR=…` ne définit pas de variable d'environnement : écrire `$env:RUSTFLAGS="-C target-cpu=native"`.
+- Une parallélisation par gros blocs de lignes contiguës équilibre mal la charge (×1,7 sur 4 cœurs pour la vue
+  profonde) ; une tâche par ligne (`with_max_len(1)`) ou par tuile, comme le moteur Delphi, donne ×3,6 à ×3,9.
