@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
-  Fractal.Persistence, Fractal.Png, Fractal.View, ImgList;
+  Fractal.Persistence, Fractal.Png, Fractal.View, ImgList, Menus;
 
 const
   kJuliaPreviewWidth = 240;
@@ -30,14 +30,9 @@ type
   TMainForm = class(TForm)
     pnlTop: TPanel;
     lblNavMode: TLabel;
-    btnOpen: TButton;
-    btnSave: TButton;
-    btnExportPng: TButton;
-    btnHiRes: TButton;
     cbNavMode: TComboBox;
     btnBack: TBitBtn;
     btnForward: TBitBtn;
-    btnAddFavorite: TBitBtn;
     sbStatus: TStatusBar;
     pnlSide: TPanel;
     grpFormula: TGroupBox;
@@ -63,6 +58,15 @@ type
     btnCollapse: TSpeedButton;
     tmrDisplay: TTimer;
     ImageList1: TImageList;
+    MainMenu1: TMainMenu;
+    MenuTopFichier1: TMenuItem;
+    MenuOuvrirFractale: TMenuItem;
+    MenuEnregistrerFractale: TMenuItem;
+    MenuTopImage1: TMenuItem;
+    MenuSauverEnPNG1: TMenuItem;
+    MenuSauverRenduEnHD1: TMenuItem;
+    Panel1: TPanel;
+    btnAddFavorite: TBitBtn;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
