@@ -89,8 +89,10 @@ type
     FOnSelectionChanged: TNotifyEvent;
     FOnPrecisionLimit: TNotifyEvent;
     FOnJuliaPoint: TComplexPointEvent;
+    FOnHistoryChanged: TNotifyEvent;
     procedure DoViewChanged(Kind: TViewChangeKind; DX, DY: Integer);
     procedure DoSelectionChanged;
+    procedure DoHistoryChanged;
     function TryCommit(const V: TViewport): Boolean;
     function ConstrainedEnd(X, Y: Integer): TPoint;
   public
@@ -123,6 +125,8 @@ type
     property OnSelectionChanged: TNotifyEvent read FOnSelectionChanged write FOnSelectionChanged;
     property OnPrecisionLimit: TNotifyEvent read FOnPrecisionLimit write FOnPrecisionLimit;
     property OnJuliaPoint: TComplexPointEvent read FOnJuliaPoint write FOnJuliaPoint;
+    // toute modification de l'historique (ajout, recul, avance, remise à zéro) : état de Précédent / Suivant
+    property OnHistoryChanged: TNotifyEvent read FOnHistoryChanged write FOnHistoryChanged;
   end;
 
 const
@@ -336,6 +340,14 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TNavigator.DoHistoryChanged;
+begin
+  if Assigned(FOnHistoryChanged) then
+    FOnHistoryChanged(Self);
+end;
+
+{------------------------------------------------------------------------------}
+
 function TNavigator.TryCommit(const V: TViewport): Boolean;
 begin
   if V.PrecisionState = psLimit then
@@ -347,6 +359,7 @@ begin
   FViewport := V;
   FHistory.Push(V);
   DoViewChanged(vckReset, 0, 0);
+  DoHistoryChanged;
   Result := True;
 end;
 
@@ -366,6 +379,7 @@ begin
   FHistory.Clear;
   FHistory.Push(V);
   DoViewChanged(vckReset, 0, 0);
+  DoHistoryChanged;
 end;
 
 {------------------------------------------------------------------------------}
@@ -531,6 +545,7 @@ end;
 procedure TNavigator.CommitHistory;
 begin
   FHistory.Push(FViewport);
+  DoHistoryChanged;
 end;
 
 {------------------------------------------------------------------------------}
@@ -541,6 +556,7 @@ begin
     Exit;
   FViewport := FHistory.Back.Resized(FViewport.PixelWidth, FViewport.PixelHeight);
   DoViewChanged(vckReset, 0, 0);
+  DoHistoryChanged;
 end;
 
 {------------------------------------------------------------------------------}
@@ -551,6 +567,7 @@ begin
     Exit;
   FViewport := FHistory.Forward.Resized(FViewport.PixelWidth, FViewport.PixelHeight);
   DoViewChanged(vckReset, 0, 0);
+  DoHistoryChanged;
 end;
 
 {------------------------------------------------------------------------------}

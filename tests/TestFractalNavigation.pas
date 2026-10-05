@@ -14,9 +14,13 @@ type
     FIsLimitHit: Boolean;
     FJuliaCount: Integer;
     FJuliaPoint: TComplexPoint;
+    FHistoryChangeCount: Integer;
+    FIsBackSeen: Boolean;
+    FIsForwardSeen: Boolean;
     procedure ViewChanged(Sender: TObject; const Change: TViewChange);
     procedure PrecisionLimit(Sender: TObject);
     procedure JuliaPoint(Sender: TObject; const P: TComplexPoint);
+    procedure HistoryChanged(Sender: TObject);
   protected
     procedure SetUp; override;
     procedure TearDown; override;
@@ -33,6 +37,8 @@ type
     procedure TestKeyPanMovesByTenthOfWidth;
     procedure TestJuliaModeReportsPoint;
     procedure TestHistoryCapacity;
+    procedure TestHistoryChangeReportedAfterDragPan;
+    procedure TestHistoryChangeReportedAfterKeyPan;
   end;
 
 implementation
@@ -48,10 +54,12 @@ begin
   FNavigator.OnViewChanged := ViewChanged;
   FNavigator.OnPrecisionLimit := PrecisionLimit;
   FNavigator.OnJuliaPoint := JuliaPoint;
+  FNavigator.OnHistoryChanged := HistoryChanged;
   FNavigator.Reset(MakeViewport(0, 0, 4, 400, 300));
   FChangeCount := 0;
   FIsLimitHit := False;
   FJuliaCount := 0;
+  FHistoryChangeCount := 0;
 end;
 
 {------------------------------------------------------------------------------}
@@ -82,6 +90,16 @@ procedure TTestNavigator.JuliaPoint(Sender: TObject; const P: TComplexPoint);
 begin
   Inc(FJuliaCount);
   FJuliaPoint := P;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.HistoryChanged(Sender: TObject);
+begin
+  // état relevé au moment de l'événement, comme le font les boutons Précédent / Suivant
+  Inc(FHistoryChangeCount);
+  FIsBackSeen := FNavigator.CanGoBack;
+  FIsForwardSeen := FNavigator.CanGoForward;
 end;
 
 {------------------------------------------------------------------------------}
@@ -255,6 +273,33 @@ begin
     FNavigator.ZoomCenter(1.01);
   CheckEquals(kHistoryCapacity, FNavigator.History.Count);
   CheckTrue(FNavigator.CanGoBack);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestHistoryChangeReportedAfterDragPan;
+begin
+  FNavigator.ZoomCenter(2);
+  FNavigator.GoBack;
+  CheckTrue(FIsForwardSeen, 'après Précédent');
+  FHistoryChangeCount := 0;
+  // le glissement enregistre l'historique après l'événement de vue : il doit être signalé lui aussi
+  FNavigator.MouseDown(nbLeft, 10, 10);
+  FNavigator.MouseMove(30, 30, True);
+  FNavigator.MouseUp(nbLeft, 30, 30);
+  CheckEquals(1, FHistoryChangeCount);
+  CheckTrue(FIsBackSeen, 'Précédent possible');
+  CheckFalse(FIsForwardSeen, 'avenir effacé');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestHistoryChangeReportedAfterKeyPan;
+begin
+  CheckFalse(FNavigator.CanGoBack);
+  FNavigator.KeyPan(1, 0);
+  CheckEquals(1, FHistoryChangeCount);
+  CheckTrue(FIsBackSeen);
 end;
 
 initialization
