@@ -20,6 +20,7 @@ uses
   PaletteEditorFrm in 'src\PaletteEditorFrm.pas' {PaletteEditorForm},
   HiResFrm in 'src\HiResFrm.pas' {HiResForm};
 
+{$R *.res}
 begin
   Application.Initialize;
   Application.MainFormOnTaskbar := True;

@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
-  Fractal.Persistence, Fractal.Png, Fractal.View;
+  Fractal.Persistence, Fractal.Png, Fractal.View, ImgList;
 
 const
   kJuliaPreviewWidth = 240;
@@ -35,10 +35,9 @@ type
     btnExportPng: TButton;
     btnHiRes: TButton;
     cbNavMode: TComboBox;
-    btnBack: TButton;
-    btnForward: TButton;
-    btnAddFavorite: TButton;
-    btnTogglePanel: TButton;
+    btnBack: TBitBtn;
+    btnForward: TBitBtn;
+    btnAddFavorite: TBitBtn;
     sbStatus: TStatusBar;
     pnlSide: TPanel;
     grpFormula: TGroupBox;
@@ -63,9 +62,27 @@ type
     pnlCollapse: TPanel;
     btnCollapse: TSpeedButton;
     tmrDisplay: TTimer;
+    ImageList1: TImageList;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
+
+    procedure BackClick(Sender: TObject);
+    procedure ForwardClick(Sender: TObject);
+    procedure OpenClick(Sender: TObject);
+    procedure SaveClick(Sender: TObject);
+    procedure ExportPngClick(Sender: TObject);
+    procedure HiResClick(Sender: TObject);
+    procedure AddFavoriteClick(Sender: TObject);
+    procedure FavoritesDblClick(Sender: TObject);
+    procedure FavoritesKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure TogglePanelClick(Sender: TObject);
+    procedure EditPaletteClick(Sender: TObject);
+    procedure ColorSliderChange(Sender: TObject);
+    procedure MaxIterEditExit(Sender: TObject);
+    procedure MaxIterEditKeyPress(Sender: TObject; var Key: Char);
+    procedure AutoIterClick(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -102,9 +119,8 @@ type
     procedure NavigatorSelectionChanged(Sender: TObject);
     procedure NavigatorPrecisionLimit(Sender: TObject);
     procedure NavigatorJuliaPoint(Sender: TObject; const P: TComplexPoint);
+    procedure NavigatorHistoryChanged(Sender: TObject);
     procedure NavModeChange(Sender: TObject);
-    procedure BackClick(Sender: TObject);
-    procedure ForwardClick(Sender: TObject);
     procedure DisplayTimer(Sender: TObject);
     procedure RenderCurrent;
     procedure RebuildMapper;
@@ -118,39 +134,29 @@ type
     procedure FormulaComboChange(Sender: TObject);
     procedure SetFormula(AFormula: TFractalFormula; IsResetView: Boolean);
     procedure BuildParamEditors;
+
     procedure ParamEditExit(Sender: TObject);
     procedure ParamEditKeyPress(Sender: TObject; var Key: Char);
     procedure ApplyParamEdit(Edit: TEdit);
-    procedure MaxIterEditExit(Sender: TObject);
-    procedure MaxIterEditKeyPress(Sender: TObject; var Key: Char);
     procedure ApplyMaxIterEdit;
-    procedure AutoIterClick(Sender: TObject);
     procedure UpdateMaxIterControls;
-    procedure TogglePanelClick(Sender: TObject);
+
     procedure SetSidePanelVisible(IsVisible: Boolean);
     procedure ToggleFullScreen;
     procedure InitColorPanel;
     procedure FillPaletteCombo;
     procedure PaletteComboChange(Sender: TObject);
-    procedure ColorSliderChange(Sender: TObject);
+
     procedure UpdateColorControls;
-    procedure EditPaletteClick(Sender: TObject);
     procedure PaletteEditorChange(Sender: TObject);
     procedure InitFilePanel;
     function CaptureLocation: TFractalLocation;
     procedure ApplyLocation(Location: TFractalLocation);
     function LocationAsPngText(Location: TFractalLocation): RawByteString;
-    procedure OpenClick(Sender: TObject);
-    procedure SaveClick(Sender: TObject);
-    procedure ExportPngClick(Sender: TObject);
     procedure ExportViewPng(const FileName: string);
-    procedure AddFavoriteClick(Sender: TObject);
-    procedure FavoritesDblClick(Sender: TObject);
-    procedure FavoritesKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure RefreshFavorites;
-    procedure HiResClick(Sender: TObject);
     procedure PrepareHiResForm(Sender: TObject);
-    procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
+
     procedure CheckSmokeStep(const StepName: string);
     procedure SmokeException(Sender: TObject; E: Exception);
   public
@@ -172,10 +178,8 @@ uses
 function ToNavButton(Button: TMouseButton): TNavButton;
 begin
   case Button of
-    mbRight:
-      Result := nbRight;
-    mbMiddle:
-      Result := nbMiddle;
+    mbRight: Result := nbRight;
+    mbMiddle: Result := nbMiddle;
   else
     Result := nbLeft;
   end;
@@ -205,7 +209,6 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
-  OnCloseQuery := FormCloseQuery;
   FView := TFractalView.Create(Self);
   FView.Parent := Self;
   FView.Align := alClient;
@@ -268,41 +271,36 @@ begin
   FNavigator.OnSelectionChanged := NavigatorSelectionChanged;
   FNavigator.OnPrecisionLimit := NavigatorPrecisionLimit;
   FNavigator.OnJuliaPoint := NavigatorJuliaPoint;
+  FNavigator.OnHistoryChanged := NavigatorHistoryChanged;
   for I := 0 to High(kNavigationModes) do
     cbNavMode.Items.Add(kNavigationModes[I].DisplayName);
   cbNavMode.ItemIndex := 0;
   cbNavMode.OnChange := NavModeChange;
-  btnBack.OnClick := BackClick;
-  btnForward.OnClick := ForwardClick;
 end;
 
 {------------------------------------------------------------------------------}
 
 procedure TMainForm.FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
 begin
-  if Key = VK_F4 then
-  begin
-    if not FIsFullScreen then
-      SetSidePanelVisible(not pnlSide.Visible);
-    Key := 0;
-    Exit;
-  end;
   if Key = VK_F11 then
   begin
     ToggleFullScreen;
     Key := 0;
     Exit;
   end;
+
   if Key = VK_ESCAPE then
   begin
     FNavigator.CancelSelection;
     Key := 0;
     Exit;
   end;
+
   // les touches de navigation ne doivent pas voler la saisie dans les champs du panneau
   if (ActiveControl is TCustomEdit) or (ActiveControl is TCustomComboBox) or (ActiveControl is TCustomListBox)
     or (ActiveControl is TTrackBar) then
     Exit;
+
   case Key of
     VK_ADD, VK_OEM_PLUS:
       FNavigator.ZoomCenter(kKeyZoomFactor);
@@ -388,7 +386,6 @@ begin
     FEngine.RenderShifted(V, FFormula, Change.DX, Change.DY)
   else
     FEngine.Render(V, FFormula);
-  UpdateHistoryButtons;
 end;
 
 {------------------------------------------------------------------------------}
@@ -412,7 +409,14 @@ begin
   FJuliaFormula.SetParam(FJuliaFormula.IndexOfParam('cx'), P.X);
   FJuliaFormula.SetParam(FJuliaFormula.IndexOfParam('cy'), P.Y);
   FJuliaEngine.Render(MakeViewport(0, 0, kJuliaPreviewViewWidth, kJuliaPreviewWidth, kJuliaPreviewHeight),
-    FJuliaFormula);
+                      FJuliaFormula);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.NavigatorHistoryChanged(Sender: TObject);
+begin
+  UpdateHistoryButtons;
 end;
 
 {------------------------------------------------------------------------------}
@@ -477,11 +481,13 @@ var
 begin
   if (Engine.Buffer.Width = 0) or (Engine.Buffer.Height = 0) then
     Exit;
+
   if (Bitmap.Width <> Engine.Buffer.Width) or (Bitmap.Height <> Engine.Buffer.Height) then
   begin
     Bitmap.PixelFormat := pf32bit;
     Bitmap.SetSize(Engine.Buffer.Width, Engine.Buffer.Height);
   end;
+
   for Y := 0 to Engine.Buffer.Height - 1 do
     FMapper.MapRow(Engine.Buffer.RowPtr(Y), Bitmap.ScanLine[Y], Engine.Buffer.Width);
 end;
@@ -499,11 +505,13 @@ begin
     ColorizeBuffer(FEngine, FView.Bitmap);
     IsChanged := True;
   end;
+
   if FView.IsJuliaVisible and (FJuliaEngine.Buffer.TakeDirtyFlag or FAreColorsChanged) then
   begin
     ColorizeBuffer(FJuliaEngine, FView.JuliaBitmap);
     IsChanged := True;
   end;
+
   FAreColorsChanged := False;
   if IsChanged then
     FView.Invalidate;
@@ -604,6 +612,7 @@ var
   Start: Cardinal;
 begin
   Result := 1;
+
   FSmokeLog := TStringList.Create;
   try
     Application.OnException := SmokeException;
@@ -631,6 +640,7 @@ begin
       CheckSmokeStep('Multibrot');
       if pnlParams.ControlCount <> 2 then
         raise Exception.Create('éditeur de paramètres Multibrot absent');
+
       SetSidePanelVisible(False);
       SetSidePanelVisible(True);
       if not pnlSide.Visible then
@@ -638,12 +648,14 @@ begin
       FSmokeLog.Add('Formules et panneau OK');
       tbOffset.Position := 500;
       chkInvert.Checked := True;
+
       if not FMapping.IsInverted or (Abs(FMapping.Offset - 0.5) > 1e-9) then
         raise Exception.Create('réglages de couleur non appliqués');
       cbPalette.ItemIndex := 1;
       PaletteComboChange(nil);
       DisplayTimer(nil);
       FSmokeLog.Add('Couleurs OK');
+
       Dlg := TPaletteEditorForm.Create(Self);
       try
         Dlg.Palette.Assign(FPalette);
@@ -657,6 +669,7 @@ begin
       ExportViewPng(OutputFile);
       if not ReadPngText(OutputFile, kLocationKeyword, Text) then
         raise Exception.Create('lieu absent du PNG exporté');
+
       Location := TFractalLocation.Create;
       try
         Location.LoadFromText(UTF8ToString(Text));
@@ -666,6 +679,7 @@ begin
       finally
         Location.Free;
       end;
+
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu après réouverture non terminé');
       CheckSmokeStep('réouverture');
@@ -682,11 +696,13 @@ begin
       HiRes.edFile.Text := ExpandFileName(HiResFile);
       HiRes.StartRender;
       Start := GetTickCount;
+
       while HiRes.IsRunning and (GetTickCount - Start < kSmokeTimeoutMs) do
       begin
         Application.ProcessMessages;
         Sleep(kRenderPollMs);
       end;
+
       if HiRes.IsRunning then
         raise Exception.Create('rendu HD non terminé');
       if not FileExists(HiResFile) then
@@ -714,11 +730,6 @@ begin
   for I := 0 to FormulaClassCount - 1 do
     cbFormula.Items.Add(FormulaClassAt(I).DisplayName);
   cbFormula.OnChange := FormulaComboChange;
-  edMaxIter.OnExit := MaxIterEditExit;
-  edMaxIter.OnKeyPress := MaxIterEditKeyPress;
-  chkAutoIter.OnClick := AutoIterClick;
-  btnTogglePanel.OnClick := TogglePanelClick;
-  btnCollapse.OnClick := TogglePanelClick;
   for I := 0 to FormulaClassCount - 1 do
     if FormulaClassAt(I) = FFormula.ClassType then
       cbFormula.ItemIndex := I;
@@ -767,6 +778,7 @@ begin
       TEdit(pnlParams.Controls[I]).OnExit := nil;
   while pnlParams.ControlCount > 0 do
     pnlParams.Controls[0].Free;
+
   for I := 0 to FFormula.ParamCount - 1 do
   begin
     L := TLabel.Create(Self);
@@ -901,6 +913,8 @@ end;
 
 procedure TMainForm.SetSidePanelVisible(IsVisible: Boolean);
 begin
+  btnCollapse.Glyph := nil;
+  btnCollapse.NumGlyphs := 1;
   if IsVisible then
   begin
     // ordre des contrôles alignés à droite : bande de repli, séparateur, panneau
@@ -908,13 +922,13 @@ begin
     pnlSide.Visible := True;
     splSide.Left := pnlSide.Left - 1;
     splSide.Visible := True;
-    btnCollapse.Caption := #9656;
+    ImageList1.GetBitmap(0, btnCollapse.Glyph);
   end
   else
   begin
     splSide.Visible := False;
     pnlSide.Visible := False;
-    btnCollapse.Caption := #9666;
+    ImageList1.GetBitmap(1, btnCollapse.Glyph);
   end;
 end;
 
@@ -956,11 +970,6 @@ begin
   FillPaletteCombo;
   cbPalette.ItemIndex := 0;
   cbPalette.OnChange := PaletteComboChange;
-  tbOffset.OnChange := ColorSliderChange;
-  tbRepeats.OnChange := ColorSliderChange;
-  tbStretch.OnChange := ColorSliderChange;
-  chkInvert.OnClick := ColorSliderChange;
-  btnEditPalette.OnClick := EditPaletteClick;
   UpdateColorControls;
 end;
 
@@ -976,9 +985,12 @@ var
 begin
   FPalettes.Clear;
   cbPalette.Items.Clear;
+
   for I := 0 to BuiltInPaletteCount - 1 do
     FPalettes.Add(CreateBuiltInPalette(I));
+
   Folder := PaletteFolder;
+
   if FindFirst(Folder + '*.*', faAnyFile, SR) = 0 then
     try
       repeat
@@ -1010,6 +1022,7 @@ begin
     finally
       FindClose(SR);
     end;
+
   for I := 0 to FPalettes.Count - 1 do
     cbPalette.Items.Add(TGradientPalette(FPalettes[I]).Name);
 end;
@@ -1061,6 +1074,7 @@ var
 begin
   Saved := TGradientPalette.Create;
   Dlg := TPaletteEditorForm.Create(Self);
+
   try
     Saved.Assign(FPalette);
     Dlg.Palette.Assign(FPalette);
@@ -1093,13 +1107,6 @@ end;
 procedure TMainForm.InitFilePanel;
 begin
   FFavorites := TFavoriteStore.Create(FavoritesFolder);
-  btnOpen.OnClick := OpenClick;
-  btnSave.OnClick := SaveClick;
-  btnExportPng.OnClick := ExportPngClick;
-  btnAddFavorite.OnClick := AddFavoriteClick;
-  btnHiRes.OnClick := HiResClick;
-  lbFavorites.OnDblClick := FavoritesDblClick;
-  lbFavorites.OnKeyDown := FavoritesKeyDown;
   RefreshFavorites;
 end;
 

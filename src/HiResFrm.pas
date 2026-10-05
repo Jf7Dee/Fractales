@@ -204,8 +204,7 @@ begin
     FOnRequestSnapshot(Self);
   if (FFormula = nil) or not ReadSettings(Settings) then
     Exit;
-  if (FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample)
-    .PrecisionState = psLimit)
+  if (FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample).PrecisionState = psLimit)
     and (MessageDlg('Ce rendu dépasse la limite de précision : l''image sera pixelisée. Rendre quand même ?',
       mtWarning, [mbYes, mbNo], 0) <> mrYes) then
     Exit;
