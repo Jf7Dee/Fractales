@@ -28,20 +28,17 @@ const
 
 type
   TMainForm = class(TForm)
-    pnlTop: TPanel;
     lblNavMode: TLabel;
     cbNavMode: TComboBox;
     btnBack: TBitBtn;
     btnForward: TBitBtn;
     sbStatus: TStatusBar;
     pnlSide: TPanel;
-    grpFormula: TGroupBox;
     lblMaxIter: TLabel;
     cbFormula: TComboBox;
     pnlParams: TPanel;
     edMaxIter: TEdit;
     chkAutoIter: TCheckBox;
-    grpColors: TGroupBox;
     lblOffset: TLabel;
     lblRepeats: TLabel;
     lblStretch: TLabel;
@@ -51,7 +48,6 @@ type
     tbRepeats: TTrackBar;
     tbStretch: TTrackBar;
     chkInvert: TCheckBox;
-    grpFavorites: TGroupBox;
     lbFavorites: TListBox;
     splSide: TSplitter;
     pnlCollapse: TPanel;
@@ -65,8 +61,16 @@ type
     MenuTopImage1: TMenuItem;
     MenuSauverEnPNG1: TMenuItem;
     MenuSauverRenduEnHD1: TMenuItem;
-    Panel1: TPanel;
+    PanelCategories: TCategoryPanelGroup;
+    CategoryPanelNavigation: TCategoryPanel;
+    CategoryPanelFavorites: TCategoryPanel;
+    Panel2: TPanel;
     btnAddFavorite: TBitBtn;
+    CategoryPanelColors: TCategoryPanel;
+    CategoryPanelFormulas: TCategoryPanel;
+    Label1: TLabel;
+    Fin1: TMenuItem;
+    N1: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -947,7 +951,6 @@ begin
     WindowState := wsNormal;
     FSavedBounds := BoundsRect;
     FWasSidePanelVisible := pnlSide.Visible;
-    pnlTop.Visible := False;
     sbStatus.Visible := False;
     SetSidePanelVisible(False);
     pnlCollapse.Visible := False;
@@ -959,7 +962,6 @@ begin
     BorderStyle := bsSizeable;
     BoundsRect := FSavedBounds;
     WindowState := FSavedWindowState;
-    pnlTop.Visible := True;
     sbStatus.Visible := True;
     pnlCollapse.Visible := True;
     SetSidePanelVisible(FWasSidePanelVisible);

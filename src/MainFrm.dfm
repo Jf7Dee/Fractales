@@ -3,7 +3,7 @@ object MainForm: TMainForm
   Top = 0
   Caption = 'Fractales'
   ClientHeight = 720
-  ClientWidth = 1200
+  ClientWidth = 1215
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
   Font.Color = clWindowText
@@ -21,95 +21,20 @@ object MainForm: TMainForm
   PixelsPerInch = 96
   TextHeight = 15
   object splSide: TSplitter
-    Left = 915
-    Top = 34
+    Left = 930
+    Top = 0
     Width = 5
-    Height = 667
+    Height = 701
     Align = alRight
     MinSize = 200
-  end
-  object pnlTop: TPanel
-    Left = 0
-    Top = 0
-    Width = 1200
-    Height = 34
-    Align = alTop
-    BevelOuter = bvNone
-    TabOrder = 0
-    object lblNavMode: TLabel
-      Left = 376
-      Top = 9
-      Width = 64
-      Height = 15
-      Caption = 'Navigation :'
-    end
-    object cbNavMode: TComboBox
-      Left = 452
-      Top = 5
-      Width = 130
-      Height = 23
-      Style = csDropDownList
-      TabOrder = 0
-    end
-    object btnBack: TBitBtn
-      Left = 588
-      Top = 4
-      Width = 34
-      Height = 26
-      Hint = 'Pr'#233'c'#233'dent (Retour arri'#232're)'
-      DoubleBuffered = True
-      Glyph.Data = {
-        76010000424D7601000000000000760000002800000020000000100000000100
-        04000000000000010000120B0000120B00001000000000000000000000000000
-        800000800000008080008000000080008000808000007F7F7F00BFBFBF000000
-        FF0000FF000000FFFF00FF000000FF00FF00FFFF0000FFFFFF00333333393333
-        333333333337F3333333333333397333333333333337FF333333333333C94333
-        3333333333737F333333333333C9473333333333337373F3333333333CC94433
-        3333333337F7F7F3333333333CC94473333333333737F73F33333333CCC94443
-        333333337F37F37F33333333CCC94447333333337337F373F333333CCCC94444
-        33333337F337F337F333333CCCC94444733333373337F3373F3333CCCCC94444
-        4333337F3337FF337F3333CCCCC94444473333733F7773FF73F33CCCCC393444
-        443337F37737F773F7F33CCC33393374447337F73337F33737FFCCC333393333
-        444377733337F333777FC3333339333337437333333733333373}
-      NumGlyphs = 2
-      ParentDoubleBuffered = False
-      ParentShowHint = False
-      ShowHint = True
-      TabOrder = 1
-      OnClick = BackClick
-    end
-    object btnForward: TBitBtn
-      Left = 628
-      Top = 4
-      Width = 34
-      Height = 26
-      Hint = 'Suivant'
-      DoubleBuffered = True
-      Glyph.Data = {
-        76010000424D7601000000000000760000002800000020000000100000000100
-        04000000000000010000120B0000120B00001000000000000000000000000000
-        800000800000008080008000000080008000808000007F7F7F00BFBFBF000000
-        FF0000FF000000FFFF00FF000000FF00FF00FFFF0000FFFFFF003C3333339333
-        337437FFF3337F3333F73CCC33339333344437773F337F33377733CCC3339337
-        4447337F73FF7F3F337F33CCCCC3934444433373F7737F773373333CCCCC9444
-        44733337F337773337F3333CCCCC9444443333373F337F3337333333CCCC9444
-        473333337F337F337F333333CCCC94444333333373F37F33733333333CCC9444
-        7333333337F37F37F33333333CCC944433333333373F7F373333333333CC9447
-        33333333337F7F7F3333333333CC94433333333333737F7333333333333C9473
-        33333333333737F333333333333C943333333333333737333333333333339733
-        3333333333337F33333333333333933333333333333373333333}
-      NumGlyphs = 2
-      ParentDoubleBuffered = False
-      ParentShowHint = False
-      ShowHint = True
-      TabOrder = 2
-      OnClick = ForwardClick
-    end
+    ExplicitLeft = 915
+    ExplicitTop = 34
+    ExplicitHeight = 667
   end
   object sbStatus: TStatusBar
     Left = 0
     Top = 701
-    Width = 1200
+    Width = 1215
     Height = 19
     Panels = <
       item
@@ -127,243 +52,336 @@ object MainForm: TMainForm
       item
         Width = 50
       end>
+    ExplicitWidth = 1200
   end
   object pnlSide: TPanel
-    Left = 920
-    Top = 34
+    Left = 935
+    Top = 0
     Width = 280
-    Height = 667
+    Height = 701
     Align = alRight
     BevelOuter = bvNone
-    TabOrder = 1
-    object grpFormula: TGroupBox
+    TabOrder = 0
+    object PanelCategories: TCategoryPanelGroup
       Left = 0
       Top = 0
       Width = 280
-      Height = 210
-      Align = alTop
-      Caption = 'Formule'
-      TabOrder = 0
-      object lblMaxIter: TLabel
-        Left = 8
-        Top = 180
-        Width = 74
-        Height = 15
-        Caption = 'It'#233'rations max'
-      end
-      object cbFormula: TComboBox
-        Left = 8
-        Top = 20
-        Width = 262
-        Height = 23
-        Style = csDropDownList
-        TabOrder = 0
-      end
-      object pnlParams: TPanel
-        Left = 8
-        Top = 50
-        Width = 262
-        Height = 120
-        BevelOuter = bvNone
-        TabOrder = 1
-      end
-      object edMaxIter: TEdit
-        Left = 100
-        Top = 176
-        Width = 80
-        Height = 23
-        TabOrder = 2
-        OnExit = MaxIterEditExit
-        OnKeyPress = MaxIterEditKeyPress
-      end
-      object chkAutoIter: TCheckBox
-        Left = 190
-        Top = 179
-        Width = 70
-        Height = 17
-        Caption = 'auto'
-        TabOrder = 3
-        OnClick = AutoIterClick
-      end
-    end
-    object grpColors: TGroupBox
-      Left = 0
-      Top = 210
-      Width = 280
-      Height = 185
-      Align = alTop
-      Caption = 'Couleurs'
-      TabOrder = 1
-      object lblOffset: TLabel
-        Left = 8
-        Top = 56
-        Width = 48
-        Height = 15
-        Caption = 'D'#233'calage'
-      end
-      object lblRepeats: TLabel
-        Left = 8
-        Top = 88
-        Width = 54
-        Height = 15
-        Caption = 'R'#233'p'#233'tition'
-      end
-      object lblStretch: TLabel
-        Left = 8
-        Top = 120
-        Width = 51
-        Height = 15
-        Caption = #201'tirement'
-      end
-      object cbPalette: TComboBox
-        Left = 8
-        Top = 20
-        Width = 180
-        Height = 23
-        Style = csDropDownList
-        TabOrder = 0
-      end
-      object btnEditPalette: TButton
-        Left = 194
-        Top = 19
-        Width = 76
-        Height = 25
-        Caption = #201'diter...'
-        TabOrder = 1
-        OnClick = EditPaletteClick
-      end
-      object tbOffset: TTrackBar
-        Left = 80
-        Top = 50
-        Width = 190
-        Height = 26
-        Max = 1000
-        TabOrder = 2
-        TickStyle = tsNone
-        OnChange = ColorSliderChange
-      end
-      object tbRepeats: TTrackBar
-        Left = 80
-        Top = 82
-        Width = 190
-        Height = 26
-        Max = 1000
-        TabOrder = 3
-        TickStyle = tsNone
-        OnChange = ColorSliderChange
-      end
-      object tbStretch: TTrackBar
-        Left = 80
-        Top = 114
-        Width = 190
-        Height = 26
-        Max = 1000
-        TabOrder = 4
-        TickStyle = tsNone
-        OnChange = ColorSliderChange
-      end
-      object chkInvert: TCheckBox
-        Left = 8
-        Top = 152
-        Width = 120
-        Height = 17
-        Caption = 'Inverser'
-        TabOrder = 5
-        OnClick = ColorSliderChange
-      end
-    end
-    object grpFavorites: TGroupBox
-      Left = 0
-      Top = 395
-      Width = 280
-      Height = 272
+      Height = 701
+      VertScrollBar.Tracking = True
       Align = alClient
-      Caption = 'Favoris'
-      TabOrder = 2
-      object lbFavorites: TListBox
-        AlignWithMargins = True
-        Left = 5
-        Top = 42
-        Width = 270
-        Height = 225
-        Align = alClient
-        ItemHeight = 15
+      HeaderFont.Charset = DEFAULT_CHARSET
+      HeaderFont.Color = clWindowText
+      HeaderFont.Height = -11
+      HeaderFont.Name = 'Tahoma'
+      HeaderFont.Style = []
+      TabOrder = 0
+      object CategoryPanelNavigation: TCategoryPanel
+        Top = 293
+        Height = 140
+        Caption = 'Navigation'
         TabOrder = 0
-        OnDblClick = FavoritesDblClick
-        OnKeyDown = FavoritesKeyDown
-        ExplicitTop = 48
-        ExplicitHeight = 219
-      end
-      object Panel1: TPanel
-        Left = 2
-        Top = 17
-        Width = 276
-        Height = 22
-        Align = alTop
-        BevelOuter = bvNone
-        TabOrder = 1
-        object btnAddFavorite: TBitBtn
-          Left = 4
-          Top = -1
-          Width = 90
+        object lblNavMode: TLabel
+          Left = 18
+          Top = 15
+          Width = 31
+          Height = 15
+          Caption = 'Style :'
+        end
+        object Label1: TLabel
+          Left = 16
+          Top = 64
+          Width = 38
+          Height = 15
+          Caption = 'History'
+        end
+        object cbNavMode: TComboBox
+          Left = 99
+          Top = 13
+          Width = 130
+          Height = 23
+          Style = csDropDownList
+          TabOrder = 0
+        end
+        object btnBack: TBitBtn
+          Left = 114
+          Top = 60
+          Width = 34
           Height = 26
-          Caption = 'Favori'
+          Hint = 'Pr'#233'c'#233'dent (Retour arri'#232're)'
           DoubleBuffered = True
           Glyph.Data = {
-            0E040000424D0E040000000000000E0200002800000020000000100000000100
-            08000000000000020000C40E0000C40E00007600000076000000FD00FD00D81E
-            F600EB16E700646AF500DA40D000E816F9001DA5F6001DA6F600F310F100BB8A
-            A400F30FF100F10BFA001E97EE0015C2FB0015C3FB001E98EE00F509F400B280
-            9B00B7AC9F008448F0006567F300646AF30012B9F50013C1FA0012BAF500D52F
-            C800D542C800D643CA00B3809D00B1A59800B6AB9F00B6AB9E00B0A59700B380
-            9C00EF0EFA001E94F30007C0FC0012C1F90014C3FC0006C0FC00F00DFA00F709
-            F600B27E9900B6AB9D00B8ADA000B7AB9F00B6AA9E00F70AF6001F90F0000DBA
-            F60014C1FA0012C1FA000BBBF7001F91F000F60BF400AF7D9500B1A69800AF7D
-            9600F60AF500E11CF60000A1E60011C2FB0011C3FB00EB19E8009C928100EB19
-            E900E220F80000B4F20010C2FB0000C2FA0010C2FA0000B4F100ED1CEB00ABA1
-            9200B5AB9D00B5AC9C00B7AC9E00ABA19100EE1BEB009A4AF10000C4FB001D9E
-            F700964BF2009550F2001CA9F80000C3FB00D737CD00B7AD9E00BA86A400D738
-            CD00D738CE00BB86A400B6AD9E00D836CE00EB12F9001DA4F5001D9FF500C32C
-            F700C32EF6001D9EF500F30EF200BB88A600B5859D00E81EE200B5869D00BB88
-            A500F40DF300DB1EF600725FF200ED10FA00ED10F9006B60F200DA1EF600EC17
-            E900D83CCD00F40CF300D83CCE00ED16EA000000000000000000000000000000
-            0000000000000000000000000000000000000000000000000000000000000000
-            0000000000000000000000000000000000000000006B6C6D000000006E6F7000
-            0000000000717273000000007374750000000000005E5F6061000062635F5E00
-            00000000006465666700006768696A000000000000004F5051525354554F0000
-            000000000000565758595A5B5C5D000000000000000042434445454647420000
-            00000000000048492D4A4B4C4D4E00000000000000003B3C3D17173E3C3B0000
-            0000000000003F40122E1F124041000000000000002230313233253234352200
-            00000000003637382E1F1F2E38393A00000000002223240E1725251726272328
-            00000000292A2B2C2D2E2E1F2C2B2A2F000000001314150F161717180F151413
-            00000000191A1B1C1D1E1F20211B1A19000000000000000B0C0D0E0F0B000000
-            0000000000000010111212111000000000000000000000000506070500000000
-            00000000000000000809090A0000000000000000000000000003030000000000
-            0000000000000000000404000000000000000000000000000001010000000000
-            0000000000000000000202000000000000000000000000000000000000000000
-            0000000000000000000000000000000000000000000000000000000000000000
-            000000000000000000000000000000000000}
+            76010000424D7601000000000000760000002800000020000000100000000100
+            04000000000000010000120B0000120B00001000000000000000000000000000
+            800000800000008080008000000080008000808000007F7F7F00BFBFBF000000
+            FF0000FF000000FFFF00FF000000FF00FF00FFFF0000FFFFFF00333333393333
+            333333333337F3333333333333397333333333333337FF333333333333C94333
+            3333333333737F333333333333C9473333333333337373F3333333333CC94433
+            3333333337F7F7F3333333333CC94473333333333737F73F33333333CCC94443
+            333333337F37F37F33333333CCC94447333333337337F373F333333CCCC94444
+            33333337F337F337F333333CCCC94444733333373337F3373F3333CCCCC94444
+            4333337F3337FF337F3333CCCCC94444473333733F7773FF73F33CCCCC393444
+            443337F37737F773F7F33CCC33393374447337F73337F33737FFCCC333393333
+            444377733337F333777FC3333339333337437333333733333373}
           NumGlyphs = 2
           ParentDoubleBuffered = False
+          ParentShowHint = False
+          ShowHint = True
+          TabOrder = 1
+          OnClick = BackClick
+        end
+        object btnForward: TBitBtn
+          Left = 162
+          Top = 60
+          Width = 34
+          Height = 26
+          Hint = 'Suivant'
+          DoubleBuffered = True
+          Glyph.Data = {
+            76010000424D7601000000000000760000002800000020000000100000000100
+            04000000000000010000120B0000120B00001000000000000000000000000000
+            800000800000008080008000000080008000808000007F7F7F00BFBFBF000000
+            FF0000FF000000FFFF00FF000000FF00FF00FFFF0000FFFFFF003C3333339333
+            337437FFF3337F3333F73CCC33339333344437773F337F33377733CCC3339337
+            4447337F73FF7F3F337F33CCCCC3934444433373F7737F773373333CCCCC9444
+            44733337F337773337F3333CCCCC9444443333373F337F3337333333CCCC9444
+            473333337F337F337F333333CCCC94444333333373F37F33733333333CCC9444
+            7333333337F37F37F33333333CCC944433333333373F7F373333333333CC9447
+            33333333337F7F7F3333333333CC94433333333333737F7333333333333C9473
+            33333333333737F333333333333C943333333333333737333333333333339733
+            3333333333337F33333333333333933333333333333373333333}
+          NumGlyphs = 2
+          ParentDoubleBuffered = False
+          ParentShowHint = False
+          ShowHint = True
+          TabOrder = 2
+          OnClick = ForwardClick
+        end
+      end
+      object CategoryPanelFavorites: TCategoryPanel
+        Top = 263
+        Height = 30
+        Caption = 'Favoris'
+        Collapsed = True
+        TabOrder = 1
+        ExpandedHeight = 306
+        object lbFavorites: TListBox
+          AlignWithMargins = True
+          Left = 3
+          Top = 34
+          Width = 270
+          Height = 137
+          Align = alClient
+          ItemHeight = 15
           TabOrder = 0
-          OnClick = AddFavoriteClick
+          OnDblClick = FavoritesDblClick
+          OnKeyDown = FavoritesKeyDown
+        end
+        object Panel2: TPanel
+          Left = 0
+          Top = 0
+          Width = 276
+          Height = 31
+          Align = alTop
+          BevelOuter = bvNone
+          TabOrder = 1
+          object btnAddFavorite: TBitBtn
+            Left = 3
+            Top = 7
+            Width = 90
+            Height = 26
+            Caption = 'Ajout'
+            DoubleBuffered = True
+            Glyph.Data = {
+              0E040000424D0E040000000000000E0200002800000020000000100000000100
+              08000000000000020000C40E0000C40E00007600000076000000FD00FD00D81E
+              F600EB16E700646AF500DA40D000E816F9001DA5F6001DA6F600F310F100BB8A
+              A400F30FF100F10BFA001E97EE0015C2FB0015C3FB001E98EE00F509F400B280
+              9B00B7AC9F008448F0006567F300646AF30012B9F50013C1FA0012BAF500D52F
+              C800D542C800D643CA00B3809D00B1A59800B6AB9F00B6AB9E00B0A59700B380
+              9C00EF0EFA001E94F30007C0FC0012C1F90014C3FC0006C0FC00F00DFA00F709
+              F600B27E9900B6AB9D00B8ADA000B7AB9F00B6AA9E00F70AF6001F90F0000DBA
+              F60014C1FA0012C1FA000BBBF7001F91F000F60BF400AF7D9500B1A69800AF7D
+              9600F60AF500E11CF60000A1E60011C2FB0011C3FB00EB19E8009C928100EB19
+              E900E220F80000B4F20010C2FB0000C2FA0010C2FA0000B4F100ED1CEB00ABA1
+              9200B5AB9D00B5AC9C00B7AC9E00ABA19100EE1BEB009A4AF10000C4FB001D9E
+              F700964BF2009550F2001CA9F80000C3FB00D737CD00B7AD9E00BA86A400D738
+              CD00D738CE00BB86A400B6AD9E00D836CE00EB12F9001DA4F5001D9FF500C32C
+              F700C32EF6001D9EF500F30EF200BB88A600B5859D00E81EE200B5869D00BB88
+              A500F40DF300DB1EF600725FF200ED10FA00ED10F9006B60F200DA1EF600EC17
+              E900D83CCD00F40CF300D83CCE00ED16EA000000000000000000000000000000
+              0000000000000000000000000000000000000000000000000000000000000000
+              0000000000000000000000000000000000000000006B6C6D000000006E6F7000
+              0000000000717273000000007374750000000000005E5F6061000062635F5E00
+              00000000006465666700006768696A000000000000004F5051525354554F0000
+              000000000000565758595A5B5C5D000000000000000042434445454647420000
+              00000000000048492D4A4B4C4D4E00000000000000003B3C3D17173E3C3B0000
+              0000000000003F40122E1F124041000000000000002230313233253234352200
+              00000000003637382E1F1F2E38393A00000000002223240E1725251726272328
+              00000000292A2B2C2D2E2E1F2C2B2A2F000000001314150F161717180F151413
+              00000000191A1B1C1D1E1F20211B1A19000000000000000B0C0D0E0F0B000000
+              0000000000000010111212111000000000000000000000000506070500000000
+              00000000000000000809090A0000000000000000000000000003030000000000
+              0000000000000000000404000000000000000000000000000001010000000000
+              0000000000000000000202000000000000000000000000000000000000000000
+              0000000000000000000000000000000000000000000000000000000000000000
+              000000000000000000000000000000000000}
+            NumGlyphs = 2
+            ParentDoubleBuffered = False
+            TabOrder = 0
+            OnClick = AddFavoriteClick
+          end
+        end
+      end
+      object CategoryPanelColors: TCategoryPanel
+        Top = 233
+        Height = 30
+        Caption = 'Couleurs'
+        Collapsed = True
+        TabOrder = 2
+        ExpandedHeight = 201
+        object lblOffset: TLabel
+          Left = 8
+          Top = 56
+          Width = 48
+          Height = 15
+          Caption = 'D'#233'calage'
+        end
+        object lblRepeats: TLabel
+          Left = 8
+          Top = 88
+          Width = 54
+          Height = 15
+          Caption = 'R'#233'p'#233'tition'
+        end
+        object lblStretch: TLabel
+          Left = 8
+          Top = 120
+          Width = 51
+          Height = 15
+          Caption = #201'tirement'
+        end
+        object cbPalette: TComboBox
+          Left = 8
+          Top = 20
+          Width = 180
+          Height = 23
+          Style = csDropDownList
+          TabOrder = 0
+        end
+        object btnEditPalette: TButton
+          Left = 194
+          Top = 19
+          Width = 76
+          Height = 25
+          Caption = #201'diter...'
+          TabOrder = 1
+          OnClick = EditPaletteClick
+        end
+        object tbOffset: TTrackBar
+          Left = 80
+          Top = 50
+          Width = 190
+          Height = 26
+          Max = 1000
+          TabOrder = 2
+          TickStyle = tsNone
+          OnChange = ColorSliderChange
+        end
+        object tbRepeats: TTrackBar
+          Left = 80
+          Top = 82
+          Width = 190
+          Height = 26
+          Max = 1000
+          TabOrder = 3
+          TickStyle = tsNone
+          OnChange = ColorSliderChange
+        end
+        object tbStretch: TTrackBar
+          Left = 80
+          Top = 114
+          Width = 190
+          Height = 26
+          Max = 1000
+          TabOrder = 4
+          TickStyle = tsNone
+          OnChange = ColorSliderChange
+        end
+        object chkInvert: TCheckBox
+          Left = 8
+          Top = 152
+          Width = 120
+          Height = 17
+          Caption = 'Inverser'
+          TabOrder = 5
+          OnClick = ColorSliderChange
+        end
+      end
+      object CategoryPanelFormulas: TCategoryPanel
+        Top = 0
+        Height = 233
+        Caption = 'Formule'
+        TabOrder = 3
+        object lblMaxIter: TLabel
+          Left = 8
+          Top = 180
+          Width = 74
+          Height = 15
+          Caption = 'It'#233'rations max'
+        end
+        object cbFormula: TComboBox
+          Left = 8
+          Top = 20
+          Width = 262
+          Height = 23
+          Style = csDropDownList
+          TabOrder = 0
+        end
+        object pnlParams: TPanel
+          Left = 8
+          Top = 50
+          Width = 262
+          Height = 120
+          BevelOuter = bvNone
+          TabOrder = 1
+        end
+        object edMaxIter: TEdit
+          Left = 100
+          Top = 176
+          Width = 80
+          Height = 23
+          TabOrder = 2
+          OnExit = MaxIterEditExit
+          OnKeyPress = MaxIterEditKeyPress
+        end
+        object chkAutoIter: TCheckBox
+          Left = 190
+          Top = 179
+          Width = 70
+          Height = 17
+          Caption = 'auto'
+          TabOrder = 3
+          OnClick = AutoIterClick
         end
       end
     end
   end
   object pnlCollapse: TPanel
-    Left = 903
-    Top = 34
+    Left = 918
+    Top = 0
     Width = 12
-    Height = 667
+    Height = 701
     Align = alRight
     BevelOuter = bvNone
-    TabOrder = 2
+    TabOrder = 1
+    ExplicitLeft = 903
+    ExplicitTop = 34
+    ExplicitHeight = 667
     object btnCollapse: TSpeedButton
       Left = 0
       Top = 0
       Width = 12
-      Height = 667
+      Height = 701
       Hint = 'Masquer / afficher le panneau (F4)'
       Align = alClient
       Flat = True
@@ -387,6 +405,7 @@ object MainForm: TMainForm
       ParentShowHint = False
       ShowHint = True
       OnClick = TogglePanelClick
+      ExplicitHeight = 667
     end
   end
   object tmrDisplay: TTimer
@@ -400,7 +419,7 @@ object MainForm: TMainForm
     Left = 752
     Top = 80
     Bitmap = {
-      494C010102001C002C000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
+      494C010102001C0040000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
       0000000000003600000028000000300000000C00000001002000000000000009
       0000000000000000000000000000000000000000000000000000F8F8F800E0E0
       E000000000000000000000000000000000000000000000000000000000000000
@@ -483,8 +502,8 @@ object MainForm: TMainForm
       000000000000}
   end
   object MainMenu1: TMainMenu
-    Left = 296
-    Top = 160
+    Left = 168
+    Top = 48
     object MenuTopFichier1: TMenuItem
       Caption = 'Fichier'
       object MenuOuvrirFractale: TMenuItem
@@ -494,6 +513,12 @@ object MainForm: TMainForm
       object MenuEnregistrerFractale: TMenuItem
         Caption = 'Enregistrer...'
         OnClick = SaveClick
+      end
+      object N1: TMenuItem
+        Caption = '-'
+      end
+      object Fin1: TMenuItem
+        Caption = 'Fin'
       end
     end
     object MenuTopImage1: TMenuItem
