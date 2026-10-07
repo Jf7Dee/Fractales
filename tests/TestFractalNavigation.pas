@@ -39,6 +39,8 @@ type
     procedure TestHistoryCapacity;
     procedure TestHistoryChangeReportedAfterDragPan;
     procedure TestHistoryChangeReportedAfterKeyPan;
+    procedure TestGoToViewAddsHistory;
+    procedure TestGoToSameViewIsIgnored;
   end;
 
 implementation
@@ -300,6 +302,39 @@ begin
   FNavigator.KeyPan(1, 0);
   CheckEquals(1, FHistoryChangeCount);
   CheckTrue(FIsBackSeen);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestGoToViewAddsHistory;
+begin
+  FNavigator.ZoomCenter(2);
+  FHistoryChangeCount := 0;
+  FNavigator.GoToView(MakeViewport(-0.5, 0, 3, 1, 1));
+  CheckEquals(-0.5, FNavigator.Viewport.CenterX, kEps);
+  CheckEquals(3.0, FNavigator.Viewport.Width, kEps);
+  CheckEquals(400, FNavigator.Viewport.PixelWidth, 'taille en pixels conservée');
+  CheckEquals(300, FNavigator.Viewport.PixelHeight);
+  CheckEquals(3, FNavigator.History.Count);
+  CheckEquals(1, FHistoryChangeCount);
+  CheckTrue(FIsBackSeen);
+  CheckEquals(Ord(vckReset), Ord(FLastChange.Kind));
+  FNavigator.GoBack;
+  CheckEquals(2.0, FNavigator.Viewport.Width, kEps);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestGoToSameViewIsIgnored;
+begin
+  FNavigator.GoToView(MakeViewport(-0.5, 0, 3, 1, 1));
+  FHistoryChangeCount := 0;
+  FChangeCount := 0;
+  // deuxième clic sur le même bouton : rien ne change, rien n'est ajouté à l'historique
+  FNavigator.GoToView(MakeViewport(-0.5, 0, 3, 1, 1));
+  CheckEquals(2, FNavigator.History.Count);
+  CheckEquals(0, FHistoryChangeCount);
+  CheckEquals(0, FChangeCount);
 end;
 
 initialization

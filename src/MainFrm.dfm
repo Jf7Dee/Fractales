@@ -52,7 +52,6 @@ object MainForm: TMainForm
       item
         Width = 50
       end>
-    ExplicitWidth = 1200
   end
   object pnlSide: TPanel
     Left = 935
@@ -95,7 +94,7 @@ object MainForm: TMainForm
           Caption = 'History'
         end
         object cbNavMode: TComboBox
-          Left = 99
+          Left = 83
           Top = 13
           Width = 130
           Height = 23
@@ -103,7 +102,7 @@ object MainForm: TMainForm
           TabOrder = 0
         end
         object btnBack: TBitBtn
-          Left = 114
+          Left = 138
           Top = 60
           Width = 34
           Height = 26
@@ -130,10 +129,10 @@ object MainForm: TMainForm
           OnClick = BackClick
         end
         object btnForward: TBitBtn
-          Left = 162
+          Left = 178
           Top = 60
           Width = 34
-          Height = 26
+          Height = 25
           Hint = 'Suivant'
           DoubleBuffered = True
           Glyph.Data = {
@@ -155,6 +154,31 @@ object MainForm: TMainForm
           ShowHint = True
           TabOrder = 2
           OnClick = ForwardClick
+        end
+        object btnHome: TBitBtn
+          Left = 82
+          Top = 60
+          Width = 34
+          Height = 26
+          Hint = 'Retour au d'#233'but'
+          DoubleBuffered = True
+          Glyph.Data = {
+            76010000424D7601000000000000760000002800000020000000100000000100
+            04000000000000010000120B0000120B00001000000000000000000000000000
+            800000800000008080008000000080008000808000007F7F7F00BFBFBF000000
+            FF0000FF000000FFFF00FF000000FF00FF00FFFF0000FFFFFF00555555555555
+            5555555555FFFFF555555555544C4C5555555555F777775FF5555554C444C444
+            5555555775FF55775F55554C4334444445555575577F55557FF554C4C334C4C4
+            335557F5577FF55577F554CCC3334444335557555777F555775FCCCCC333CCC4
+            C4457F55F777F555557F4CC33333CCC444C57F577777F5F5557FC4333333C3C4
+            CCC57F777777F7FF557F4CC33333333C4C457F577777777F557FCCC33CC4333C
+            C4C575F7755F777FF5755CCCCC3333334C5557F5FF777777F7F554C333333333
+            CC55575777777777F755553333CC3C33C555557777557577755555533CC4C4CC
+            5555555775FFFF77555555555C4CCC5555555555577777555555}
+          NumGlyphs = 2
+          ParentDoubleBuffered = False
+          TabOrder = 3
+          OnClick = btnHomeClick
         end
       end
       object CategoryPanelFavorites: TCategoryPanel
@@ -338,9 +362,9 @@ object MainForm: TMainForm
           TabOrder = 0
         end
         object pnlParams: TPanel
-          Left = 8
+          Left = 16
           Top = 50
-          Width = 262
+          Width = 254
           Height = 120
           BevelOuter = bvNone
           TabOrder = 1
@@ -374,9 +398,6 @@ object MainForm: TMainForm
     Align = alRight
     BevelOuter = bvNone
     TabOrder = 1
-    ExplicitLeft = 903
-    ExplicitTop = 34
-    ExplicitHeight = 667
     object btnCollapse: TSpeedButton
       Left = 0
       Top = 0
@@ -419,7 +440,7 @@ object MainForm: TMainForm
     Left = 752
     Top = 80
     Bitmap = {
-      494C010102001C0040000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
+      494C010102001C0048000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
       0000000000003600000028000000300000000C00000001002000000000000009
       0000000000000000000000000000000000000000000000000000F8F8F800E0E0
       E000000000000000000000000000000000000000000000000000000000000000

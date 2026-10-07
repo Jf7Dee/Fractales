@@ -112,6 +112,7 @@ type
     procedure ZoomCenter(Factor: TFloat);
     procedure PanBy(DX, DY: Integer);
     procedure KeyPan(DirX, DirY: Integer);
+    procedure GoToView(const V: TViewport);
     procedure CommitHistory;
     procedure GoBack;
     procedure GoForward;
@@ -538,6 +539,17 @@ begin
   Step := Max(1, FViewport.PixelWidth div kKeyPanDivisor);
   PanBy(-DirX * Step, -DirY * Step);
   CommitHistory;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TNavigator.GoToView(const V: TViewport);
+begin
+  // nouvelle vue ajoutée à l'historique, comme un zoom : Précédent y revient. Taille en pixels conservée.
+  // La vue déjà affichée est ignorée : un second clic n'ajoute pas de doublon à l'historique.
+  if (V.CenterX = FViewport.CenterX) and (V.CenterY = FViewport.CenterY) and (V.Width = FViewport.Width) then
+    Exit;
+  TryCommit(V.Resized(FViewport.PixelWidth, FViewport.PixelHeight));
 end;
 
 {------------------------------------------------------------------------------}

@@ -71,6 +71,7 @@ type
     Label1: TLabel;
     Fin1: TMenuItem;
     N1: TMenuItem;
+    btnHome: TBitBtn;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -91,6 +92,7 @@ type
     procedure MaxIterEditExit(Sender: TObject);
     procedure MaxIterEditKeyPress(Sender: TObject; var Key: Char);
     procedure AutoIterClick(Sender: TObject);
+    procedure btnHomeClick(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -445,6 +447,13 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TMainForm.btnHomeClick(Sender: TObject);
+begin
+  FNavigator.GoToView(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth, 1, 1));
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.ForwardClick(Sender: TObject);
 begin
   FNavigator.GoForward;
@@ -737,10 +746,13 @@ var
 begin
   for I := 0 to FormulaClassCount - 1 do
     cbFormula.Items.Add(FormulaClassAt(I).DisplayName);
+
   cbFormula.OnChange := FormulaComboChange;
+
   for I := 0 to FormulaClassCount - 1 do
     if FormulaClassAt(I) = FFormula.ClassType then
       cbFormula.ItemIndex := I;
+
   BuildParamEditors;
   UpdateMaxIterControls;
 end;
@@ -760,11 +772,15 @@ var
 begin
   FFormula.Free;
   FFormula := AFormula;
+
   for I := 0 to FormulaClassCount - 1 do
     if FormulaClassAt(I) = FFormula.ClassType then
       cbFormula.ItemIndex := I;
+
   BuildParamEditors;
+
   UpdateMaxIterControls;
+
   if IsResetView then
     FNavigator.Reset(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth,
       Max(1, FView.ClientWidth), Max(1, FView.ClientHeight)))
@@ -784,6 +800,7 @@ begin
   for I := 0 to pnlParams.ControlCount - 1 do
     if pnlParams.Controls[I] is TEdit then
       TEdit(pnlParams.Controls[I]).OnExit := nil;
+
   while pnlParams.ControlCount > 0 do
     pnlParams.Controls[0].Free;
 
