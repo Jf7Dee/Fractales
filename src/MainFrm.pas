@@ -16,10 +16,13 @@ const
   kKeyZoomFactor = 2.0;
   kSmokeTimeoutMs = 30000;
   kRenderPollMs = 20;
-  kParamRowHeight = 28;
-  kParamLabelWidth = 120;
-  kParamEditLeft = 130;
-  kParamEditWidth = 120;
+  // éditeur d'un paramètre de formule : libellé et champ sur une ligne, curseur sur toute la largeur en dessous
+  kParamRowHeight = 56;
+  kParamLabelWidth = 150;
+  kParamEditLeft = 160;
+  kParamEditWidth = 94;
+  kParamSliderTop = 26;
+  kParamSliderHeight = 26;
   kExportWaitMs = 60000;
   kFracFilter = 'Lieu fractal (*.frac)|*.frac';
   kPngFilter = 'Image PNG (*.png)|*.png';
@@ -107,6 +110,8 @@ type
     FIsAutoIter: Boolean;
     FAreColorsChanged: Boolean;
     FIsUpdating: Boolean;
+    FParamEdits: array of TEdit;          // un champ et un curseur par paramètre de la formule courante
+    FParamSliders: array of TTrackBar;
     FMouseX: Integer;
     FMouseY: Integer;
     FStatusMessage: string;
@@ -148,6 +153,8 @@ type
     procedure ParamEditExit(Sender: TObject);
     procedure ParamEditKeyPress(Sender: TObject; var Key: Char);
     procedure ApplyParamEdit(Edit: TEdit);
+    procedure ParamSliderChange(Sender: TObject);
+    procedure UpdateParamSlider(Index: Integer);
     procedure ApplyMaxIterEdit;
     procedure UpdateMaxIterControls;
 
@@ -655,8 +662,15 @@ begin
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu Multibrot non terminé');
       CheckSmokeStep('Multibrot');
-      if pnlParams.ControlCount <> 2 then
+      if (pnlParams.ControlCount <> 3) or (Length(FParamSliders) <> 1) then
         raise Exception.Create('éditeur de paramètres Multibrot absent');
+      FParamSliders[0].Position := kParamSliderSteps;
+      if (FFormula.GetParam(0) <> FFormula.ParamInfo(0).MaxValue)
+        or (FParamEdits[0].Text <> FloatToStr(FFormula.GetParam(0))) then
+        raise Exception.Create('curseur de paramètre sans effet');
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu après curseur de paramètre non terminé');
+      CheckSmokeStep('curseur de paramètre');
 
       SetSidePanelVisible(False);
       SetSidePanelVisible(True);
@@ -795,6 +809,7 @@ var
   I: Integer;
   L: TLabel;
   E: TEdit;
+  T: TTrackBar;
 begin
   // détacher OnExit avant de libérer : un champ qui perd le focus en mourant ne doit rien appliquer
   for I := 0 to pnlParams.ControlCount - 1 do
@@ -803,6 +818,8 @@ begin
 
   while pnlParams.ControlCount > 0 do
     pnlParams.Controls[0].Free;
+  SetLength(FParamEdits, FFormula.ParamCount);
+  SetLength(FParamSliders, FFormula.ParamCount);
 
   for I := 0 to FFormula.ParamCount - 1 do
   begin
@@ -817,6 +834,19 @@ begin
     E.Tag := I;
     E.OnExit := ParamEditExit;
     E.OnKeyPress := ParamEditKeyPress;
+    FParamEdits[I] := E;
+    // créé dynamiquement : événement branché ici, pas dans le .dfm. OnChange après Position, pour ne pas déclencher suite aux assignations
+    T := TTrackBar.Create(Self);
+    T.Parent := pnlParams;
+    T.SetBounds(0, I * kParamRowHeight + kParamSliderTop, pnlParams.ClientWidth, kParamSliderHeight);
+    T.Anchors := [akLeft, akTop, akRight];
+    T.TickStyle := tsNone;
+    T.Max := kParamSliderSteps;
+    T.PageSize := kParamSliderSteps div 20;
+    T.Position := ParamToSliderPosition(FFormula.ParamInfo(I), FFormula.GetParam(I));
+    T.Tag := I;
+    T.OnChange := ParamSliderChange;
+    FParamSliders[I] := T;
   end;
 end;
 
@@ -858,6 +888,36 @@ begin
   else
     FStatusMessage := Format('Valeur invalide pour « %s ».', [FFormula.ParamInfo(Index).Caption]);
   Edit.Text := FloatToStr(FFormula.GetParam(Index));
+  UpdateParamSlider(Index);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ParamSliderChange(Sender: TObject);
+var
+  Index: Integer;
+begin
+  if FIsUpdating then
+    Exit;
+  // chaque cran relance le rendu : on voit défiler les passes grossières pendant le glissement
+  Index := TTrackBar(Sender).Tag;
+  FFormula.SetParam(Index, SliderPositionToParam(FFormula.ParamInfo(Index), TTrackBar(Sender).Position));
+  FParamEdits[Index].Text := FloatToStr(FFormula.GetParam(Index));
+  FStatusMessage := '';
+  RenderCurrent;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.UpdateParamSlider(Index: Integer);
+begin
+  // valeur tapée : le curseur va au cran le plus proche sans modifier la valeur exacte
+  FIsUpdating := True;
+  try
+    FParamSliders[Index].Position := ParamToSliderPosition(FFormula.ParamInfo(Index), FFormula.GetParam(Index));
+  finally
+    FIsUpdating := False;
+  end;
 end;
 
 {------------------------------------------------------------------------------}

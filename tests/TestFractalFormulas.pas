@@ -3,7 +3,7 @@
 interface
 
 uses
-  TestFramework, Fractal.Types, Fractal.Formulas;
+  Math, TestFramework, Fractal.Types, Fractal.Formulas;
 
 type
   TTestFormulas = class(TTestCase)
@@ -18,6 +18,9 @@ type
     procedure TestBurningShip;
     procedure TestSetParamClampsAndCloneCopies;
     procedure TestRegistry;
+    procedure TestParamToSliderPosition;
+    procedure TestSliderPositionToParam;
+    procedure TestSliderWithEmptyRange;
   end;
 
 implementation
@@ -197,6 +200,65 @@ begin
   finally
     B.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function JuliaCxInfo: TFormulaParam;
+var
+  F: TJuliaFormula;
+begin
+  F := TJuliaFormula.Create;
+  try
+    Result := F.ParamInfo(F.IndexOfParam('cx'));  // de -2 à 2
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestParamToSliderPosition;
+var
+  Info: TFormulaParam;
+begin
+  Info := JuliaCxInfo;
+  CheckEquals(0, ParamToSliderPosition(Info, -2));
+  CheckEquals(kParamSliderSteps, ParamToSliderPosition(Info, 2));
+  CheckEquals(kParamSliderSteps div 2, ParamToSliderPosition(Info, 0));
+  CheckEquals(539, ParamToSliderPosition(Info, 0.156), 'cran le plus proche');
+  CheckEquals(kParamSliderSteps, ParamToSliderPosition(Info, 5), 'au-dessus du maximum');
+  CheckEquals(0, ParamToSliderPosition(Info, -5), 'en dessous du minimum');
+  CheckEquals(0, ParamToSliderPosition(Info, NaN));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestSliderPositionToParam;
+var
+  Info: TFormulaParam;
+begin
+  Info := JuliaCxInfo;
+  CheckEquals(-2, SliderPositionToParam(Info, 0), 0);
+  CheckEquals(2, SliderPositionToParam(Info, kParamSliderSteps), 0);
+  CheckEquals(0, SliderPositionToParam(Info, kParamSliderSteps div 2), 1e-15);
+  CheckEquals(2, SliderPositionToParam(Info, kParamSliderSteps + 500), 0, 'position bornée');
+  CheckEquals(-2, SliderPositionToParam(Info, -1), 0, 'position bornée');
+  // aller-retour : au plus un demi-cran d'écart
+  CheckEquals(0.156, SliderPositionToParam(Info, ParamToSliderPosition(Info, 0.156)), 4 / kParamSliderSteps / 2);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestSliderWithEmptyRange;
+var
+  Info: TFormulaParam;
+begin
+  Info := JuliaCxInfo;
+  Info.MinValue := 1;
+  Info.MaxValue := 1;
+  CheckEquals(0, ParamToSliderPosition(Info, 1));
+  CheckEquals(1, SliderPositionToParam(Info, 300), 0);
 end;
 
 initialization

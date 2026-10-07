@@ -10,6 +10,7 @@ const
   kMinMaxIter = 16;
   kMaxMaxIter = 1000000;
   kDefaultMaxIter = 1000;
+  kParamSliderSteps = 1000;  // crans du curseur d'un paramètre de formule
 
 type
   TFormulaParam = record
@@ -107,6 +108,8 @@ procedure RegisterFormula(AClass: TFractalFormulaClass);
 function FormulaClassCount: Integer;
 function FormulaClassAt(Index: Integer): TFractalFormulaClass;
 function FindFormulaClass(const AName: string): TFractalFormulaClass;
+function ParamToSliderPosition(const Info: TFormulaParam; Value: Double): Integer;
+function SliderPositionToParam(const Info: TFormulaParam; Position: Integer): Double;
 
 implementation
 
@@ -554,6 +557,25 @@ begin
     if SameText(FormulaRegistry[I].FormulaName, AName) then
       Exit(FormulaRegistry[I]);
   Result := nil;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ParamToSliderPosition(const Info: TFormulaParam; Value: Double): Integer;
+begin
+  // linéaire entre MinValue et MaxValue, cran le plus proche ; hors intervalle ou NaN : bornée
+  if IsNan(Value) or (Info.MaxValue <= Info.MinValue) then
+    Exit(0);
+  Result := EnsureRange(Round((Value - Info.MinValue) / (Info.MaxValue - Info.MinValue) * kParamSliderSteps), 0,
+    kParamSliderSteps);
+end;
+
+{------------------------------------------------------------------------------}
+
+function SliderPositionToParam(const Info: TFormulaParam; Position: Integer): Double;
+begin
+  Position := EnsureRange(Position, 0, kParamSliderSteps);
+  Result := Info.MinValue + Position * (Info.MaxValue - Info.MinValue) / kParamSliderSteps;
 end;
 
 initialization
