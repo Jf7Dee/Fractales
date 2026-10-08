@@ -47,6 +47,7 @@ type
     function ParamInfo(Index: Integer): TFormulaParam;
     function GetParam(Index: Integer): Double;
     procedure SetParam(Index: Integer; Value: Double);
+    procedure ResetParams;
     function IndexOfParam(const AName: string): Integer;
     property MaxIter: Integer read FMaxIter write SetMaxIter;
   end;
@@ -234,6 +235,17 @@ begin
     Value := FParamInfos[Index].DefaultValue;
   FParamValues[Index] := EnsureRange(Value, FParamInfos[Index].MinValue, FParamInfos[Index].MaxValue);
   ParamsChanged;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFractalFormula.ResetParams;
+var
+  I: Integer;
+begin
+  // chaque paramètre reprend la valeur déclarée par DeclareParam ; MaxIter n'est pas touché
+  for I := 0 to ParamCount - 1 do
+    SetParam(I, FParamInfos[I].DefaultValue);
 end;
 
 {------------------------------------------------------------------------------}

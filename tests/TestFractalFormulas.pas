@@ -21,6 +21,7 @@ type
     procedure TestParamToSliderPosition;
     procedure TestSliderPositionToParam;
     procedure TestSliderWithEmptyRange;
+    procedure TestResetParamsRestoresDefaults;
   end;
 
 implementation
@@ -259,6 +260,40 @@ begin
   Info.MaxValue := 1;
   CheckEquals(0, ParamToSliderPosition(Info, 1));
   CheckEquals(1, SliderPositionToParam(Info, 300), 0);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestResetParamsRestoresDefaults;
+var
+  J: TJuliaFormula;
+  M, Fresh: TMultibrotFormula;
+  Plain: TMandelbrotFormula;
+begin
+  J := TJuliaFormula.Create;
+  M := TMultibrotFormula.Create;
+  Fresh := TMultibrotFormula.Create;
+  Plain := TMandelbrotFormula.Create;
+  try
+    J.SetParam(0, 0.3);
+    J.SetParam(1, -0.5);
+    J.MaxIter := 5000;
+    J.ResetParams;
+    CheckEquals(J.ParamInfo(0).DefaultValue, J.GetParam(0), 0);
+    CheckEquals(J.ParamInfo(1).DefaultValue, J.GetParam(1), 0);
+    CheckEquals(5000, J.MaxIter, 'les itérations ne sont pas des paramètres');
+    // les valeurs mises en cache par ParamsChanged suivent : même résultat qu'une formule neuve
+    M.SetParam(0, 7);
+    M.ResetParams;
+    CheckEquals(Fresh.Iterate(-0.6, 0.4), M.Iterate(-0.6, 0.4), 0);
+    Plain.ResetParams;  // sans paramètre : rien à faire, pas d'erreur
+    CheckEquals(0, Plain.ParamCount);
+  finally
+    Plain.Free;
+    Fresh.Free;
+    M.Free;
+    J.Free;
+  end;
 end;
 
 initialization

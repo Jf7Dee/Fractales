@@ -75,6 +75,8 @@ type
     Fin1: TMenuItem;
     N1: TMenuItem;
     btnHome: TBitBtn;
+    btnResetFormula: TBitBtn;
+    btnResetColors: TBitBtn;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -96,6 +98,8 @@ type
     procedure MaxIterEditKeyPress(Sender: TObject; var Key: Char);
     procedure AutoIterClick(Sender: TObject);
     procedure btnHomeClick(Sender: TObject);
+    procedure btnResetFormulaClick(Sender: TObject);
+    procedure btnResetColorsClick(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -457,6 +461,27 @@ end;
 procedure TMainForm.btnHomeClick(Sender: TObject);
 begin
   FNavigator.GoToView(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth, 1, 1));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.btnResetColorsClick(Sender: TObject);
+begin
+  FMapping := DefaultColorMapping;
+  UpdateColorControls;  // repositionne les curseurs sous la garde FIsUpdating
+  ColorsChanged;
+  {pour le reset eventuel de la palette:
+   cbPalette.ItemIndex := 0;
+  P aletteComboChange(nil);}
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.btnResetFormulaClick(Sender: TObject);
+begin
+  FFormula.ResetParams;
+  BuildParamEditors;  // champs et curseurs reconstruits avec les valeurs par défaut
+  RenderCurrent;
 end;
 
 {------------------------------------------------------------------------------}
@@ -848,6 +873,8 @@ begin
     T.OnChange := ParamSliderChange;
     FParamSliders[I] := T;
   end;
+
+   btnResetFormula.Enabled := FFormula.ParamCount > 0;
 end;
 
 {------------------------------------------------------------------------------}
