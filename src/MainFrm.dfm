@@ -1,4 +1,4 @@
-object MainForm: TMainForm
+﻿object MainForm: TMainForm
   Left = 0
   Top = 0
   Caption = 'Fractales'
@@ -52,7 +52,6 @@ object MainForm: TMainForm
       item
         Width = 50
       end>
-    ExplicitWidth = 1215
   end
   object pnlSide: TPanel
     Left = 931
@@ -62,7 +61,6 @@ object MainForm: TMainForm
     Align = alRight
     BevelOuter = bvNone
     TabOrder = 0
-    ExplicitLeft = 935
     object PanelCategories: TCategoryPanelGroup
       Left = 0
       Top = 0
@@ -83,7 +81,6 @@ object MainForm: TMainForm
         ParentShowHint = False
         ShowHint = True
         TabOrder = 0
-        ExplicitTop = 569
         object lblNavMode: TLabel
           Left = 18
           Top = 15
@@ -197,7 +194,7 @@ object MainForm: TMainForm
           AlignWithMargins = True
           Left = 3
           Top = 29
-          Width = 253
+          Width = 270
           Height = 248
           Align = alClient
           ItemHeight = 15
@@ -208,7 +205,7 @@ object MainForm: TMainForm
         object Panel2: TPanel
           Left = 0
           Top = 0
-          Width = 259
+          Width = 276
           Height = 26
           Align = alTop
           BevelOuter = bvNone
@@ -216,7 +213,7 @@ object MainForm: TMainForm
           object ToolBar1: TToolBar
             Left = 0
             Top = 0
-            Width = 259
+            Width = 276
             Height = 29
             BorderWidth = 2
             Caption = 'ToolBar1'
@@ -468,7 +465,6 @@ object MainForm: TMainForm
     Align = alRight
     BevelOuter = bvNone
     TabOrder = 1
-    ExplicitLeft = 918
     object btnCollapse: TSpeedButton
       Left = 0
       Top = 0
@@ -511,7 +507,7 @@ object MainForm: TMainForm
     Left = 752
     Top = 80
     Bitmap = {
-      494C010103001C0060000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
+      494C010103001C0064000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
       0000000000003600000028000000300000000C00000001002000000000000009
       0000000000000000000000000000000000000000000000000000F8F8F800E0E0
       E000000000000000000000000000000000000000000000000000000000000000
@@ -624,12 +620,27 @@ object MainForm: TMainForm
         OnClick = HiResClick
       end
     end
+    object Aide1: TMenuItem
+      Caption = '&Aide'
+      object MenuAideClavier: TMenuItem
+        Caption = '&Raccourcis clavier...'
+        OnClick = MenuAideClavierClick
+      end
+      object MenuAideSouris: TMenuItem
+        Caption = '&Souris...'
+        OnClick = MenuAideSourisClick
+      end
+      object MenuAideGestes: TMenuItem
+        Caption = '&Gestes tactiles...'
+        OnClick = MenuAideGestesClick
+      end
+    end
   end
   object ImageList2: TImageList
     Left = 688
     Top = 184
     Bitmap = {
-      494C010103000800300010001000FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
+      494C010103000800340010001000FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
       0000000000003600000028000000400000001000000001002000000000000010
       0000000000000000000000000000000000000000000000000000000000000000
       0000000000000000000000000000000000000000000000000000000000000000

@@ -3,13 +3,14 @@
 interface
 
 uses
-  Windows, Messages, Classes, Controls, Graphics;
+  Windows, Messages, Classes, Controls, Graphics, Fractal.Types, Fractal.Navigation;
 
 const
   kJuliaMargin = 12;
 
 type
   // Zone d'affichage : dessine le bitmap calculé, l'aperçu Julia et le rectangle de sélection.
+  // Reçoit aussi les gestes tactiles (pincement, glisser à un doigt) et l'aperçu étiré du pincement.
   TFractalView = class(TCustomControl)
   private
     FBitmap: TBitmap;
@@ -17,16 +18,20 @@ type
     FIsJuliaVisible: Boolean;
     FSelection: TRect;
     FHasSelection: Boolean;
+    FPreviewCenter: TPoint;
+    FPreviewFactor: TFloat;
     procedure SetJuliaVisible(Value: Boolean);
     procedure WMEraseBkgnd(var Message: TWMEraseBkgnd); message WM_ERASEBKGND;
     procedure WMGetDlgCode(var Message: TWMGetDlgCode); message WM_GETDLGCODE;
   protected
     procedure Paint; override;
+    procedure PaintZoomPreview;
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure SetSelection(const R: TRect; IsVisible: Boolean);
+    procedure SetZoomPreview(X, Y: Integer; Factor: TFloat);
     function JuliaRect: TRect;
     property Bitmap: TBitmap read FBitmap;
     property JuliaBitmap: TBitmap read FJuliaBitmap;
@@ -35,6 +40,7 @@ type
     property OnMouseMove;
     property OnMouseUp;
     property OnResize;
+    property OnGesture;
   end;
 
 implementation
@@ -51,6 +57,10 @@ begin
   FBitmap.PixelFormat := pf32bit;
   FJuliaBitmap := TBitmap.Create;
   FJuliaBitmap.PixelFormat := pf32bit;
+  FPreviewFactor := 1;
+  // gestes interactifs de Windows 7+ : sans eux, un glisser au doigt devient un défilement ignoré
+  Touch.InteractiveGestures := [igZoom, igPan];
+  Touch.InteractiveGestureOptions := [igoPanSingleFingerHorizontal, igoPanSingleFingerVertical];
 end;
 
 {------------------------------------------------------------------------------}
@@ -78,6 +88,16 @@ procedure TFractalView.SetSelection(const R: TRect; IsVisible: Boolean);
 begin
   FSelection := R;
   FHasSelection := IsVisible;
+  Invalidate;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFractalView.SetZoomPreview(X, Y: Integer; Factor: TFloat);
+begin
+  // Factor = 1 : retour à l'affichage normal
+  FPreviewCenter := Point(X, Y);
+  FPreviewFactor := Factor;
   Invalidate;
 end;
 
@@ -118,12 +138,17 @@ procedure TFractalView.Paint;
 var
   R: TRect;
 begin
-  Canvas.Draw(0, 0, FBitmap);
-  Canvas.Brush.Color := clBlack;
-  if FBitmap.Width < ClientWidth then
-    Canvas.FillRect(Rect(FBitmap.Width, 0, ClientWidth, ClientHeight));
-  if FBitmap.Height < ClientHeight then
-    Canvas.FillRect(Rect(0, FBitmap.Height, ClientWidth, ClientHeight));
+  if FPreviewFactor <> 1 then
+    PaintZoomPreview
+  else
+  begin
+    Canvas.Draw(0, 0, FBitmap);
+    Canvas.Brush.Color := clBlack;
+    if FBitmap.Width < ClientWidth then
+      Canvas.FillRect(Rect(FBitmap.Width, 0, ClientWidth, ClientHeight));
+    if FBitmap.Height < ClientHeight then
+      Canvas.FillRect(Rect(0, FBitmap.Height, ClientWidth, ClientHeight));
+  end;
   if FIsJuliaVisible and (FJuliaBitmap.Width > 0) then
   begin
     R := JuliaRect;
@@ -141,6 +166,23 @@ begin
     Canvas.Rectangle(FSelection.Left + 1, FSelection.Top + 1, FSelection.Right - 1, FSelection.Bottom - 1);
     Canvas.Brush.Style := bsSolid;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFractalView.PaintZoomPreview;
+var
+  R: TRect;
+begin
+  // image courante étirée pendant un pincement ; le calcul n'a lieu qu'à la fin du geste
+  R := ZoomPreviewRect(FBitmap.Width, FBitmap.Height, FPreviewCenter.X, FPreviewCenter.Y, FPreviewFactor);
+  SetStretchBltMode(Canvas.Handle, COLORONCOLOR);  // le plus rapide : l'aperçu est redessiné à chaque mouvement
+  Canvas.StretchDraw(R, FBitmap);
+  // le reste en noir, sans repeindre l'image : pas de scintillement
+  ExcludeClipRect(Canvas.Handle, R.Left, R.Top, R.Right, R.Bottom);
+  Canvas.Brush.Color := clBlack;
+  Canvas.FillRect(ClientRect);
+  SelectClipRgn(Canvas.Handle, 0);
 end;
 
 end.

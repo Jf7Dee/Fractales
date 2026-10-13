@@ -18,7 +18,8 @@ uses
   Fractal.View in 'src\Fractal.View.pas',
   MainFrm in 'src\MainFrm.pas' {MainForm},
   PaletteEditorFrm in 'src\PaletteEditorFrm.pas' {PaletteEditorForm},
-  HiResFrm in 'src\HiResFrm.pas' {HiResForm};
+  HiResFrm in 'src\HiResFrm.pas' {HiResForm},
+  HelpFrm in 'src\HelpFrm.pas' {HelpForm};
 
 {$R *.res}
 begin

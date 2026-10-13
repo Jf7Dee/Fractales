@@ -11,6 +11,8 @@ const
   kMinSelectionPixels = 4;
   kHistoryCapacity = 200;
   kKeyPanDivisor = 10;
+  kPinchMaxFactor = 16;     // borne d'un seul pincement, contre les gestes parasites
+  kPinchMinChange = 0.02;   // en deçà, le pincement est ignoré (doigts posés sans intention de zoomer)
 
 type
   TNavButton = (nbLeft, nbRight, nbMiddle);
@@ -23,6 +25,8 @@ type
 
   TViewChangedEvent = procedure(Sender: TObject; const Change: TViewChange) of object;
   TComplexPointEvent = procedure(Sender: TObject; const P: TComplexPoint) of object;
+  // Factor = 1 : plus d'aperçu, l'image normale est affichée
+  TZoomPreviewEvent = procedure(Sender: TObject; X, Y: Integer; Factor: TFloat) of object;
 
   TViewHistory = class
   private
@@ -90,9 +94,17 @@ type
     FOnPrecisionLimit: TNotifyEvent;
     FOnJuliaPoint: TComplexPointEvent;
     FOnHistoryChanged: TNotifyEvent;
+    FOnZoomPreview: TZoomPreviewEvent;
+    FIsGesturePanning: Boolean;
+    FHasGestureMoved: Boolean;
+    FGestureLast: TPoint;
+    FIsPinching: Boolean;
+    FPinchCenter: TPoint;
+    FPinchStartDistance: Integer;
     procedure DoViewChanged(Kind: TViewChangeKind; DX, DY: Integer);
     procedure DoSelectionChanged;
     procedure DoHistoryChanged;
+    procedure DoZoomPreview(Factor: TFloat);
     function TryCommit(const V: TViewport): Boolean;
     function ConstrainedEnd(X, Y: Integer): TPoint;
   public
@@ -113,6 +125,8 @@ type
     procedure PanBy(DX, DY: Integer);
     procedure KeyPan(DirX, DirY: Integer);
     procedure GoToView(const V: TViewport);
+    procedure PanGesture(X, Y: Integer; IsBegin, IsEnd: Boolean);
+    procedure PinchGesture(X, Y, Distance: Integer; IsBegin, IsEnd: Boolean);
     procedure CommitHistory;
     procedure GoBack;
     procedure GoForward;
@@ -128,10 +142,15 @@ type
     property OnJuliaPoint: TComplexPointEvent read FOnJuliaPoint write FOnJuliaPoint;
     // toute modification de l'historique (ajout, recul, avance, remise à zéro) : état de Précédent / Suivant
     property OnHistoryChanged: TNotifyEvent read FOnHistoryChanged write FOnHistoryChanged;
+    // pincement en cours : agrandir l'image affichée autour de (X, Y), sans recalcul
+    property OnZoomPreview: TZoomPreviewEvent read FOnZoomPreview write FOnZoomPreview;
   end;
 
 const
   kNavigationModes: array[0..1] of TNavigationModeClass = (TFreeNavigationMode, TJuliaNavigationMode);
+
+function PinchZoomFactor(StartDistance, Distance: Integer): TFloat;
+function ZoomPreviewRect(Width, Height, X, Y: Integer; Factor: TFloat): TRect;
 
 implementation
 
@@ -349,6 +368,14 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TNavigator.DoZoomPreview(Factor: TFloat);
+begin
+  if Assigned(FOnZoomPreview) then
+    FOnZoomPreview(Self, FPinchCenter.X, FPinchCenter.Y, Factor);
+end;
+
+{------------------------------------------------------------------------------}
+
 function TNavigator.TryCommit(const V: TViewport): Boolean;
 begin
   if V.PrecisionState = psLimit then
@@ -554,6 +581,61 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TNavigator.PanGesture(X, Y: Integer; IsBegin, IsEnd: Boolean);
+begin
+  // glisser à un doigt : même effet que le glisser à la souris, une entrée d'historique par geste
+  if IsBegin then
+  begin
+    FIsGesturePanning := True;
+    FHasGestureMoved := False;
+    FGestureLast := Point(X, Y);
+  end;
+  if not FIsGesturePanning then
+    Exit;  // suite d'un geste dont le début n'a pas été reçu
+  if (X <> FGestureLast.X) or (Y <> FGestureLast.Y) then
+  begin
+    PanBy(X - FGestureLast.X, Y - FGestureLast.Y);
+    FGestureLast := Point(X, Y);
+    FHasGestureMoved := True;
+  end;
+  if IsEnd then
+  begin
+    FIsGesturePanning := False;
+    if FHasGestureMoved then
+      CommitHistory;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TNavigator.PinchGesture(X, Y, Distance: Integer; IsBegin, IsEnd: Boolean);
+var
+  Factor: TFloat;
+begin
+  // pincement : aperçu étiré pendant le geste, un seul zoom (calcul + historique) à la fin,
+  // centré sur le point situé entre les doigts au début du geste
+  if IsBegin then
+  begin
+    FIsPinching := True;
+    FPinchCenter := Point(X, Y);
+    FPinchStartDistance := Distance;
+  end;
+  if not FIsPinching then
+    Exit;  // suite d'un geste dont le début n'a pas été reçu
+  Factor := PinchZoomFactor(FPinchStartDistance, Distance);
+  if not IsEnd then
+  begin
+    DoZoomPreview(Factor);
+    Exit;
+  end;
+  FIsPinching := False;
+  DoZoomPreview(1);
+  if Abs(Factor - 1) >= kPinchMinChange then
+    ZoomAt(FPinchCenter.X, FPinchCenter.Y, Factor);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TNavigator.CommitHistory;
 begin
   FHistory.Push(FViewport);
@@ -602,6 +684,25 @@ procedure TNavigator.NotifyJuliaPoint(X, Y: Integer);
 begin
   if Assigned(FOnJuliaPoint) then
     FOnJuliaPoint(Self, FViewport.PixelToComplex(X, Y));
+end;
+
+{------------------------------------------------------------------------------}
+
+function PinchZoomFactor(StartDistance, Distance: Integer): TFloat;
+begin
+  // doigts qui s'écartent = grossissement ; distance invalide = aucun zoom
+  if (StartDistance <= 0) or (Distance <= 0) then
+    Exit(1);
+  Result := EnsureRange(Distance / StartDistance, 1 / kPinchMaxFactor, kPinchMaxFactor);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ZoomPreviewRect(Width, Height, X, Y: Integer; Factor: TFloat): TRect;
+begin
+  // image entière étirée de Factor autour de (X, Y), qui reste immobile comme dans TViewport.ZoomedAt
+  Result := Rect(Round(X - X * Factor), Round(Y - Y * Factor),
+    Round(X + (Width - X) * Factor), Round(Y + (Height - Y) * Factor));
 end;
 
 end.

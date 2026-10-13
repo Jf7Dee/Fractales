@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
-  Fractal.Persistence, Fractal.Png, Fractal.View, ImgList, Menus, ToolWin;
+  Fractal.Persistence, Fractal.Png, Fractal.View, ImgList, Menus, ToolWin, HelpFrm;
 
 const
   kJuliaPreviewWidth = 240;
@@ -84,6 +84,10 @@ type
     btnDeleteFavorite: TToolButton;
     ToolButton5: TToolButton;
     btnEditFavoriteName: TToolButton;
+    Aide1: TMenuItem;
+    MenuAideClavier: TMenuItem;
+    MenuAideSouris: TMenuItem;
+    MenuAideGestes: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -109,6 +113,9 @@ type
     procedure btnResetColorsClick(Sender: TObject);
     procedure btnDeleteFavoriteClick(Sender: TObject);
     procedure btnEditFavoriteNameClick(Sender: TObject);
+    procedure MenuAideClavierClick(Sender: TObject);
+    procedure MenuAideSourisClick(Sender: TObject);
+    procedure MenuAideGestesClick(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -142,12 +149,14 @@ type
     procedure ViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
     procedure ViewMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
     procedure ViewMouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure ViewGesture(Sender: TObject; const EventInfo: TGestureEventInfo; var Handled: Boolean);
     procedure ViewResize(Sender: TObject);
     procedure NavigatorViewChanged(Sender: TObject; const Change: TViewChange);
     procedure NavigatorSelectionChanged(Sender: TObject);
     procedure NavigatorPrecisionLimit(Sender: TObject);
     procedure NavigatorJuliaPoint(Sender: TObject; const P: TComplexPoint);
     procedure NavigatorHistoryChanged(Sender: TObject);
+    procedure NavigatorZoomPreview(Sender: TObject; X, Y: Integer; Factor: TFloat);
     procedure NavModeChange(Sender: TObject);
     procedure DisplayTimer(Sender: TObject);
     procedure RenderCurrent;
@@ -187,6 +196,7 @@ type
     procedure RefreshFavorites;
     procedure DeleteSelectedFavorite;
     procedure PrepareHiResForm(Sender: TObject);
+    procedure ShowHelp(Topic: THelpTopic);
 
     procedure CheckSmokeStep(const StepName: string);
     procedure SmokeException(Sender: TObject; E: Exception);
@@ -246,6 +256,7 @@ begin
   FView.OnMouseDown := ViewMouseDown;
   FView.OnMouseMove := ViewMouseMove;
   FView.OnMouseUp := ViewMouseUp;
+  FView.OnGesture := ViewGesture;
 
   FEngine := TRenderEngine.Create(CpuCount);
   FJuliaEngine := TRenderEngine.Create(kJuliaThreadCount);
@@ -279,6 +290,7 @@ begin
   FView.OnMouseDown := nil;
   FView.OnMouseMove := nil;
   FView.OnMouseUp := nil;
+  FView.OnGesture := nil;
   FAppEvents.OnMessage := nil;
   FreeAndNil(FEngine);
   FreeAndNil(FJuliaEngine);
@@ -303,6 +315,7 @@ begin
   FNavigator.OnPrecisionLimit := NavigatorPrecisionLimit;
   FNavigator.OnJuliaPoint := NavigatorJuliaPoint;
   FNavigator.OnHistoryChanged := NavigatorHistoryChanged;
+  FNavigator.OnZoomPreview := NavigatorZoomPreview;
   for I := 0 to High(kNavigationModes) do
     cbNavMode.Items.Add(kNavigationModes[I].DisplayName);
   cbNavMode.ItemIndex := 0;
@@ -395,6 +408,24 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TMainForm.ViewGesture(Sender: TObject; const EventInfo: TGestureEventInfo; var Handled: Boolean);
+begin
+  // tablette : pincement = zoom, glisser à un doigt = déplacement ; les autres gestes restent à Windows
+  case EventInfo.GestureID of
+    igiZoom:
+      FNavigator.PinchGesture(EventInfo.Location.X, EventInfo.Location.Y, EventInfo.Distance,
+        gfBegin in EventInfo.Flags, gfEnd in EventInfo.Flags);
+    igiPan:
+      FNavigator.PanGesture(EventInfo.Location.X, EventInfo.Location.Y, gfBegin in EventInfo.Flags,
+        gfEnd in EventInfo.Flags);
+  else
+    Exit;
+  end;
+  Handled := True;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.ViewResize(Sender: TObject);
 begin
   FNavigator.SetPixelSize(Max(1, FView.ClientWidth), Max(1, FView.ClientHeight));
@@ -448,6 +479,13 @@ end;
 procedure TMainForm.NavigatorHistoryChanged(Sender: TObject);
 begin
   UpdateHistoryButtons;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.NavigatorZoomPreview(Sender: TObject; X, Y: Integer; Factor: TFloat);
+begin
+  FView.SetZoomPreview(X, Y, Factor);
 end;
 
 {------------------------------------------------------------------------------}
@@ -669,6 +707,9 @@ var
   HiRes: THiResForm;
   HiResFile: string;
   Start: Cardinal;
+  Width0: TFloat;
+  Help: THelpForm;
+  Topic: THelpTopic;
 begin
   Result := 1;
 
@@ -693,6 +734,18 @@ begin
         raise Exception.Create('rendu après déplacement non terminé');
       CheckSmokeStep('déplacement');
       FSmokeLog.Add('Déplacement OK');
+      // pincement simulé (les messages tactiles de Windows ne peuvent pas être fabriqués) : aperçu puis zoom x2
+      Width0 := FNavigator.Viewport.Width;
+      FNavigator.PinchGesture(100, 80, 100, True, False);
+      FNavigator.PinchGesture(100, 80, 150, False, False);
+      FView.Repaint;
+      FNavigator.PinchGesture(100, 80, 200, False, True);
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu après pincement non terminé');
+      CheckSmokeStep('pincement');
+      if not SameValue(FNavigator.Viewport.Width, Width0 / 2) then
+        raise Exception.Create('pincement sans effet');
+      FSmokeLog.Add('Pincement OK');
       SetFormula(TMultibrotFormula.Create, True);
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu Multibrot non terminé');
@@ -732,6 +785,19 @@ begin
         Dlg.Free;
       end;
       FSmokeLog.Add('Éditeur de palette OK');
+      for Topic := Low(THelpTopic) to High(THelpTopic) do
+      begin
+        Help := THelpForm.Create(Self);
+        try
+          Help.Topic := Topic;
+          Help.Show;
+          if Help.lvHelp.Items.Count <> HelpEntryCount(Topic) then
+            raise Exception.CreateFmt('aide incomplète (sujet %d)', [Ord(Topic)]);
+        finally
+          Help.Free;
+        end;
+      end;
+      FSmokeLog.Add('Aide OK');
       ExportViewPng(OutputFile);
       if not ReadPngText(OutputFile, kLocationKeyword, Text) then
         raise Exception.Create('lieu absent du PNG exporté');
@@ -1589,6 +1655,42 @@ procedure TMainForm.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
 begin
   if (FHiResForm <> nil) and THiResForm(FHiResForm).IsRunning then
     THiResForm(FHiResForm).FormCloseQuery(Self, CanClose);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.MenuAideClavierClick(Sender: TObject);
+begin
+  ShowHelp(htKeyboard);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.MenuAideSourisClick(Sender: TObject);
+begin
+  ShowHelp(htMouse);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.MenuAideGestesClick(Sender: TObject);
+begin
+  ShowHelp(htTouch);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ShowHelp(Topic: THelpTopic);
+var
+  Dlg: THelpForm;
+begin
+  Dlg := THelpForm.Create(Self);
+  try
+    Dlg.Topic := Topic;
+    Dlg.ShowModal;
+  finally
+    Dlg.Free;
+  end;
 end;
 
 end.

@@ -17,10 +17,13 @@ type
     FHistoryChangeCount: Integer;
     FIsBackSeen: Boolean;
     FIsForwardSeen: Boolean;
+    FPreviewCount: Integer;
+    FLastPreviewFactor: TFloat;
     procedure ViewChanged(Sender: TObject; const Change: TViewChange);
     procedure PrecisionLimit(Sender: TObject);
     procedure JuliaPoint(Sender: TObject; const P: TComplexPoint);
     procedure HistoryChanged(Sender: TObject);
+    procedure ZoomPreview(Sender: TObject; X, Y: Integer; Factor: TFloat);
   protected
     procedure SetUp; override;
     procedure TearDown; override;
@@ -41,6 +44,14 @@ type
     procedure TestHistoryChangeReportedAfterKeyPan;
     procedure TestGoToViewAddsHistory;
     procedure TestGoToSameViewIsIgnored;
+    procedure TestPinchZoomFactor;
+    procedure TestZoomPreviewRect;
+    procedure TestPinchZoomsOnceAtEnd;
+    procedure TestTinyPinchIsIgnored;
+    procedure TestPinchBlockedByPrecisionLimit;
+    procedure TestPanGestureWithOneHistoryEntry;
+    procedure TestPanGestureWithoutMoveAddsNoHistory;
+    procedure TestGestureWithoutBeginIsIgnored;
   end;
 
 implementation
@@ -57,11 +68,14 @@ begin
   FNavigator.OnPrecisionLimit := PrecisionLimit;
   FNavigator.OnJuliaPoint := JuliaPoint;
   FNavigator.OnHistoryChanged := HistoryChanged;
+  FNavigator.OnZoomPreview := ZoomPreview;
   FNavigator.Reset(MakeViewport(0, 0, 4, 400, 300));
   FChangeCount := 0;
   FIsLimitHit := False;
   FJuliaCount := 0;
   FHistoryChangeCount := 0;
+  FPreviewCount := 0;
+  FLastPreviewFactor := 0;
 end;
 
 {------------------------------------------------------------------------------}
@@ -102,6 +116,14 @@ begin
   Inc(FHistoryChangeCount);
   FIsBackSeen := FNavigator.CanGoBack;
   FIsForwardSeen := FNavigator.CanGoForward;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.ZoomPreview(Sender: TObject; X, Y: Integer; Factor: TFloat);
+begin
+  Inc(FPreviewCount);
+  FLastPreviewFactor := Factor;
 end;
 
 {------------------------------------------------------------------------------}
@@ -335,6 +357,138 @@ begin
   CheckEquals(2, FNavigator.History.Count);
   CheckEquals(0, FHistoryChangeCount);
   CheckEquals(0, FChangeCount);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestPinchZoomFactor;
+begin
+  // doigts qui s'écartent = zoom avant, qui se rapprochent = zoom arrière
+  CheckEquals(2.0, PinchZoomFactor(100, 200), kEps);
+  CheckEquals(0.5, PinchZoomFactor(200, 100), kEps);
+  // distance invalide : aucun zoom
+  CheckEquals(1.0, PinchZoomFactor(0, 100), kEps);
+  CheckEquals(1.0, PinchZoomFactor(100, 0), kEps);
+  // geste parasite : facteur borné
+  CheckEquals(kPinchMaxFactor, PinchZoomFactor(10, 1000), kEps);
+  CheckEquals(1 / kPinchMaxFactor, PinchZoomFactor(1000, 10), kEps);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestZoomPreviewRect;
+var
+  R: TRect;
+begin
+  // grossissement 2 autour de (100, 50) : ce point reste immobile
+  R := ZoomPreviewRect(400, 300, 100, 50, 2);
+  CheckEquals(-100, R.Left);
+  CheckEquals(-50, R.Top);
+  CheckEquals(700, R.Right);
+  CheckEquals(550, R.Bottom);
+  R := ZoomPreviewRect(400, 300, 100, 50, 1);
+  CheckEquals(0, R.Left);
+  CheckEquals(0, R.Top);
+  CheckEquals(400, R.Right);
+  CheckEquals(300, R.Bottom);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestPinchZoomsOnceAtEnd;
+var
+  Count0: Integer;
+  P0, P1: TComplexPoint;
+begin
+  Count0 := FNavigator.History.Count;
+  P0 := FNavigator.Viewport.PixelToComplex(100, 80);
+  FNavigator.PinchGesture(100, 80, 100, True, False);
+  FNavigator.PinchGesture(100, 80, 150, False, False);
+  // pendant le geste : aperçu seulement, aucun calcul ni historique
+  CheckEquals(1.5, FLastPreviewFactor, kEps);
+  CheckEquals(0, FChangeCount);
+  CheckEquals(Count0, FNavigator.History.Count);
+  FNavigator.PinchGesture(100, 80, 200, False, True);
+  // fin du geste : aperçu retiré, un seul zoom, une seule entrée d'historique
+  CheckEquals(1.0, FLastPreviewFactor, kEps);
+  CheckEquals(1, FChangeCount);
+  CheckEquals(Count0 + 1, FNavigator.History.Count);
+  CheckEquals(2.0, FNavigator.Viewport.Width, kEps);
+  P1 := FNavigator.Viewport.PixelToComplex(100, 80);
+  CheckEquals(P0.X, P1.X, kEps);
+  CheckEquals(P0.Y, P1.Y, kEps);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestTinyPinchIsIgnored;
+var
+  Count0: Integer;
+begin
+  Count0 := FNavigator.History.Count;
+  FNavigator.PinchGesture(100, 80, 100, True, False);
+  FNavigator.PinchGesture(100, 80, 101, False, True);
+  CheckEquals(1.0, FLastPreviewFactor, kEps);
+  CheckEquals(0, FChangeCount);
+  CheckEquals(Count0, FNavigator.History.Count);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestPinchBlockedByPrecisionLimit;
+begin
+  FNavigator.Reset(MakeViewport(0.5, 0, 1e-14, 400, 300));
+  FNavigator.PinchGesture(200, 150, 100, True, False);
+  FNavigator.PinchGesture(200, 150, 1000, False, True);
+  CheckTrue(FIsLimitHit);
+  CheckEquals(1.0, FLastPreviewFactor, kEps);
+  CheckEquals(1e-14, FNavigator.Viewport.Width, 1e-28);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestPanGestureWithOneHistoryEntry;
+var
+  Count0: Integer;
+begin
+  Count0 := FNavigator.History.Count;
+  FNavigator.PanGesture(100, 100, True, False);
+  FNavigator.PanGesture(110, 95, False, False);
+  CheckEquals(Ord(vckPan), Ord(FLastChange.Kind));
+  CheckEquals(10, FLastChange.DX);
+  CheckEquals(-5, FLastChange.DY);
+  CheckEquals(Count0, FNavigator.History.Count);
+  FNavigator.PanGesture(115, 95, False, True);
+  CheckEquals(5, FLastChange.DX);
+  CheckEquals(0, FLastChange.DY);
+  CheckEquals(Count0 + 1, FNavigator.History.Count);
+  CheckEquals(-0.15, FNavigator.Viewport.CenterX, kEps);
+  CheckEquals(-0.05, FNavigator.Viewport.CenterY, kEps);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestPanGestureWithoutMoveAddsNoHistory;
+var
+  Count0: Integer;
+begin
+  Count0 := FNavigator.History.Count;
+  FNavigator.PanGesture(100, 100, True, False);
+  FNavigator.PanGesture(100, 100, False, True);
+  CheckEquals(0, FChangeCount);
+  CheckEquals(Count0, FNavigator.History.Count);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestGestureWithoutBeginIsIgnored;
+begin
+  // message reçu sans son début (geste commencé ailleurs) : rien ne bouge
+  FNavigator.PanGesture(120, 100, False, False);
+  FNavigator.PanGesture(130, 100, False, True);
+  FNavigator.PinchGesture(100, 80, 300, False, True);
+  CheckEquals(0, FChangeCount);
+  CheckEquals(0, FPreviewCount);
 end;
 
 initialization
