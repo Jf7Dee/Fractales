@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
-  Fractal.Persistence, Fractal.Png, Fractal.View, ImgList, Menus;
+  Fractal.Persistence, Fractal.Png, Fractal.View, ImgList, Menus, ToolWin;
 
 const
   kJuliaPreviewWidth = 240;
@@ -68,7 +68,6 @@ type
     CategoryPanelNavigation: TCategoryPanel;
     CategoryPanelFavorites: TCategoryPanel;
     Panel2: TPanel;
-    btnAddFavorite: TBitBtn;
     CategoryPanelColors: TCategoryPanel;
     CategoryPanelFormulas: TCategoryPanel;
     Label1: TLabel;
@@ -77,6 +76,14 @@ type
     btnHome: TBitBtn;
     btnResetFormula: TBitBtn;
     btnResetColors: TBitBtn;
+    ToolBar1: TToolBar;
+    ToolButton2: TToolButton;
+    ImageList2: TImageList;
+    btnAddFavorite: TToolButton;
+    ToolButton3: TToolButton;
+    btnDeleteFavorite: TToolButton;
+    ToolButton5: TToolButton;
+    btnEditFavoriteName: TToolButton;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -100,6 +107,8 @@ type
     procedure btnHomeClick(Sender: TObject);
     procedure btnResetFormulaClick(Sender: TObject);
     procedure btnResetColorsClick(Sender: TObject);
+    procedure btnDeleteFavoriteClick(Sender: TObject);
+    procedure btnEditFavoriteNameClick(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -176,6 +185,7 @@ type
     function LocationAsPngText(Location: TFractalLocation): RawByteString;
     procedure ExportViewPng(const FileName: string);
     procedure RefreshFavorites;
+    procedure DeleteSelectedFavorite;
     procedure PrepareHiResForm(Sender: TObject);
 
     procedure CheckSmokeStep(const StepName: string);
@@ -1469,19 +1479,81 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TMainForm.FavoritesKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+procedure TMainForm.btnEditFavoriteNameClick(Sender: TObject);
 var
-  Name: string;
+  Name, Stored, NewStored: string;
+  Location: TFractalLocation;
+begin
+  if lbFavorites.ItemIndex < 0 then
+    Exit;
+
+  Stored := lbFavorites.Items[lbFavorites.ItemIndex];
+
+  Name := Stored;
+  if not InputQuery('Renommer le favori', 'Nouveau nom :', Name) or (Trim(Name) = '') then
+    Exit;
+  if SanitizeFileName(Name) = Stored then
+    Exit;  // nom inchangé : rien à renommer
+
+  if FileExists(FFavorites.FileNameOf(Name)) then
+  begin
+    MessageDlg(Format('Le favori « %s » existe déjà. Veuillez choisir un autre nom', [SanitizeFileName(Name)]),
+                        mtWarning, [mbOk], 0) ;
+    Exit;
+  end;
+
+  Location := TFractalLocation.Create;
+  try
+    try
+      FFavorites.Load(Stored, Location);
+      NewStored := FFavorites.Save(Name, Location);  // nom assaini, comme dans la liste
+      FFavorites.Delete(Stored);
+    except
+      on E: Exception do
+      begin
+        MessageDlg(E.Message, mtError, [mbOK], 0);
+        Exit;
+      end;
+    end;
+  finally
+    Location.Free;
+  end;
+  RefreshFavorites;
+  lbFavorites.ItemIndex := lbFavorites.Items.IndexOf(NewStored);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.btnDeleteFavoriteClick(Sender: TObject);
+begin
+  DeleteSelectedFavorite;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.FavoritesKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
 begin
   if (Key <> VK_DELETE) or (lbFavorites.ItemIndex < 0) then
     Exit;
-  Name := lbFavorites.Items[lbFavorites.ItemIndex];
-  if MessageDlg(Format('Supprimer le favori « %s » ?', [Name]), mtConfirmation, [mbYes, mbNo], 0) = mrYes then
-  begin
-    FFavorites.Delete(Name);
-    RefreshFavorites;
-  end;
+  DeleteSelectedFavorite;
   Key := 0;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.DeleteSelectedFavorite;
+var
+  Name: string;
+begin
+  // commun au bouton Retirer et à la touche Suppr de la liste
+  if lbFavorites.ItemIndex < 0 then
+    Exit;
+  Name := lbFavorites.Items[lbFavorites.ItemIndex];
+  if MessageDlg(Format('Confirmez-vous le retrait du favori « %s » ?', [Name]), mtConfirmation,
+    [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+  FFavorites.Delete(Name);
+  RefreshFavorites;
 end;
 
 {------------------------------------------------------------------------------}
