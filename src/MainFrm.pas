@@ -116,6 +116,7 @@ type
     procedure MenuAideClavierClick(Sender: TObject);
     procedure MenuAideSourisClick(Sender: TObject);
     procedure MenuAideGestesClick(Sender: TObject);
+    procedure Fin1Click(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -1211,6 +1212,11 @@ begin
 
   for I := 0 to FPalettes.Count - 1 do
     cbPalette.Items.Add(TGradientPalette(FPalettes[I]).Name);
+end;
+
+procedure TMainForm.Fin1Click(Sender: TObject);
+begin
+  Close;
 end;
 
 {------------------------------------------------------------------------------}

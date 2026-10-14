@@ -58,9 +58,10 @@ begin
   FJuliaBitmap := TBitmap.Create;
   FJuliaBitmap.PixelFormat := pf32bit;
   FPreviewFactor := 1;
-  // gestes interactifs de Windows 7+ : sans eux, un glisser au doigt devient un défilement ignoré
+  // gestes interactifs de Windows 7+ à deux doigts seulement : un doigt seul reste une souris pour Windows
+  // (glisser = glisser gauche, appui long puis glisser = glisser droit, donc sélection)
   Touch.InteractiveGestures := [igZoom, igPan];
-  Touch.InteractiveGestureOptions := [igoPanSingleFingerHorizontal, igoPanSingleFingerVertical];
+  Touch.InteractiveGestureOptions := [];
 end;
 
 {------------------------------------------------------------------------------}
