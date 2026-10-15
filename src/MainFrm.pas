@@ -3,8 +3,9 @@
 interface
 
 uses
-  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
+  Windows, Messages, SysUtils, Classes, Types, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
+  {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
   Fractal.Persistence, Fractal.Png, Fractal.View, ImgList, Menus, ToolWin, HelpFrm;
 
 const

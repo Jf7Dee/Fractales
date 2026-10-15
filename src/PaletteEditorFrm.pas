@@ -3,7 +3,8 @@
 interface
 
 uses
-  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, Math,
+  Windows, Messages, SysUtils, Classes, Types, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, Math,
+  {$IF CompilerVersion >= 23} UITypes,{$IFEND}
   Fractal.Palette, Fractal.Persistence;
 
 const

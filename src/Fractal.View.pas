@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, Messages, Classes, Controls, Graphics, Fractal.Types, Fractal.Navigation;
+  Windows, Messages, Classes, Types, Controls, Graphics, Fractal.Types, Fractal.Navigation;
 
 const
   kJuliaMargin = 12;

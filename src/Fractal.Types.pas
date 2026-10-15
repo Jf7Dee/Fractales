@@ -230,7 +230,12 @@ begin
 end;
 
 initialization
+  // TFormatSettings.Create apparaît avec Delphi XE ; D2010 n'a que GetLocaleFormatSettings
+  {$IF CompilerVersion >= 22}
+  InvariantSettings := TFormatSettings.Create(kEnglishLocale);
+  {$ELSE}
   GetLocaleFormatSettings(kEnglishLocale, InvariantSettings);
+  {$IFEND}
   InvariantSettings.DecimalSeparator := '.';
   InvariantSettings.ThousandSeparator := ',';
 

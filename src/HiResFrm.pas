@@ -4,6 +4,7 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls, ExtCtrls, ShlObj,
+  {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
   Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.HiRes;
 
 const
