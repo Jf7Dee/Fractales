@@ -21,21 +21,29 @@ object HiResForm: THiResForm
   object lblPreset: TLabel
     Left = 12
     Top = 15
+    Width = 33
+    Height = 15
     Caption = 'Taille :'
   end
   object lblSize: TLabel
     Left = 12
     Top = 47
+    Width = 98
+    Height = 15
     Caption = 'Largeur x hauteur :'
   end
   object lblSupersample: TLabel
     Left = 12
     Top = 79
+    Width = 108
+    Height = 15
     Caption = 'Sur'#233'chantillonnage :'
   end
   object lblFile: TLabel
     Left = 12
     Top = 111
+    Width = 41
+    Height = 15
     Caption = 'Fichier :'
   end
   object lblState: TLabel

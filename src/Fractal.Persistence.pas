@@ -62,6 +62,8 @@ type
   end;
 
 function SanitizeFileName(const S: string): string;
+function SuggestedName(Formula: TFractalFormulaClass; const V: TViewport; When: TDateTime): string;
+function UniqueBaseName(const Folder, Base, Extension: string): string;
 function AppDataFolder: string;
 function PaletteFolder: string;
 function FavoritesFolder: string;
@@ -80,6 +82,17 @@ const
   kInvalidFileChars = '\/:*?"<>|';
   kUnnamed = 'Sans nom';
   kNoLocationMessage = 'Ce fichier ne contient pas de lieu fractal.';
+  kNameSeparator = '_';
+  kNameDateFormat = 'yyyymmdd-hhnn';
+  kCentreName = 'centre';
+  kCentreRadius = 0.05;      // en largeurs initiales : en deçà, la vue est « au centre »
+  kScientificZoom = 1000;    // à partir de ce facteur, le zoom s'écrit 2.4e5
+  // secteurs de 45° dans le sens trigonométrique, en partant de l'est
+  kCompassPoints: array[0..7] of string = ('E', 'NE', 'N', 'NO', 'O', 'SO', 'S', 'SE');
+
+function CompassDirection(DX, DY: TFloat): string; forward;
+function ZoomLabel(Zoom: TFloat): string; forward;
+function OneDecimal(Value: TFloat): string; forward;
 
 {------------------------------------------------------------------------------}
 
@@ -425,6 +438,81 @@ begin
   Result := Trim(Result);
   if Result = '' then
     Result := kUnnamed;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Nom unique et parlant, proposé quand il faut nommer une image, un lieu ou un favori (utile quand le clavier
+// virtuel d'une tablette tarde) : formule, direction depuis la vue initiale, zoom, date et heure.
+function SuggestedName(Formula: TFractalFormulaClass; const V: TViewport; When: TDateTime): string;
+begin
+  Result := Formula.FormulaName + kNameSeparator
+    + CompassDirection((V.CenterX - Formula.DefaultCenterX) / Formula.DefaultWidth,
+      (V.CenterY - Formula.DefaultCenterY) / Formula.DefaultWidth) + kNameSeparator
+    + ZoomLabel(Formula.DefaultWidth / V.Width) + kNameSeparator
+    + FormatDateTime(kNameDateFormat, When);
+end;
+
+{------------------------------------------------------------------------------}
+
+function CompassDirection(DX, DY: TFloat): string;
+begin
+  if Hypot(DX, DY) < kCentreRadius then
+    Result := kCentreName
+  else
+    Result := kCompassPoints[(Round(RadToDeg(ArcTan2(DY, DX)) / 45) + Length(kCompassPoints))
+      mod Length(kCompassPoints)];
+end;
+
+{------------------------------------------------------------------------------}
+
+function ZoomLabel(Zoom: TFloat): string;
+var
+  Exponent: Integer;
+  Mantissa: TFloat;
+begin
+  if Zoom < kScientificZoom then
+    Result := 'x' + OneDecimal(Zoom)
+  else
+  begin
+    Exponent := Floor(Log10(Zoom));
+    Mantissa := RoundTo(Zoom / Power(10, Exponent), -1);
+    if Mantissa >= 10 then
+    begin
+      Mantissa := Mantissa / 10;
+      Inc(Exponent);
+    end;
+    Result := 'x' + OneDecimal(Mantissa) + 'e' + IntToStr(Exponent);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Une décimale au plus, toujours avec un point : le nom ne dépend pas des réglages régionaux.
+function OneDecimal(Value: TFloat): string;
+var
+  Tenths: Int64;
+begin
+  Tenths := Round(Value * 10);
+  Result := IntToStr(Tenths div 10);
+  if Tenths mod 10 <> 0 then
+    Result := Result + '.' + IntToStr(Tenths mod 10);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Base, ou Base_2, Base_3... : le premier nom absent du dossier pour cette extension.
+function UniqueBaseName(const Folder, Base, Extension: string): string;
+var
+  N: Integer;
+begin
+  Result := Base;
+  N := 1;
+  while FileExists(IncludeTrailingPathDelimiter(Folder) + Result + Extension) do
+  begin
+    Inc(N);
+    Result := Base + kNameSeparator + IntToStr(N);
+  end;
 end;
 
 {------------------------------------------------------------------------------}

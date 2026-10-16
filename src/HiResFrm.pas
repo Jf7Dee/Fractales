@@ -15,6 +15,7 @@ const
   kMinHiResSize = 16;
   kMaxHiResSize = 32768;
   kDefaultFileName = 'fractale.png';
+  kPngExtension = '.png';
 
 type
   THiResForm = class(TForm)
@@ -58,12 +59,16 @@ type
   public
     procedure Prepare(const V: TViewport; Formula: TFractalFormula; Palette: TGradientPalette;
       const Mapping: TColorMapping; const LocationText: RawByteString);
+    procedure SuggestFileName;
     procedure StartRender;
     function IsRunning: Boolean;
     property OnRequestSnapshot: TNotifyEvent read FOnRequestSnapshot write FOnRequestSnapshot;
   end;
 
 implementation
+
+uses
+  Fractal.Persistence;
 
 {$R *.dfm}
 
@@ -132,6 +137,23 @@ begin
   FMapping := Mapping;
   FLocationText := LocationText;
   cbPresetChange(nil);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Nom unique pour la vue préparée, dans le dossier déjà choisi. Appelé à l'ouverture seulement : Prepare est
+// aussi rappelé au lancement du rendu et ne doit pas écraser un nom saisi.
+procedure THiResForm.SuggestFileName;
+var
+  Folder: string;
+begin
+  if IsRunning or (FFormula = nil) then
+    Exit;
+  Folder := ExtractFilePath(Trim(edFile.Text));
+  if Folder = '' then
+    Folder := PicturesFolder;
+  edFile.Text := Folder + UniqueBaseName(Folder,
+    SuggestedName(TFractalFormulaClass(FFormula.ClassType), FViewport, Now), kPngExtension) + kPngExtension;
 end;
 
 {------------------------------------------------------------------------------}

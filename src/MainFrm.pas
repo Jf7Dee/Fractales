@@ -192,6 +192,7 @@ type
     procedure PaletteEditorChange(Sender: TObject);
     procedure InitFilePanel;
     function CaptureLocation: TFractalLocation;
+    function CurrentSuggestedName: string;
     procedure ApplyLocation(Location: TFractalLocation);
     function LocationAsPngText(Location: TFractalLocation): RawByteString;
     procedure ExportViewPng(const FileName: string);
@@ -1313,6 +1314,14 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Nom proposé dans les dialogues : le clavier virtuel d'une tablette n'apparaît pas toujours.
+function TMainForm.CurrentSuggestedName: string;
+begin
+  Result := SuggestedName(TFractalFormulaClass(FFormula.ClassType), FNavigator.Viewport, Now);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.ApplyLocation(Location: TFractalLocation);
 var
   V: TViewport;
@@ -1390,6 +1399,7 @@ begin
     Dlg.Filter := kFracFilter;
     Dlg.DefaultExt := 'frac';
     Dlg.Options := Dlg.Options + [ofOverwritePrompt];
+    Dlg.FileName := CurrentSuggestedName;
     if not Dlg.Execute then
       Exit;
     try
@@ -1415,6 +1425,7 @@ begin
     Dlg.Filter := kPngFilter;
     Dlg.DefaultExt := 'png';
     Dlg.Options := Dlg.Options + [ofOverwritePrompt];
+    Dlg.FileName := CurrentSuggestedName;
     if not Dlg.Execute then
       Exit;
     try
@@ -1503,7 +1514,7 @@ var
   Name, Stored: string;
   Location: TFractalLocation;
 begin
-  Name := '';
+  Name := UniqueBaseName(FFavorites.Folder, CurrentSuggestedName, kLocationExtension);
   if not InputQuery('Ajouter aux favoris', 'Nom du favori :', Name) or (Trim(Name) = '') then
     Exit;
   if FileExists(FFavorites.FileNameOf(Name))
@@ -1639,6 +1650,7 @@ begin
     THiResForm(FHiResForm).OnRequestSnapshot := PrepareHiResForm;
   end;
   PrepareHiResForm(nil);
+  THiResForm(FHiResForm).SuggestFileName;
   FHiResForm.Show;
 end;
 

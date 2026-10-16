@@ -10,6 +10,7 @@ type
   TTestPersistence = class(TTestCase)
   private
     function SampleLocation: TFractalLocation;
+    function NameAt(DX, DY, Zoom: TFloat): string;
     procedure CheckRaisesFileError(const Text: string);
   published
     procedure TestTextRoundTrip;
@@ -26,6 +27,10 @@ type
     procedure TestHugeParamUsesDefault;
     procedure TestHugeRepeatsUsesDefault;
     procedure TestTinyWidthUsesDefault;
+    procedure TestSuggestedNameAtDefaultView;
+    procedure TestSuggestedNameDirections;
+    procedure TestSuggestedNameZoomLabel;
+    procedure TestUniqueBaseName;
   end;
 
 implementation
@@ -34,6 +39,7 @@ const
   kSampleX = -0.7436438870371587;
   kSampleY = 0.1318259042053119;
   kMinStretchAsDouble: Double = kMinStretch;  // Mapping.Stretch est un Double
+  kWhenSuffix = '_20261016-0912';  // date de NameAt
 
 {------------------------------------------------------------------------------}
 
@@ -355,6 +361,85 @@ begin
   finally
     L.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Nom proposé pour Mandelbrot, le centre décalé de (DX, DY) largeurs initiales, au facteur de zoom donné.
+function TTestPersistence.NameAt(DX, DY, Zoom: TFloat): string;
+var
+  V: TViewport;
+begin
+  V := MakeViewport(TMandelbrotFormula.DefaultCenterX + DX * TMandelbrotFormula.DefaultWidth,
+    TMandelbrotFormula.DefaultCenterY + DY * TMandelbrotFormula.DefaultWidth, TMandelbrotFormula.DefaultWidth / Zoom,
+    800, 600);
+  Result := SuggestedName(TMandelbrotFormula, V, EncodeDate(2026, 10, 16) + EncodeTime(9, 12, 0, 0));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestSuggestedNameAtDefaultView;
+var
+  V: TViewport;
+begin
+  CheckEquals('Mandelbrot_centre_x1' + kWhenSuffix, NameAt(0, 0, 1));
+  V := MakeViewport(TBurningShipFormula.DefaultCenterX, TBurningShipFormula.DefaultCenterY,
+    TBurningShipFormula.DefaultWidth, 800, 600);
+  CheckEquals('BurningShip_centre_x1_20261016-0912',
+    SuggestedName(TBurningShipFormula, V, EncodeDate(2026, 10, 16) + EncodeTime(9, 12, 0, 0)));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestSuggestedNameDirections;
+begin
+  // le Y complexe croît vers le haut de l'écran
+  CheckEquals('Mandelbrot_N_x1' + kWhenSuffix, NameAt(0, 0.5, 1));
+  CheckEquals('Mandelbrot_NE_x1' + kWhenSuffix, NameAt(0.5, 0.5, 1));
+  CheckEquals('Mandelbrot_E_x1' + kWhenSuffix, NameAt(0.5, 0, 1));
+  CheckEquals('Mandelbrot_SE_x1' + kWhenSuffix, NameAt(0.5, -0.5, 1));
+  CheckEquals('Mandelbrot_S_x1' + kWhenSuffix, NameAt(0, -0.5, 1));
+  CheckEquals('Mandelbrot_SO_x1' + kWhenSuffix, NameAt(-0.5, -0.5, 1));
+  CheckEquals('Mandelbrot_O_x1' + kWhenSuffix, NameAt(-0.5, 0, 1));
+  CheckEquals('Mandelbrot_NO_x1' + kWhenSuffix, NameAt(-0.5, 0.5, 1));
+  CheckEquals('Mandelbrot_centre_x1' + kWhenSuffix, NameAt(0.01, -0.01, 1), 'proche du centre initial');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestSuggestedNameZoomLabel;
+begin
+  CheckEquals('Mandelbrot_centre_x2.5' + kWhenSuffix, NameAt(0, 0, 2.5));
+  CheckEquals('Mandelbrot_centre_x0.5' + kWhenSuffix, NameAt(0, 0, 0.5));
+  CheckEquals('Mandelbrot_centre_x350' + kWhenSuffix, NameAt(0, 0, 350));
+  CheckEquals('Mandelbrot_centre_x1e3' + kWhenSuffix, NameAt(0, 0, 1000));
+  CheckEquals('Mandelbrot_centre_x2.4e5' + kWhenSuffix, NameAt(0, 0, 240000));
+  CheckEquals('Mandelbrot_centre_x1e6' + kWhenSuffix, NameAt(0, 0, 999000), 'mantisse arrondie à 10');
+  CheckEquals('Mandelbrot_centre_x3.7e18' + kWhenSuffix, NameAt(0, 0, 3.7e18));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestUniqueBaseName;
+var
+  Folder: string;
+
+  procedure Touch(const FileName: string);
+  begin
+    TFileStream.Create(FileName, fmCreate).Free;
+  end;
+
+begin
+  Folder := TestTempFolder + 'Unique' + PathDelim;
+  ForceDirectories(Folder);
+  SysUtils.DeleteFile(Folder + 'Vue.png');
+  SysUtils.DeleteFile(Folder + 'Vue_2.png');
+  CheckEquals('Vue', UniqueBaseName(Folder, 'Vue', '.png'));
+  Touch(Folder + 'Vue.png');
+  CheckEquals('Vue_2', UniqueBaseName(Folder, 'Vue', '.png'));
+  CheckEquals('Vue', UniqueBaseName(Folder, 'Vue', '.frac'), 'autre extension');
+  Touch(Folder + 'Vue_2.png');
+  CheckEquals('Vue_3', UniqueBaseName(Folder, 'Vue', '.png'));
 end;
 
 initialization
