@@ -1,0 +1,4 @@
+# DLL autonome : le runtime C est lié statiquement, inutile d'installer le redistribuable Visual C++
+# sur la machine où tourne l'application Delphi.
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

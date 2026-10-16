@@ -1,0 +1,16 @@
+[package]
+name = "fractal_kernel"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wide = "0.7"
+
+# pas de panic = "abort" : fk_compute_row rattrape les paniques avec catch_unwind
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = true
