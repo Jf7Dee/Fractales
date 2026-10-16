@@ -36,6 +36,7 @@ type
     procedure TestCancelSelection;
     procedure TestBackAndForward;
     procedure TestPrecisionLimitBlocksZoom;
+    procedure TestDoubleEpsilonBlocksZoomEarlier;
     procedure TestResizeKeepsWidthWithoutHistory;
     procedure TestKeyPanMovesByTenthOfWidth;
     procedure TestJuliaModeReportsPoint;
@@ -243,6 +244,20 @@ begin
   FNavigator.ZoomCenter(1000);
   CheckTrue(FIsLimitHit);
   CheckEquals(1e-14, FNavigator.Viewport.Width, 1e-28);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestDoubleEpsilonBlocksZoomEarlier;
+begin
+  FNavigator.Reset(MakeViewport(0.5, 0, 1e-9, 400, 300));
+  FNavigator.ZoomCenter(1000);
+  CheckFalse(FIsLimitHit, 'Extended : zoom accepté');
+  FNavigator.Reset(MakeViewport(0.5, 0, 1e-9, 400, 300));
+  FNavigator.Epsilon := kDoubleEpsilon;
+  FNavigator.ZoomCenter(1000);
+  CheckTrue(FIsLimitHit, 'Double : zoom bloqué');
+  CheckEquals(1e-9, FNavigator.Viewport.Width, 1e-21);
 end;
 
 {------------------------------------------------------------------------------}

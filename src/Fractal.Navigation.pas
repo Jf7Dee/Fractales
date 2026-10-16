@@ -84,6 +84,7 @@ type
   TNavigator = class
   private
     FViewport: TViewport;
+    FEpsilon: TFloat;
     FHistory: TViewHistory;
     FMode: TNavigationMode;
     FIsSelecting: Boolean;
@@ -135,6 +136,8 @@ type
     procedure NotifyJuliaPoint(X, Y: Integer);
     property Viewport: TViewport read FViewport;
     property Mode: TNavigationMode read FMode;
+    // ulp relatif du noyau de calcul courant : fixe la limite de zoom
+    property Epsilon: TFloat read FEpsilon write FEpsilon;
     property History: TViewHistory read FHistory;
     property OnViewChanged: TViewChangedEvent read FOnViewChanged write FOnViewChanged;
     property OnSelectionChanged: TNotifyEvent read FOnSelectionChanged write FOnSelectionChanged;
@@ -326,6 +329,7 @@ begin
   FHistory := TViewHistory.Create;
   FMode := TFreeNavigationMode.Create(Self);
   FViewport := MakeViewport(0, 0, kDefaultWidth, 1, 1);
+  FEpsilon := kExtendedEpsilon;
 end;
 
 {------------------------------------------------------------------------------}
@@ -378,7 +382,7 @@ end;
 
 function TNavigator.TryCommit(const V: TViewport): Boolean;
 begin
-  if V.PrecisionState = psLimit then
+  if V.PrecisionState(FEpsilon) = psLimit then
   begin
     if Assigned(FOnPrecisionLimit) then
       FOnPrecisionLimit(Self);

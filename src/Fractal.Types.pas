@@ -5,6 +5,10 @@ interface
 uses
   SysUtils;
 
+const
+  kExtendedEpsilon = 1.0842021724855044e-19;  // 2^-63 : un ulp relatif en Extended (moteur Delphi)
+  kDoubleEpsilon = 2.2204460492503131e-16;    // 2^-52 : un ulp relatif en Double (moteur Rust)
+
 type
   TFloat = Extended;
 
@@ -29,7 +33,7 @@ type
     function FittedToRect(X1, Y1, X2, Y2: Integer): TViewport;
     function Resized(APixelWidth, APixelHeight: Integer): TViewport;
     function SubViewport(Supersample, Row0, Rows: Integer): TViewport;
-    function PrecisionState: TPrecisionState;
+    function PrecisionState(Epsilon: TFloat = kExtendedEpsilon): TPrecisionState;
   end;
 
 const
@@ -48,7 +52,6 @@ uses
   Math;
 
 const
-  kExtendedEpsilon = 1.0842021724855044e-19;  // 2^-63 : un ulp relatif en Extended
   kLimitUlps = 64;                            // en dessous de 64 ulps par pixel, l'image se pixelise
   kWarningFactor = 8;
   kInvariantPrecision = 18;
@@ -178,11 +181,11 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function TViewport.PrecisionState: TPrecisionState;
+function TViewport.PrecisionState(Epsilon: TFloat): TPrecisionState;
 var
   MinSize: TFloat;
 begin
-  MinSize := kLimitUlps * kExtendedEpsilon * Max(1.0, Max(Abs(CenterX), Abs(CenterY)));
+  MinSize := kLimitUlps * Epsilon * Max(1.0, Max(Abs(CenterX), Abs(CenterY)));
   if PixelSize < MinSize then
     Result := psLimit
   else if PixelSize < MinSize * kWarningFactor then

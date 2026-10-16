@@ -17,6 +17,7 @@ type
     procedure TestFittedToRect;
     procedure TestSubViewportMatchesFullPixels;
     procedure TestPrecisionState;
+    procedure TestPrecisionStateWithDoubleEpsilon;
     procedure TestAutoMaxIter;
     procedure TestInvariantFloatRoundTrip;
   end;
@@ -139,6 +140,17 @@ begin
   CheckEquals(Ord(psOk), Ord(StandardViewport.PrecisionState));
   CheckEquals(Ord(psWarning), Ord(MakeViewport(0.5, 0, 1e-14, 400, 300).PrecisionState));
   CheckEquals(Ord(psLimit), Ord(MakeViewport(0.5, 0, 1e-17, 400, 300).PrecisionState));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestPrecisionStateWithDoubleEpsilon;
+begin
+  // moteur Rust (Double) : limite par pixel 64 × 2^-52 ≈ 1,4e-14, avertissement en dessous de 1,1e-13
+  CheckEquals(Ord(psOk), Ord(MakeViewport(0.5, 0, 1e-10, 400, 300).PrecisionState(kDoubleEpsilon)));
+  CheckEquals(Ord(psWarning), Ord(MakeViewport(0.5, 0, 4e-11, 400, 300).PrecisionState(kDoubleEpsilon)));
+  CheckEquals(Ord(psLimit), Ord(MakeViewport(0.5, 0, 1e-12, 400, 300).PrecisionState(kDoubleEpsilon)));
+  CheckEquals(Ord(psOk), Ord(MakeViewport(0.5, 0, 1e-12, 400, 300).PrecisionState));
 end;
 
 {------------------------------------------------------------------------------}
