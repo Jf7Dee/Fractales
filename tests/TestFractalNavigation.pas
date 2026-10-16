@@ -37,6 +37,7 @@ type
     procedure TestBackAndForward;
     procedure TestPrecisionLimitBlocksZoom;
     procedure TestDoubleEpsilonBlocksZoomEarlier;
+    procedure TestZoomOutAllowedPastLimit;
     procedure TestResizeKeepsWidthWithoutHistory;
     procedure TestKeyPanMovesByTenthOfWidth;
     procedure TestJuliaModeReportsPoint;
@@ -258,6 +259,23 @@ begin
   FNavigator.ZoomCenter(1000);
   CheckTrue(FIsLimitHit, 'Double : zoom bloqué');
   CheckEquals(1e-9, FNavigator.Viewport.Width, 1e-21);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestZoomOutAllowedPastLimit;
+begin
+  // vue déjà au-delà de la limite (passage au moteur Rust, lieu profond chargé) : on doit pouvoir en sortir
+  FNavigator.Reset(MakeViewport(0.5, 0, 1e-12, 400, 300));
+  FNavigator.Epsilon := kDoubleEpsilon;
+  FNavigator.ZoomCenter(0.5);
+  CheckFalse(FIsLimitHit, 'zoom arrière accepté');
+  CheckEquals(2e-12, FNavigator.Viewport.Width, 1e-24);
+  FNavigator.PanBy(10, 0);
+  CheckFalse(FIsLimitHit, 'déplacement accepté');
+  FNavigator.ZoomCenter(2);
+  CheckTrue(FIsLimitHit, 'zoom avant toujours bloqué');
+  CheckEquals(2e-12, FNavigator.Viewport.Width, 1e-24);
 end;
 
 {------------------------------------------------------------------------------}

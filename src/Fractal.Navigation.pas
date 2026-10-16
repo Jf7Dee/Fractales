@@ -382,7 +382,9 @@ end;
 
 function TNavigator.TryCommit(const V: TViewport): Boolean;
 begin
-  if V.PrecisionState(FEpsilon) = psLimit then
+  // seul un zoom plus profond est refusé : une vue déjà au-delà de la limite (moteur Rust choisi en profondeur,
+  // lieu profond chargé) doit pouvoir être quittée
+  if (V.PrecisionState(FEpsilon) = psLimit) and (V.PixelSize < FViewport.PixelSize) then
   begin
     if Assigned(FOnPrecisionLimit) then
       FOnPrecisionLimit(Self);
