@@ -7,6 +7,7 @@ uses
   TextTestRunner,
   Fractal.Types in '..\src\Fractal.Types.pas',
   Fractal.Formulas in '..\src\Fractal.Formulas.pas',
+  Fractal.RustKernel in '..\src\Fractal.RustKernel.pas',
   Fractal.Buffer in '..\src\Fractal.Buffer.pas',
   Fractal.Engine in '..\src\Fractal.Engine.pas',
   Fractal.Palette in '..\src\Fractal.Palette.pas',
@@ -23,7 +24,8 @@ uses
   TestFractalPng in 'TestFractalPng.pas',
   TestFractalPersistence in 'TestFractalPersistence.pas',
   TestFractalNavigation in 'TestFractalNavigation.pas',
-  TestFractalHiRes in 'TestFractalHiRes.pas';
+  TestFractalHiRes in 'TestFractalHiRes.pas',
+  TestFractalRustKernel in 'TestFractalRustKernel.pas';
 
 begin
   RunRegisteredTests(rxbHaltOnFailures);

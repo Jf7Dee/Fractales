@@ -18,6 +18,7 @@ type
     procedure TestBurningShip;
     procedure TestSetParamClampsAndCloneCopies;
     procedure TestRegistry;
+    procedure TestKernelIds;
     procedure TestParamToSliderPosition;
     procedure TestSliderPositionToParam;
     procedure TestSliderWithEmptyRange;
@@ -201,6 +202,22 @@ begin
   finally
     B.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestKernelIds;
+var
+  I, J: Integer;
+begin
+  CheckEquals(kKernelMandelbrot, TMandelbrotFormula.KernelId);
+  CheckEquals(kKernelMultibrot, TMultibrotFormula.KernelId);
+  CheckEquals(kKernelJulia, TJuliaFormula.KernelId);
+  CheckEquals(kKernelBurningShip, TBurningShipFormula.KernelId);
+  CheckEquals(kKernelTricorn, TTricornFormula.KernelId);
+  for I := 0 to FormulaClassCount - 1 do
+    for J := I + 1 to FormulaClassCount - 1 do
+      CheckTrue(FormulaClassAt(I).KernelId <> FormulaClassAt(J).KernelId, 'identifiants en double');
 end;
 
 {------------------------------------------------------------------------------}

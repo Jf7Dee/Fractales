@@ -9,6 +9,7 @@ uses
   SysUtils,
   Fractal.Types in '..\src\Fractal.Types.pas',
   Fractal.Formulas in '..\src\Fractal.Formulas.pas',
+  Fractal.RustKernel in '..\src\Fractal.RustKernel.pas',
   Fractal.Buffer in '..\src\Fractal.Buffer.pas',
   Fractal.Engine in '..\src\Fractal.Engine.pas';
 

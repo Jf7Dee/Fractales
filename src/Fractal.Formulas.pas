@@ -10,6 +10,13 @@ const
   kMinMaxIter = 16;
   kMaxMaxIter = 1000000;
   kDefaultMaxIter = 1000;
+  // identifiants des formules dans la DLL Rust (fk_compute_row)
+  kKernelNone = -1;
+  kKernelMandelbrot = 0;
+  kKernelMultibrot = 1;
+  kKernelJulia = 2;
+  kKernelBurningShip = 3;
+  kKernelTricorn = 4;
   kParamSliderSteps = 1000;  // crans du curseur d'un paramètre de formule
 
 type
@@ -41,6 +48,7 @@ type
     class function DefaultCenterX: TFloat; virtual;
     class function DefaultCenterY: TFloat; virtual;
     class function DefaultWidth: TFloat; virtual;
+    class function KernelId: Integer; virtual;
     function Clone: TFractalFormula;
     function Iterate(const CX, CY: TFloat): Single; virtual; abstract;
     function ParamCount: Integer;
@@ -57,6 +65,7 @@ type
     class function FormulaName: string; override;
     class function DisplayName: string; override;
     class function DefaultCenterX: TFloat; override;
+    class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
   end;
 
@@ -71,6 +80,7 @@ type
     class function FormulaName: string; override;
     class function DisplayName: string; override;
     class function DefaultWidth: TFloat; override;
+    class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
   end;
 
@@ -85,6 +95,7 @@ type
     class function FormulaName: string; override;
     class function DisplayName: string; override;
     class function DefaultWidth: TFloat; override;
+    class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
   end;
 
@@ -94,6 +105,7 @@ type
     class function DisplayName: string; override;
     class function DefaultCenterX: TFloat; override;
     class function DefaultCenterY: TFloat; override;
+    class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
   end;
 
@@ -102,6 +114,7 @@ type
     class function FormulaName: string; override;
     class function DisplayName: string; override;
     class function DefaultCenterX: TFloat; override;
+    class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
   end;
 
@@ -147,6 +160,13 @@ end;
 class function TFractalFormula.DefaultWidth: TFloat;
 begin
   Result := kDefaultWidth;
+end;
+
+{------------------------------------------------------------------------------}
+
+class function TFractalFormula.KernelId: Integer;
+begin
+  Result := kKernelNone;  // pas d'équivalent dans la DLL Rust : le moteur Delphi calcule
 end;
 
 {------------------------------------------------------------------------------}
@@ -283,6 +303,13 @@ end;
 
 {------------------------------------------------------------------------------}
 
+class function TMandelbrotFormula.KernelId: Integer;
+begin
+  Result := kKernelMandelbrot;
+end;
+
+{------------------------------------------------------------------------------}
+
 function TMandelbrotFormula.Iterate(const CX, CY: TFloat): Single;
 var
   X, Y, X2, Y2, Q: TFloat;
@@ -336,6 +363,13 @@ end;
 class function TMultibrotFormula.DefaultWidth: TFloat;
 begin
   Result := 3.0;
+end;
+
+{------------------------------------------------------------------------------}
+
+class function TMultibrotFormula.KernelId: Integer;
+begin
+  Result := kKernelMultibrot;
 end;
 
 {------------------------------------------------------------------------------}
@@ -412,6 +446,13 @@ end;
 
 {------------------------------------------------------------------------------}
 
+class function TJuliaFormula.KernelId: Integer;
+begin
+  Result := kKernelJulia;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TJuliaFormula.ParamsChanged;
 begin
   FCX := GetParam(0);
@@ -471,6 +512,13 @@ end;
 
 {------------------------------------------------------------------------------}
 
+class function TBurningShipFormula.KernelId: Integer;
+begin
+  Result := kKernelBurningShip;
+end;
+
+{------------------------------------------------------------------------------}
+
 function TBurningShipFormula.Iterate(const CX, CY: TFloat): Single;
 var
   X, Y, X2, Y2: TFloat;
@@ -512,6 +560,13 @@ end;
 class function TTricornFormula.DefaultCenterX: TFloat;
 begin
   Result := -0.3;
+end;
+
+{------------------------------------------------------------------------------}
+
+class function TTricornFormula.KernelId: Integer;
+begin
+  Result := kKernelTricorn;
 end;
 
 {------------------------------------------------------------------------------}

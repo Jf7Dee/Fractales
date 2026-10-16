@@ -7,6 +7,7 @@ BDS='C:\Program Files (x86)\Embarcadero\RAD Studio\7.0'
 mkdir -p bin dcu
 case "$1" in
   tests)
+    (cd tests && "$DCC" -B -Q -N0../dcu -E../bin FakeKernel.dpr)
     (cd tests && "$DCC" -B -Q -N0../dcu -E../bin -U"$BDS\source\dUnit\src" FractalesTests.dpr)
     ./bin/FractalesTests.exe ;;
   app)
