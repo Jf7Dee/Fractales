@@ -47,7 +47,7 @@ object MainForm: TMainForm
         Width = 100
       end
       item
-        Width = 170
+        Width = 220
       end
       item
         Width = 50
@@ -76,7 +76,7 @@ object MainForm: TMainForm
       TabOrder = 0
       object CategoryPanelNavigation: TCategoryPanel
         Top = 293
-        Height = 140
+        Height = 175
         Caption = 'Navigation'
         ParentShowHint = False
         ShowHint = True
@@ -181,6 +181,24 @@ object MainForm: TMainForm
           ParentDoubleBuffered = False
           TabOrder = 3
           OnClick = btnHomeClick
+        end
+        object lblKernel: TLabel
+          Left = 18
+          Top = 105
+          Width = 46
+          Height = 15
+          Caption = 'Moteur :'
+        end
+        object cbKernel: TComboBox
+          Left = 83
+          Top = 101
+          Width = 130
+          Height = 23
+          Style = csDropDownList
+          ParentShowHint = False
+          ShowHint = True
+          TabOrder = 4
+          OnChange = cbKernelChange
         end
       end
       object CategoryPanelFavorites: TCategoryPanel

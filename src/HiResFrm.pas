@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls, ExtCtrls, ShlObj,
   {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
-  Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.HiRes;
+  Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine, Fractal.HiRes;
 
 const
   kPresetCurrentView = 0;
@@ -50,6 +50,7 @@ type
     FPalette: TGradientPalette;
     FMapping: TColorMapping;
     FLocationText: RawByteString;
+    FKernel: TEngineKernel;
     FStartTick: Cardinal;
     FTargetFileName: string;
     FOnRequestSnapshot: TNotifyEvent;
@@ -58,7 +59,7 @@ type
     procedure UpdateButtons;
   public
     procedure Prepare(const V: TViewport; Formula: TFractalFormula; Palette: TGradientPalette;
-      const Mapping: TColorMapping; const LocationText: RawByteString);
+      const Mapping: TColorMapping; const LocationText: RawByteString; Kernel: TEngineKernel);
     procedure SuggestFileName;
     procedure StartRender;
     function IsRunning: Boolean;
@@ -126,7 +127,7 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure THiResForm.Prepare(const V: TViewport; Formula: TFractalFormula; Palette: TGradientPalette;
-  const Mapping: TColorMapping; const LocationText: RawByteString);
+  const Mapping: TColorMapping; const LocationText: RawByteString; Kernel: TEngineKernel);
 begin
   if IsRunning then
     Exit;
@@ -136,6 +137,7 @@ begin
   FPalette.Assign(Palette);
   FMapping := Mapping;
   FLocationText := LocationText;
+  FKernel := Kernel;
   cbPresetChange(nil);
 end;
 
@@ -227,16 +229,17 @@ begin
     FOnRequestSnapshot(Self);
   if (FFormula = nil) or not ReadSettings(Settings) then
     Exit;
-  if (FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample).PrecisionState = psLimit)
+  if (FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample)
+    .PrecisionState(KernelEpsilon(FKernel)) = psLimit)
     and (MessageDlg('Ce rendu dépasse la limite de précision : l''image sera pixelisée. Rendre quand même ?',
       mtWarning, [mbYes, mbNo], 0) <> mrYes) then
     Exit;
   FTargetFileName := Settings.FileName;
   FRenderer := THiResRenderer.Create(Settings, FViewport, FFormula, TColorMapper.Create(FPalette, FMapping),
-    FLocationText);
+    FLocationText, FKernel);
   FStartTick := GetTickCount;
   pbProgress.Position := 0;
-  lblState.Caption := 'Rendu en cours...';
+  lblState.Caption := Format('Rendu en cours (moteur %s)...', [KernelDisplayName(FKernel)]);
   tmrPoll.Enabled := True;
   UpdateButtons;
 end;

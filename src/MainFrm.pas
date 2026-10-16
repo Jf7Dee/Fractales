@@ -6,7 +6,8 @@ uses
   Windows, Messages, SysUtils, Classes, Types, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
   {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
-  Fractal.Persistence, Fractal.Png, Fractal.View, ImgList, Menus, ToolWin, HelpFrm;
+  Fractal.Persistence, Fractal.Png, Fractal.View, Fractal.RustKernel, ImgList, Menus, ToolWin,
+  HelpFrm;
 
 const
   kJuliaPreviewWidth = 240;
@@ -34,6 +35,8 @@ type
   TMainForm = class(TForm)
     lblNavMode: TLabel;
     cbNavMode: TComboBox;
+    lblKernel: TLabel;
+    cbKernel: TComboBox;
     btnBack: TBitBtn;
     btnForward: TBitBtn;
     sbStatus: TStatusBar;
@@ -118,6 +121,7 @@ type
     procedure MenuAideSourisClick(Sender: TObject);
     procedure MenuAideGestesClick(Sender: TObject);
     procedure Fin1Click(Sender: TObject);
+    procedure cbKernelChange(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -157,6 +161,9 @@ type
     procedure NavigatorSelectionChanged(Sender: TObject);
     procedure NavigatorPrecisionLimit(Sender: TObject);
     procedure NavigatorJuliaPoint(Sender: TObject; const P: TComplexPoint);
+    procedure RenderJuliaPreview;
+    procedure InitKernelPanel;
+    procedure UpdateKernelEpsilon;
     procedure NavigatorHistoryChanged(Sender: TObject);
     procedure NavigatorZoomPreview(Sender: TObject; X, Y: Integer; Factor: TFloat);
     procedure NavModeChange(Sender: TObject);
@@ -278,10 +285,14 @@ begin
   InitFormulaPanel;
   InitColorPanel;
   InitFilePanel;
+  InitKernelPanel;
   FView.OnResize := ViewResize;
 
   FNavigator.Reset(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth,
     Max(1, FView.ClientWidth), Max(1, FView.ClientHeight)));
+  // après Reset, qui efface le message d'état
+  if not IsRustKernelAvailable then
+    FStatusMessage := RustKernelStatus;
 end;
 
 {------------------------------------------------------------------------------}
@@ -473,8 +484,15 @@ procedure TMainForm.NavigatorJuliaPoint(Sender: TObject; const P: TComplexPoint)
 begin
   FJuliaFormula.SetParam(FJuliaFormula.IndexOfParam('cx'), P.X);
   FJuliaFormula.SetParam(FJuliaFormula.IndexOfParam('cy'), P.Y);
+  RenderJuliaPreview;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.RenderJuliaPreview;
+begin
   FJuliaEngine.Render(MakeViewport(0, 0, kJuliaPreviewViewWidth, kJuliaPreviewWidth, kJuliaPreviewHeight),
-                      FJuliaFormula);
+    FJuliaFormula);
 end;
 
 {------------------------------------------------------------------------------}
@@ -498,6 +516,39 @@ begin
   FNavigator.SetMode(kNavigationModes[cbNavMode.ItemIndex]);
   FView.IsJuliaVisible := FNavigator.Mode is TJuliaNavigationMode;
   FView.SetFocus;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.InitKernelPanel;
+begin
+  cbKernel.Items.Add(KernelDisplayName(ekDelphi));
+  cbKernel.Items.Add(KernelDisplayName(ekRust));
+  cbKernel.ItemIndex := Ord(ekDelphi);
+  // la VCL ne sait pas griser une seule entrée : sans DLL, toute la liste est désactivée et reste sur Delphi
+  cbKernel.Enabled := IsRustKernelAvailable;
+  cbKernel.Hint := RustKernelStatus;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.cbKernelChange(Sender: TObject);
+begin
+  FEngine.Kernel := TEngineKernel(cbKernel.ItemIndex);
+  FJuliaEngine.Kernel := FEngine.Kernel;
+  UpdateKernelEpsilon;
+  RenderCurrent;
+  if FView.IsJuliaVisible then
+    RenderJuliaPreview;
+  FView.SetFocus;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.UpdateKernelEpsilon;
+begin
+  // la limite de zoom suit le noyau réellement utilisé (une formule sans équivalent Rust reste en Delphi)
+  FNavigator.Epsilon := KernelEpsilon(FEngine.ResolveKernel(FFormula));
 end;
 
 {------------------------------------------------------------------------------}
@@ -650,11 +701,12 @@ begin
   SetPanelText(2, IntToStr(FFormula.MaxIter) + ' it.');
   S := FEngine.Status;
   if S.IsComplete then
-    SetPanelText(3, Format('terminé en %d ms', [S.ElapsedMs]))
+    SetPanelText(3, Format('%s : terminé en %d ms', [KernelDisplayName(S.Kernel), S.ElapsedMs]))
   else
-    SetPanelText(3, Format('passe %d/%d   %d ms', [S.CurrentPass, S.PassCount, S.ElapsedMs]));
+    SetPanelText(3, Format('%s : passe %d/%d   %d ms', [KernelDisplayName(S.Kernel), S.CurrentPass, S.PassCount,
+      S.ElapsedMs]));
   Msg := FStatusMessage;
-  if V.PrecisionState <> psOk then
+  if V.PrecisionState(FNavigator.Epsilon) <> psOk then
     Msg := 'Limite de précision proche. ' + Msg;
   SetPanelText(4, Msg);
 end;
@@ -737,6 +789,21 @@ begin
         raise Exception.Create('rendu après déplacement non terminé');
       CheckSmokeStep('déplacement');
       FSmokeLog.Add('Déplacement OK');
+      if IsRustKernelAvailable then
+      begin
+        cbKernel.ItemIndex := Ord(ekRust);
+        cbKernelChange(nil);
+        if not WaitForRender(kSmokeTimeoutMs) then
+          raise Exception.Create('rendu en mode Rust non terminé');
+        CheckSmokeStep('moteur Rust');
+        if FEngine.Status.Kernel <> ekRust then
+          raise Exception.Create('le moteur Rust n''a pas été utilisé');
+        FSmokeLog.Add(Format('Moteur Rust OK : %d ms', [FEngine.Status.ElapsedMs]));
+        cbKernel.ItemIndex := Ord(ekDelphi);
+        cbKernelChange(nil);
+      end
+      else
+        FSmokeLog.Add('Moteur Rust absent (ignoré) : ' + RustKernelStatus);
       // pincement simulé (les messages tactiles de Windows ne peuvent pas être fabriqués) : aperçu puis zoom x2
       Width0 := FNavigator.Viewport.Width;
       FNavigator.PinchGesture(100, 80, 100, True, False);
@@ -890,6 +957,7 @@ var
 begin
   FFormula.Free;
   FFormula := AFormula;
+  UpdateKernelEpsilon;
 
   for I := 0 to FormulaClassCount - 1 do
     if FormulaClassAt(I) = FFormula.ClassType then
@@ -1662,7 +1730,8 @@ var
 begin
   Location := CaptureLocation;
   try
-    THiResForm(FHiResForm).Prepare(FNavigator.Viewport, FFormula, FPalette, FMapping, LocationAsPngText(Location));
+    THiResForm(FHiResForm).Prepare(FNavigator.Viewport, FFormula, FPalette, FMapping, LocationAsPngText(Location),
+      FEngine.ResolveKernel(FFormula));
   finally
     Location.Free;
   end;
