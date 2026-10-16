@@ -3,7 +3,8 @@
 interface
 
 uses
-  Windows, SysUtils, Classes, SyncObjs, Math, Fractal.Types, Fractal.Formulas, Fractal.Buffer;
+  Windows, SysUtils, Classes, SyncObjs, Math, Fractal.Types, Fractal.Formulas, Fractal.Buffer,
+  Fractal.RustKernel;
 
 const
   kTileSize = 64;
@@ -11,6 +12,9 @@ const
   kIdleWaitMs = 250;
 
 type
+  // noyau de calcul des pixels : Delphi (Extended, x87) ou DLL Rust (Double, SIMD)
+  TEngineKernel = (ekDelphi, ekRust);
+
   TTileJob = record
     Generation: Integer;
     TileIndex: Integer;
@@ -27,6 +31,7 @@ type
     PassCount: Integer;
     ElapsedMs: Cardinal;
     IsCancelled: Boolean;
+    Kernel: TEngineKernel;
     function IsComplete: Boolean;
     function CurrentPass: Integer;
   end;
@@ -64,8 +69,14 @@ type
     FFormula: TFractalFormula;
     FBuffer: TIterationBuffer;
     FErrors: TStringList;
+    FKernel: TEngineKernel;
+    FActiveKernel: TEngineKernel;          // figé au début du rendu courant
+    FRustKernel: TRustKernel;              // non possédé ; nil = DefaultRustKernel
+    FActiveRustKernel: TRustKernel;        // figé au début du rendu courant (nil en mode Delphi)
     function TryTakeJob(out Job: TTileJob): Boolean;
     function ProcessJob(const Job: TTileJob): Boolean;
+    function ProcessRustJob(const Job: TTileJob): Boolean;
+    function CurrentRustKernel: TRustKernel;
     procedure FinishJob(const Job: TTileJob; IsCompleted: Boolean);
     procedure AddError(const Msg: string);
     procedure StopCurrent;
@@ -81,10 +92,15 @@ type
     function WaitUntilComplete(TimeoutMs: Cardinal): Boolean;
     function Status: TRenderStatus;
     function TakeErrors: string;
+    function ResolveKernel(Formula: TFractalFormula): TEngineKernel;
     property Buffer: TIterationBuffer read FBuffer;
+    property Kernel: TEngineKernel read FKernel write FKernel;
+    property RustKernel: TRustKernel read FRustKernel write FRustKernel;
   end;
 
 function CpuCount: Integer;
+function KernelEpsilon(Kernel: TEngineKernel): TFloat;
+function KernelDisplayName(Kernel: TEngineKernel): string;
 
 implementation
 
@@ -99,6 +115,26 @@ var
 begin
   GetSystemInfo(Info);
   Result := Max(1, Info.dwNumberOfProcessors);
+end;
+
+{------------------------------------------------------------------------------}
+
+function KernelEpsilon(Kernel: TEngineKernel): TFloat;
+begin
+  if Kernel = ekRust then
+    Result := kDoubleEpsilon
+  else
+    Result := kExtendedEpsilon;
+end;
+
+{------------------------------------------------------------------------------}
+
+function KernelDisplayName(Kernel: TEngineKernel): string;
+begin
+  if Kernel = ekRust then
+    Result := 'Rust'
+  else
+    Result := 'Delphi';
 end;
 
 {------------------------------------------------------------------------------}
@@ -225,9 +261,11 @@ procedure TRenderEngine.StartRender(const V: TViewport; Formula: TFractalFormula
   DX, DY: Integer);
 var
   NewFormula: TFractalFormula;
+  NewKernel: TEngineKernel;
 begin
   // clonée avant l'arrêt : si le clonage échoue, le rendu courant reste intact
   NewFormula := Formula.Clone;
+  NewKernel := ResolveKernel(NewFormula);
   StopCurrent;
   FLock.Enter;
   try
@@ -237,6 +275,11 @@ begin
   end;
   FFormula.Free;
   FFormula := NewFormula;
+  FActiveKernel := NewKernel;
+  if NewKernel = ekRust then
+    FActiveRustKernel := CurrentRustKernel
+  else
+    FActiveRustKernel := nil;
   FViewport := V;
   if (FBuffer.Width <> V.PixelWidth) or (FBuffer.Height <> V.PixelHeight) then
     FBuffer.Resize(V.PixelWidth, V.PixelHeight)
@@ -381,6 +424,8 @@ var
   X, Y: Integer;
   P: TComplexPoint;
 begin
+  if FActiveKernel = ekRust then
+    Exit(ProcessRustJob(Job));
   Result := False;
   Y := Job.Y0;
   while Y < Job.Y1 do
@@ -396,6 +441,49 @@ begin
         FBuffer.WriteAnchor(X, Y, Job.Step, FFormula.Iterate(P.X, P.Y));
       end;
       Inc(X, Job.Step);
+    end;
+    FBuffer.MarkDirty;
+    Inc(Y, Job.Step);
+  end;
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TRenderEngine.ProcessRustJob(const Job: TTileJob): Boolean;
+var
+  Values: array[0..kTileSize - 1] of Single;
+  X, Y, RunStart, Count, I: Integer;
+  P: TComplexPoint;
+  DX: Double;
+begin
+  // ancres consécutives à calculer regroupées en suites : un seul appel à la DLL par suite
+  Result := False;
+  DX := Job.Step * FViewport.PixelSize;
+  Y := Job.Y0;
+  while Y < Job.Y1 do
+  begin
+    X := Job.X0;
+    while X < Job.X1 do
+    begin
+      if FBuffer.IsExact(X, Y) then
+      begin
+        Inc(X, Job.Step);
+        Continue;
+      end;
+      RunStart := X;
+      Count := 0;
+      while (X < Job.X1) and not FBuffer.IsExact(X, Y) do
+      begin
+        Inc(Count);
+        Inc(X, Job.Step);
+      end;
+      if Job.Generation <> FGeneration then
+        Exit;
+      P := FViewport.PixelToComplex(RunStart, Y);
+      FActiveRustKernel.ComputeRow(FFormula, P.X, DX, P.Y, Count, @Values[0]);
+      for I := 0 to Count - 1 do
+        FBuffer.WriteAnchor(RunStart + I * Job.Step, Y, Job.Step, Values[I]);
     end;
     FBuffer.MarkDirty;
     Inc(Y, Job.Step);
@@ -467,6 +555,7 @@ begin
     Result.TotalJobs := FTotalJobs;
     Result.PassCount := FPassCount;
     Result.IsCancelled := FIsCancelled;
+    Result.Kernel := FActiveKernel;
     if FDoneJobs < FTotalJobs then
       Result.ElapsedMs := GetTickCount - FStartTick
     else
@@ -487,6 +576,27 @@ begin
   finally
     FLock.Leave;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TRenderEngine.CurrentRustKernel: TRustKernel;
+begin
+  if FRustKernel <> nil then
+    Result := FRustKernel
+  else
+    Result := DefaultRustKernel;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TRenderEngine.ResolveKernel(Formula: TFractalFormula): TEngineKernel;
+begin
+  // la DLL par défaut n'est chargée que si le noyau Rust est demandé
+  if (FKernel = ekRust) and (Formula.KernelId <> kKernelNone) and CurrentRustKernel.IsAvailable then
+    Result := ekRust
+  else
+    Result := ekDelphi;
 end;
 
 end.

@@ -70,4 +70,6 @@ exports
   fk_compute_row;
 
 begin
+  // appelée par les threads du moteur : le gestionnaire de mémoire de la DLL doit se verrouiller
+  IsMultiThread := True;
 end.
