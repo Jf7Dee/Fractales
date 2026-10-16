@@ -44,6 +44,7 @@ const
   kMaxTextChunkSize = 1024 * 1024;
   kCrcPolynomial = $EDB88320;
   kCrcInit = $FFFFFFFF;
+  kZlibWindowBits = 15;  // en-tête zlib + fenêtre de 32 Ko, le format exigé par PNG (0 est refusé en compression)
 
 type
   // Puits pour TZCompressionStream : il exige un flux dont la position avance en même temps que les
@@ -198,7 +199,12 @@ begin
   WriteChunk('IHDR', @Header, SizeOf(Header));
   FPending := TMemoryStream.Create;
   FSink := TPendingSink.Create(FPending);
+  // le paramètre windowBits n'existe qu'après D2010 ; D2010 utilise implicitement la même valeur
+  {$IF CompilerVersion >= 22}
+  FZip := TZCompressionStream.Create(FSink, zcDefault, kZlibWindowBits);
+  {$ELSE}
   FZip := TZCompressionStream.Create(FSink, zcDefault);
+  {$IFEND}
 end;
 
 {------------------------------------------------------------------------------}
