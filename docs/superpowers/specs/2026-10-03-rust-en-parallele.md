@@ -315,6 +315,16 @@ contrôle (points intérieurs) sont identiques partout : les deux programmes fon
 | Vue profonde (5 000 it.) | 8 986 ms | 2 872 ms (×3,1) | 1 003 ms (×9,0) |
 | Intérieur lourd (2 000 it.) | 9 596 ms | 3 089 ms (×3,1) | 1 050 ms (×9,1) |
 
+Seconde mesure en mode release, même machine (2026-10-04) :
+
+| Scène | Rust scalaire 1T | Rust SIMD 1T | Rust scalaire 4T | Rust SIMD 4T |
+|---|---|---|---|---|
+| Vue d'ensemble | 410,8 ms | 221,9 ms | 104,6 ms | 57,3 ms |
+| Vue profonde | 10 748,4 ms | 4 196,5 ms | 2 936,0 ms | 1 243,3 ms |
+
+Les écarts avec la première mesure (≈ 10 à 20 %) donnent l'ordre de grandeur du bruit de mesure sur cette machine ;
+les rapports Delphi/Rust restent les mêmes.
+
 Les rapports sont du même ordre sur 1 thread. Les estimations du §4.2 (2 à 3× en scalaire, 6 à 10× en SIMD) sont
 confirmées ; AVX reste à mesurer sur un processeur qui l'a.
 

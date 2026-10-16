@@ -1,7 +1,7 @@
 # Fractales — Moteur de calcul Rust dans l'application Delphi
 
 Date : 2026-10-04
-Statut : spec à relire
+Statut : approuvée
 
 ## 1. Objectif
 
@@ -74,7 +74,8 @@ Unité sans VCL :
 - chargement dynamique au premier usage (`LoadLibrary` du fichier `fractal_kernel.dll` situé à côté de l'exécutable,
   `GetProcAddress`) ; vérification de `fk_abi_version` ;
 - `function IsRustKernelAvailable: Boolean`, `function RustKernelStatus: string` (raison si indisponible) ;
-- `function RustComputeRow(...): Integer` qui appelle la DLL ;
+- la classe `TRustKernel` : `ComputeRow` appelle la DLL et lève `ERustKernelError` (« Moteur Rust : … (code N). »)
+  si elle renvoie une erreur ; `DefaultRustKernel` est l'instance de l'application ;
 - sûr entre threads : le chargement est fait une seule fois sous verrou ; ensuite, la DLL est appelée simultanément
   par plusieurs threads (elle n'a aucun état).
 
@@ -85,11 +86,11 @@ formules renvoient leur identifiant. Les paramètres envoyés à la DLL sont `Ge
 
 ### 3.4 Moteur
 
-- `TEngineKernel = (ekDelphi, ekRust)`. `Render` / `RenderShifted` reçoivent le noyau ; il est figé dans
-  l'instantané du rendu comme la formule.
+- `TEngineKernel = (ekDelphi, ekRust)`. Le noyau est la propriété `Kernel` du moteur, lue au début de chaque
+  `Render` / `RenderShifted` ; il est figé dans l'instantané du rendu comme la formule.
 - En mode Rust, `ProcessJob` traite chaque ligne d'une tuile ainsi : il regroupe les ancres non exactes consécutives
   (pas = taille de bloc de la passe) en suites, vérifie le numéro de génération avant chaque suite, appelle
-  `RustComputeRow` une fois par suite (`dx` = pas × taille de pixel), puis écrit chaque valeur par `WriteAnchor`.
+  `ComputeRow` une fois par suite (`dx` = pas × taille de pixel), puis écrit chaque valeur par `WriteAnchor`.
 - Une formule sans `KernelId` (≥ 0) ou une DLL indisponible fait retomber le rendu sur le noyau Delphi.
 - Un code d'erreur de la DLL lève une exception dans le thread, consignée comme erreur de tuile (comportement
   existant) ; le rendu continue.
@@ -102,7 +103,8 @@ Le navigateur reçoit l'epsilon du noyau courant.
 
 ## 4. Interface
 
-- Barre d'outils : liste « Moteur : Delphi / Rust ». Si la DLL est indisponible, l'entrée Rust est désactivée
+- Panneau Navigation : liste « Moteur : Delphi / Rust ». Si la DLL est indisponible, la liste est désactivée (la
+  VCL ne grise pas une entrée seule)
   (le choix reste Delphi) et la raison est affichée dans la barre d'état au démarrage.
 - Changer de moteur relance le rendu de la vue courante (et de l'aperçu Julia).
 - Barre d'état, panneau du temps : « Delphi : terminé en 812 ms » / « Rust : passe 2/4 … ».
@@ -122,9 +124,13 @@ Le navigateur reçoit l'epsilon du noyau courant.
 
 - sur une grille de points de chaque formule, Rust et Delphi donnent le même verdict intérieur/extérieur et des
   valeurs lissées à 1e−3 près (hors pixels à la frontière, où l'écart Extended/f64 peut changer l'itération
-  d'échappement : on exige ≥ 99 % de pixels concordants) ;
+  d'échappement : on exige ≥ 98 % de pixels concordants ; mesuré : le seul arrondi des coordonnées en Double
+  change 1,6 % des pixels de Burning Ship en vue initiale) ;
 - un rendu complet en mode Rust donne le même nombre de points intérieurs qu'en mode Delphi (± 0,1 %) ;
 - le repli : noyau Rust demandé mais DLL indisponible → rendu Delphi, aucune erreur.
+
+Une **DLL factice** écrite en Delphi (`tests\FakeKernel.dpr`, mêmes exports, calcul par `Fractal.Formulas`)
+permet de tester ici le chargement et le moteur en mode Rust sans compilateur Rust.
 
 **Test de fumée** : étape supplémentaire « Moteur Rust OK » si la DLL est présente (rendu complet en mode Rust,
 pixels allumés, pas d'erreur), sinon « Moteur Rust absent (ignoré) ».

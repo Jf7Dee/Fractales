@@ -19,3 +19,14 @@ On peut aussi ouvrir `Fractales.dpr` dans l'IDE Delphi 2010.
 - `F4` : panneau latéral ; `F11` : plein écran.
 - Un PNG exporté contient son « lieu » : on le rouvre avec Ouvrir.
 - Palettes et favoris : `%APPDATA%\Fractales\Palettes` et `%APPDATA%\Fractales\Favoris`.
+
+## Moteur Rust
+
+La liste « Moteur » du panneau Navigation choisit qui calcule les pixels : le code Delphi (Extended 80 bits) ou la
+DLL Rust `fractal_kernel.dll` (Double 64 bits, SIMD SSE2), placée à côté de `Fractales.exe`. La barre d'état
+indique le moteur et le temps de chaque rendu. Sans la DLL, la liste est grisée et l'application calcule en Delphi.
+
+En Rust, la limite de zoom arrive plus tôt (pixels d'environ 1e-13 contre 1e-16) : c'est la précision du Double.
+Le moteur choisi n'est pas enregistré dans les lieux.
+
+Compiler la DLL : voir `kernel-rust\README.md`.
