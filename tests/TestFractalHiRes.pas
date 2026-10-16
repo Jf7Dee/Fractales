@@ -4,13 +4,14 @@ interface
 
 uses
   Classes, SysUtils, Graphics, pngimage, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Palette,
-  Fractal.Png, Fractal.HiRes, TestUtils;
+  Fractal.Png, Fractal.HiRes, Fractal.Engine, TestUtils;
 
 type
   TTestHiRes = class(TTestCase)
   private
     function MakeSettings(W, H, SS: Integer; const FileName: string): THiResSettings;
-    function RunRenderer(const Settings: THiResSettings; const V: TViewport; F: TFractalFormula): THiResRenderer;
+    function RunRenderer(const Settings: THiResSettings; const V: TViewport; F: TFractalFormula;
+      AKernel: TEngineKernel = ekDelphi): THiResRenderer;
   published
     procedure TestSmallRenderMatchesDirectColors;
     procedure TestSupersampledRenderHasRequestedSize;
@@ -18,6 +19,7 @@ type
     procedure TestCancelDeletesFile;
     procedure TestInvalidPathReportsError;
     procedure TestEstimateRejectsHugeRender;
+    procedure TestRustKernelRequestRenders;
   end;
 
 implementation
@@ -35,13 +37,13 @@ end;
 {------------------------------------------------------------------------------}
 
 function TTestHiRes.RunRenderer(const Settings: THiResSettings; const V: TViewport;
-  F: TFractalFormula): THiResRenderer;
+  F: TFractalFormula; AKernel: TEngineKernel): THiResRenderer;
 var
   P: TGradientPalette;
 begin
   P := CreateBuiltInPalette(0);
   try
-    Result := THiResRenderer.Create(Settings, V, F, TColorMapper.Create(P, DefaultColorMapping), 'abc');
+    Result := THiResRenderer.Create(Settings, V, F, TColorMapper.Create(P, DefaultColorMapping), 'abc', AKernel);
   finally
     P.Free;
   end;
@@ -251,6 +253,37 @@ procedure TTestHiRes.TestEstimateRejectsHugeRender;
 begin
   CheckTrue(EstimateHiResBytes(MakeSettings(7680, 4320, 3, '')) < kMaxHiResBytes);
   CheckTrue(EstimateHiResBytes(MakeSettings(1000000, 100, 3, '')) > kMaxHiResBytes);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestHiRes.TestRustKernelRequestRenders;
+var
+  FileName: string;
+  F: TMandelbrotFormula;
+  R: THiResRenderer;
+  Png: TPngImage;
+begin
+  // avec ou sans DLL Rust (repli sur Delphi), le rendu HD doit aboutir
+  FileName := TestTempFolder + 'hires-rust.png';
+  F := TMandelbrotFormula.Create;
+  Png := TPngImage.Create;
+  try
+    F.MaxIter := 200;
+    R := RunRenderer(MakeSettings(64, 48, 2, FileName), MakeViewport(-0.5, 0, 3, 64, 48), F, ekRust);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    Png.LoadFromFile(FileName);
+    CheckEquals(64, Png.Width);
+    CheckEquals(48, Png.Height);
+  finally
+    Png.Free;
+    F.Free;
+  end;
 end;
 
 initialization

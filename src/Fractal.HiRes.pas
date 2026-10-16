@@ -27,6 +27,7 @@ type
     FFormula: TFractalFormula;
     FMapper: TColorMapper;
     FLocationText: RawByteString;
+    FKernel: TEngineKernel;
     FProgress: Integer;
     FErrorMessage: string;
     FIsSucceeded: Boolean;
@@ -36,7 +37,7 @@ type
     procedure Execute; override;
   public
     constructor Create(const ASettings: THiResSettings; const AViewport: TViewport; AFormula: TFractalFormula;
-      AMapper: TColorMapper; const ALocationText: RawByteString);
+      AMapper: TColorMapper; const ALocationText: RawByteString; AKernel: TEngineKernel = ekDelphi);
     destructor Destroy; override;
     property Progress: Integer read FProgress;
     property ErrorMessage: string read FErrorMessage;
@@ -74,7 +75,7 @@ end;
 {------------------------------------------------------------------------------}
 
 constructor THiResRenderer.Create(const ASettings: THiResSettings; const AViewport: TViewport;
-  AFormula: TFractalFormula; AMapper: TColorMapper; const ALocationText: RawByteString);
+  AFormula: TFractalFormula; AMapper: TColorMapper; const ALocationText: RawByteString; AKernel: TEngineKernel);
 begin
   FMapper := AMapper;  // en premier : possession toujours transférée, libérée par Destroy même si Clone échoue
   FSettings := ASettings;
@@ -82,6 +83,7 @@ begin
   FViewport := AViewport.Resized(ASettings.Width, ASettings.Height);
   FFormula := AFormula.Clone;
   FLocationText := ALocationText;
+  FKernel := AKernel;
   inherited Create(False);
 end;
 
@@ -149,6 +151,7 @@ begin
   SetLength(Row, FSettings.Width * 3);
   Engine := TRenderEngine.Create(CpuCount);
   try
+    Engine.Kernel := FKernel;
     Writer := TPngWriter.Create(Stream, FSettings.Width, FSettings.Height);
     try
       if FLocationText <> '' then
