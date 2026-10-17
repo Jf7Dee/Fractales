@@ -356,7 +356,7 @@ mod tests {
         let cases = [
             (Formula::Mandelbrot, -2.0, 0.3),
             (Formula::Julia { cx: -0.8, cy: 0.156 }, -1.75, 0.2),
-            (Formula::BurningShip, -2.0, -0.5),
+            (Formula::BurningShip, -2.0, 0.5), // y > 0 : la formule soustrait cy (navire à l'endroit)
             (Formula::Tricorn, -2.0, 0.4),
         ];
         for &(formula, x0, y) in &cases {
