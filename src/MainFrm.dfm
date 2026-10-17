@@ -95,6 +95,13 @@ object MainForm: TMainForm
           Height = 15
           Caption = 'History'
         end
+        object lblKernel: TLabel
+          Left = 18
+          Top = 105
+          Width = 45
+          Height = 15
+          Caption = 'Moteur :'
+        end
         object cbNavMode: TComboBox
           Left = 83
           Top = 13
@@ -181,13 +188,6 @@ object MainForm: TMainForm
           ParentDoubleBuffered = False
           TabOrder = 3
           OnClick = btnHomeClick
-        end
-        object lblKernel: TLabel
-          Left = 18
-          Top = 105
-          Width = 46
-          Height = 15
-          Caption = 'Moteur :'
         end
         object cbKernel: TComboBox
           Left = 83
@@ -525,7 +525,7 @@ object MainForm: TMainForm
     Left = 752
     Top = 80
     Bitmap = {
-      494C010103001C006C000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
+      494C010103001C0070000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
       0000000000003600000028000000300000000C00000001002000000000000009
       0000000000000000000000000000000000000000000000000000F8F8F800E0E0
       E000000000000000000000000000000000000000000000000000000000000000
@@ -659,7 +659,7 @@ object MainForm: TMainForm
     Left = 688
     Top = 184
     Bitmap = {
-      494C0101030008003C0010001000FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
+      494C010103000800400010001000FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
       0000000000003600000028000000400000001000000001002000000000000010
       0000000000000000000000000000000000000000000000000000000000000000
       0000000000000000000000000000000000000000000000000000000000000000
