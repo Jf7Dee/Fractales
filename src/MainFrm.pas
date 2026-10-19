@@ -7,7 +7,7 @@ uses
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
   {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
   Fractal.Persistence, Fractal.Png, Fractal.View, Fractal.RustKernel, ImgList, Menus, ToolWin,
-  HelpFrm;
+  HelpFrm, ActnList;
 
 const
   kJuliaPreviewWidth = 240;
@@ -35,8 +35,6 @@ type
   TMainForm = class(TForm)
     lblNavMode: TLabel;
     cbNavMode: TComboBox;
-    lblKernel: TLabel;
-    cbKernel: TComboBox;
     btnBack: TBitBtn;
     btnForward: TBitBtn;
     sbStatus: TStatusBar;
@@ -92,6 +90,12 @@ type
     MenuAideClavier: TMenuItem;
     MenuAideSouris: TMenuItem;
     MenuAideGestes: TMenuItem;
+    N2: TMenuItem;
+    ActionList1: TActionList;
+    Action_DelphiEngine: TAction;
+    Action_RustEngine: TAction;
+    EngindecalculDelphi1: TMenuItem;
+    EngindecalculeRust1: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -121,7 +125,7 @@ type
     procedure MenuAideSourisClick(Sender: TObject);
     procedure MenuAideGestesClick(Sender: TObject);
     procedure Fin1Click(Sender: TObject);
-    procedure cbKernelChange(Sender: TObject);
+    procedure Action_RustEngineExecute(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -522,25 +526,10 @@ end;
 
 procedure TMainForm.InitKernelPanel;
 begin
-  cbKernel.Items.Add(KernelDisplayName(ekDelphi));
-  cbKernel.Items.Add(KernelDisplayName(ekRust));
-  cbKernel.ItemIndex := Ord(ekDelphi);
-  // la VCL ne sait pas griser une seule entrée : sans DLL, toute la liste est désactivée et reste sur Delphi
-  cbKernel.Enabled := IsRustKernelAvailable;
-  cbKernel.Hint := RustKernelStatus;
-end;
-
-{------------------------------------------------------------------------------}
-
-procedure TMainForm.cbKernelChange(Sender: TObject);
-begin
-  FEngine.Kernel := TEngineKernel(cbKernel.ItemIndex);
-  FJuliaEngine.Kernel := FEngine.Kernel;
-  UpdateKernelEpsilon;
-  RenderCurrent;
-  if FView.IsJuliaVisible then
-    RenderJuliaPreview;
-  FView.SetFocus;
+  Action_DelphiEngine.Tag := TEngineKernelToByte[ekDelphi];
+  Action_RustEngine.Tag := TEngineKernelToByte[ekRust];
+  Action_DelphiEngine.Enabled := true;
+  Action_RustEngine.Enabled := IsRustKernelAvailable;
 end;
 
 {------------------------------------------------------------------------------}
@@ -548,7 +537,7 @@ end;
 procedure TMainForm.UpdateKernelEpsilon;
 begin
   // la limite de zoom suit le noyau réellement utilisé (une formule sans équivalent Rust reste en Delphi)
-  FNavigator.Epsilon := KernelEpsilon(FEngine.ResolveKernel(FFormula));
+  FNavigator.Epsilon := TRenderEngine.GetEpsilon(FEngine.ResolveKernel(FFormula));
 end;
 
 {------------------------------------------------------------------------------}
@@ -701,9 +690,9 @@ begin
   SetPanelText(2, IntToStr(FFormula.MaxIter) + ' it.');
   S := FEngine.Status;
   if S.IsComplete then
-    SetPanelText(3, Format('%s : terminé en %d ms', [KernelDisplayName(S.Kernel), S.ElapsedMs]))
+    SetPanelText(3, Format('%s : terminé en %d ms', [fEngine.GetDisplayName(S.Kernel), S.ElapsedMs]))
   else
-    SetPanelText(3, Format('%s : passe %d/%d   %d ms', [KernelDisplayName(S.Kernel), S.CurrentPass, S.PassCount,
+    SetPanelText(3, Format('%s : passe %d/%d   %d ms', [fEngine.GetDisplayName(S.Kernel), S.CurrentPass, S.PassCount,
       S.ElapsedMs]));
   Msg := FStatusMessage;
   if V.PrecisionState(FNavigator.Epsilon) <> psOk then
@@ -791,19 +780,20 @@ begin
       FSmokeLog.Add('Déplacement OK');
       if IsRustKernelAvailable then
       begin
-        cbKernel.ItemIndex := Ord(ekRust);
-        cbKernelChange(nil);
+        if not Action_RustEngine.Execute then
+          raise Exception.Create('action moteur Rust non exécutée');
+
         if not WaitForRender(kSmokeTimeoutMs) then
           raise Exception.Create('rendu en mode Rust non terminé');
         CheckSmokeStep('moteur Rust');
         if FEngine.Status.Kernel <> ekRust then
           raise Exception.Create('le moteur Rust n''a pas été utilisé');
         FSmokeLog.Add(Format('Moteur Rust OK : %d ms', [FEngine.Status.ElapsedMs]));
-        cbKernel.ItemIndex := Ord(ekDelphi);
-        cbKernelChange(nil);
+        if not Action_DelphiEngine.Execute then
+          raise Exception.Create('action moteur Delphi non exécutée');
       end
       else
-        FSmokeLog.Add('Moteur Rust absent (ignoré) : ' + RustKernelStatus);
+        FSmokeLog.Add(RustKernelStatus + ' Étape ignorée.');
       // pincement simulé (les messages tactiles de Windows ne peuvent pas être fabriqués) : aperçu puis zoom x2
       Width0 := FNavigator.Viewport.Width;
       FNavigator.PinchGesture(100, 80, 100, True, False);
@@ -1573,6 +1563,23 @@ end;
 procedure TMainForm.RefreshFavorites;
 begin
   FFavorites.List(lbFavorites.Items);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.Action_RustEngineExecute(Sender: TObject);
+begin
+  if not (Sender is TAction) then
+    raise Exception.Create(Sender.ClassName + ' : n''est pas une TAction');
+
+  FEngine.Kernel := TByteToEngineKernel[TAction(Sender).Tag];
+
+  FJuliaEngine.Kernel := FEngine.Kernel;
+  UpdateKernelEpsilon;
+  RenderCurrent;
+  if FView.IsJuliaVisible then
+    RenderJuliaPreview;
+  FView.SetFocus;
 end;
 
 {------------------------------------------------------------------------------}

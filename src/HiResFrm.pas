@@ -50,7 +50,7 @@ type
     FPalette: TGradientPalette;
     FMapping: TColorMapping;
     FLocationText: RawByteString;
-    FKernel: TEngineKernel;
+    FKernel: TEngineKernelType;
     FStartTick: Cardinal;
     FTargetFileName: string;
     FOnRequestSnapshot: TNotifyEvent;
@@ -59,7 +59,7 @@ type
     procedure UpdateButtons;
   public
     procedure Prepare(const V: TViewport; Formula: TFractalFormula; Palette: TGradientPalette;
-      const Mapping: TColorMapping; const LocationText: RawByteString; Kernel: TEngineKernel);
+      const Mapping: TColorMapping; const LocationText: RawByteString; Kernel: TEngineKernelType);
     procedure SuggestFileName;
     procedure StartRender;
     function IsRunning: Boolean;
@@ -127,7 +127,7 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure THiResForm.Prepare(const V: TViewport; Formula: TFractalFormula; Palette: TGradientPalette;
-  const Mapping: TColorMapping; const LocationText: RawByteString; Kernel: TEngineKernel);
+  const Mapping: TColorMapping; const LocationText: RawByteString; Kernel: TEngineKernelType);
 begin
   if IsRunning then
     Exit;
@@ -230,7 +230,7 @@ begin
   if (FFormula = nil) or not ReadSettings(Settings) then
     Exit;
   if (FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample)
-    .PrecisionState(KernelEpsilon(FKernel)) = psLimit)
+    .PrecisionState(TRenderEngine.GetEpsilon(FKernel)) = psLimit)
     and (MessageDlg('Ce rendu dépasse la limite de précision : l''image sera pixelisée. Rendre quand même ?',
       mtWarning, [mbYes, mbNo], 0) <> mrYes) then
     Exit;
@@ -239,7 +239,7 @@ begin
     FLocationText, FKernel);
   FStartTick := GetTickCount;
   pbProgress.Position := 0;
-  lblState.Caption := Format('Rendu en cours (moteur %s)...', [KernelDisplayName(FKernel)]);
+  lblState.Caption := Format('Rendu en cours (moteur %s)...', [TRenderEngine.GetDisplayName(FKernel)]);
   tmrPoll.Enabled := True;
   UpdateButtons;
 end;

@@ -13,8 +13,13 @@ const
 
 type
   // noyau de calcul des pixels : Delphi (Extended, x87) ou DLL Rust (Double, SIMD)
-  TEngineKernel = (ekDelphi, ekRust);
+  TEngineKernelType = (ekDelphi, ekRust);
 
+const
+  TEngineKernelToByte : Array[TEngineKernelType] of byte  = (0,1);
+  TByteToEngineKernel : Array[0..1] of TEngineKernelType = (ekDelphi, ekRust);
+
+type
   TTileJob = record
     Generation: Integer;
     TileIndex: Integer;
@@ -31,7 +36,7 @@ type
     PassCount: Integer;
     ElapsedMs: Cardinal;
     IsCancelled: Boolean;
-    Kernel: TEngineKernel;
+    Kernel: TEngineKernelType;
     function IsComplete: Boolean;
     function CurrentPass: Integer;
   end;
@@ -69,8 +74,8 @@ type
     FFormula: TFractalFormula;
     FBuffer: TIterationBuffer;
     FErrors: TStringList;
-    FKernel: TEngineKernel;
-    FActiveKernel: TEngineKernel;          // figé au début du rendu courant
+    FKernel: TEngineKernelType;
+    FActiveKernel: TEngineKernelType;          // figé au début du rendu courant
     FRustKernel: TRustKernel;              // non possédé ; nil = DefaultRustKernel
     FActiveRustKernel: TRustKernel;        // figé au début du rendu courant (nil en mode Delphi)
     function TryTakeJob(out Job: TTileJob): Boolean;
@@ -92,15 +97,15 @@ type
     function WaitUntilComplete(TimeoutMs: Cardinal): Boolean;
     function Status: TRenderStatus;
     function TakeErrors: string;
-    function ResolveKernel(Formula: TFractalFormula): TEngineKernel;
+    class function GetDisplayName(aKernel:TEngineKernelType ): string;
+    class function GetEpsilon(aKernel:TEngineKernelType ): TFloat;
+    function ResolveKernel(Formula: TFractalFormula): TEngineKernelType;
     property Buffer: TIterationBuffer read FBuffer;
-    property Kernel: TEngineKernel read FKernel write FKernel;
+    property Kernel: TEngineKernelType read FKernel write FKernel;
     property RustKernel: TRustKernel read FRustKernel write FRustKernel;
   end;
 
 function CpuCount: Integer;
-function KernelEpsilon(Kernel: TEngineKernel): TFloat;
-function KernelDisplayName(Kernel: TEngineKernel): string;
 
 implementation
 
@@ -115,26 +120,6 @@ var
 begin
   GetSystemInfo(Info);
   Result := Max(1, Info.dwNumberOfProcessors);
-end;
-
-{------------------------------------------------------------------------------}
-
-function KernelEpsilon(Kernel: TEngineKernel): TFloat;
-begin
-  if Kernel = ekRust then
-    Result := kDoubleEpsilon
-  else
-    Result := kExtendedEpsilon;
-end;
-
-{------------------------------------------------------------------------------}
-
-function KernelDisplayName(Kernel: TEngineKernel): string;
-begin
-  if Kernel = ekRust then
-    Result := 'Rust'
-  else
-    Result := 'Delphi';
 end;
 
 {------------------------------------------------------------------------------}
@@ -243,6 +228,26 @@ end;
 
 {------------------------------------------------------------------------------}
 
+class function TRenderEngine.GetDisplayName(aKernel: TEngineKernelType): string;
+begin
+  if aKernel = ekRust then
+    Result := 'Rust'
+  else
+    Result := 'Delphi';
+end;
+
+{------------------------------------------------------------------------------}
+
+class function TRenderEngine.GetEpsilon(aKernel: TEngineKernelType): TFloat;
+begin
+  if aKernel = ekRust then
+    Result := kDoubleEpsilon
+  else
+    Result := kExtendedEpsilon;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TRenderEngine.Render(const V: TViewport; Formula: TFractalFormula; IsProgressive: Boolean);
 begin
   StartRender(V, Formula, IsProgressive, False, 0, 0);
@@ -261,7 +266,7 @@ procedure TRenderEngine.StartRender(const V: TViewport; Formula: TFractalFormula
   DX, DY: Integer);
 var
   NewFormula: TFractalFormula;
-  NewKernel: TEngineKernel;
+  NewKernel: TEngineKernelType;
 begin
   // clonée avant l'arrêt : si le clonage échoue, le rendu courant reste intact
   NewFormula := Formula.Clone;
@@ -590,7 +595,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function TRenderEngine.ResolveKernel(Formula: TFractalFormula): TEngineKernel;
+function TRenderEngine.ResolveKernel(Formula: TFractalFormula): TEngineKernelType;
 begin
   // la DLL par défaut n'est chargée que si le noyau Rust est demandé
   if (FKernel = ekRust) and (Formula.KernelId <> kKernelNone) and CurrentRustKernel.IsAvailable then

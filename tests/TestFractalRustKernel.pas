@@ -23,7 +23,7 @@ type
   private
     FFake: TRustKernel;
     FMissing: TRustKernel;
-    function RenderWith(Kernel: TEngineKernel; RustKernel: TRustKernel; Formula: TFractalFormula;
+    function RenderWith(Kernel: TEngineKernelType; RustKernel: TRustKernel; Formula: TFractalFormula;
       const V: TViewport; IsProgressive: Boolean): TRenderEngine;
     procedure CheckBuffersAgree(A, B: TIterationBuffer; MinRatio: Double; const Context: string);
   protected
@@ -259,7 +259,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function TTestRustEngine.RenderWith(Kernel: TEngineKernel; RustKernel: TRustKernel; Formula: TFractalFormula;
+function TTestRustEngine.RenderWith(Kernel: TEngineKernelType; RustKernel: TRustKernel; Formula: TFractalFormula;
   const V: TViewport; IsProgressive: Boolean): TRenderEngine;
 begin
   Result := TRenderEngine.Create(CpuCount);
@@ -430,10 +430,10 @@ end;
 
 procedure TTestRustEngine.TestKernelEpsilonAndName;
 begin
-  CheckEquals(kExtendedEpsilon, KernelEpsilon(ekDelphi), 0);
-  CheckEquals(kDoubleEpsilon, KernelEpsilon(ekRust), 0);
-  CheckEquals('Delphi', KernelDisplayName(ekDelphi));
-  CheckEquals('Rust', KernelDisplayName(ekRust));
+  CheckEquals(kExtendedEpsilon, TRenderEngine.GetEpsilon(ekDelphi), 0);
+  CheckEquals(kDoubleEpsilon, TRenderEngine.GetEpsilon(ekRust), 0);
+  CheckEquals('Delphi', TRenderEngine.GetDisplayName(ekDelphi));
+  CheckEquals('Rust', TRenderEngine.GetDisplayName(ekRust));
 end;
 
 {------------------------------------------------------------------------------}

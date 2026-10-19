@@ -76,7 +76,7 @@ object MainForm: TMainForm
       TabOrder = 0
       object CategoryPanelNavigation: TCategoryPanel
         Top = 293
-        Height = 175
+        Height = 140
         Caption = 'Navigation'
         ParentShowHint = False
         ShowHint = True
@@ -94,13 +94,6 @@ object MainForm: TMainForm
           Width = 38
           Height = 15
           Caption = 'History'
-        end
-        object lblKernel: TLabel
-          Left = 18
-          Top = 105
-          Width = 45
-          Height = 15
-          Caption = 'Moteur :'
         end
         object cbNavMode: TComboBox
           Left = 83
@@ -188,17 +181,6 @@ object MainForm: TMainForm
           ParentDoubleBuffered = False
           TabOrder = 3
           OnClick = btnHomeClick
-        end
-        object cbKernel: TComboBox
-          Left = 83
-          Top = 101
-          Width = 130
-          Height = 23
-          Style = csDropDownList
-          ParentShowHint = False
-          ShowHint = True
-          TabOrder = 4
-          OnChange = cbKernelChange
         end
       end
       object CategoryPanelFavorites: TCategoryPanel
@@ -525,7 +507,7 @@ object MainForm: TMainForm
     Left = 752
     Top = 80
     Bitmap = {
-      494C010103001C0070000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
+      494C010103001C007C000C000C00FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
       0000000000003600000028000000300000000C00000001002000000000000009
       0000000000000000000000000000000000000000000000000000F8F8F800E0E0
       E000000000000000000000000000000000000000000000000000000000000000
@@ -638,6 +620,21 @@ object MainForm: TMainForm
         Caption = '&Rendu en HD...'
         OnClick = HiResClick
       end
+      object N2: TMenuItem
+        Caption = '-'
+      end
+      object EngindecalculDelphi1: TMenuItem
+        Action = Action_DelphiEngine
+        AutoCheck = True
+        GroupIndex = 1
+        RadioItem = True
+      end
+      object EngindecalculeRust1: TMenuItem
+        Action = Action_RustEngine
+        AutoCheck = True
+        GroupIndex = 1
+        RadioItem = True
+      end
     end
     object Aide1: TMenuItem
       Caption = '&Aide'
@@ -659,7 +656,7 @@ object MainForm: TMainForm
     Left = 688
     Top = 184
     Bitmap = {
-      494C010103000800400010001000FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
+      494C0101030008004C0010001000FFFFFFFFFF10FFFFFFFFFFFFFFFF424D3600
       0000000000003600000028000000400000001000000001002000000000000010
       0000000000000000000000000000000000000000000000000000000000000000
       0000000000000000000000000000000000000000000000000000000000000000
@@ -797,5 +794,22 @@ object MainForm: TMainForm
       FC3FE00FE0000000FE7FC007F8000000FE7FC007F0000000FE7FC007E0010000
       FFFFF83FC4030000FFFFF83FEC07000000000000000000000000000000000000
       000000000000}
+  end
+  object ActionList1: TActionList
+    Left = 328
+    Top = 72
+    object Action_DelphiEngine: TAction
+      AutoCheck = True
+      Caption = 'Moteur de calcul Delphi'
+      Checked = True
+      GroupIndex = 1
+      OnExecute = Action_RustEngineExecute
+    end
+    object Action_RustEngine: TAction
+      AutoCheck = True
+      Caption = 'Moteur de calcul Rust'
+      GroupIndex = 1
+      OnExecute = Action_RustEngineExecute
+    end
   end
 end

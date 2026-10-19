@@ -11,7 +11,7 @@ type
   private
     function MakeSettings(W, H, SS: Integer; const FileName: string): THiResSettings;
     function RunRenderer(const Settings: THiResSettings; const V: TViewport; F: TFractalFormula;
-      AKernel: TEngineKernel = ekDelphi): THiResRenderer;
+      AKernel: TEngineKernelType = ekDelphi): THiResRenderer;
   published
     procedure TestSmallRenderMatchesDirectColors;
     procedure TestSupersampledRenderHasRequestedSize;
@@ -37,7 +37,7 @@ end;
 {------------------------------------------------------------------------------}
 
 function TTestHiRes.RunRenderer(const Settings: THiResSettings; const V: TViewport;
-  F: TFractalFormula; AKernel: TEngineKernel): THiResRenderer;
+  F: TFractalFormula; AKernel: TEngineKernelType): THiResRenderer;
 var
   P: TGradientPalette;
 begin

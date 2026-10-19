@@ -27,7 +27,7 @@ type
     FFormula: TFractalFormula;
     FMapper: TColorMapper;
     FLocationText: RawByteString;
-    FKernel: TEngineKernel;
+    FKernel: TEngineKernelType;
     FProgress: Integer;
     FErrorMessage: string;
     FIsSucceeded: Boolean;
@@ -36,8 +36,12 @@ type
   protected
     procedure Execute; override;
   public
-    constructor Create(const ASettings: THiResSettings; const AViewport: TViewport; AFormula: TFractalFormula;
-      AMapper: TColorMapper; const ALocationText: RawByteString; AKernel: TEngineKernel = ekDelphi);
+    constructor Create(const ASettings: THiResSettings; 
+                       const AViewport: TViewport; 
+                       AFormula: TFractalFormula;
+                       AMapper: TColorMapper; 
+                       const ALocationText: RawByteString; 
+                       AKernel: TEngineKernelType = ekDelphi);
     destructor Destroy; override;
     property Progress: Integer read FProgress;
     property ErrorMessage: string read FErrorMessage;
@@ -75,7 +79,7 @@ end;
 {------------------------------------------------------------------------------}
 
 constructor THiResRenderer.Create(const ASettings: THiResSettings; const AViewport: TViewport;
-  AFormula: TFractalFormula; AMapper: TColorMapper; const ALocationText: RawByteString; AKernel: TEngineKernel);
+  AFormula: TFractalFormula; AMapper: TColorMapper; const ALocationText: RawByteString; AKernel: TEngineKernelType);
 begin
   FMapper := AMapper;  // en premier : possession toujours transférée, libérée par Destroy même si Clone échoue
   FSettings := ASettings;
