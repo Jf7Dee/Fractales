@@ -695,8 +695,14 @@ begin
     SetPanelText(3, Format('%s : passe %d/%d   %d ms', [fEngine.GetDisplayName(S.Kernel), S.CurrentPass, S.PassCount,
       S.ElapsedMs]));
   Msg := FStatusMessage;
-  if V.PrecisionState(FNavigator.Epsilon) <> psOk then
-    Msg := 'Limite de précision proche. ' + Msg;
+  // l'epsilon du navigateur suit le moteur choisi : une vue profonde en Delphi peut dépasser la limite de Rust
+  case V.PrecisionState(FNavigator.Epsilon) of
+    psWarning:
+      Msg := 'Limite de précision proche. ' + Msg;
+    psLimit:
+      Msg := Format('Vue au-delà de la précision du moteur %s : revenez en arrière ou changez de moteur. ',
+        [FEngine.GetDisplayName(FEngine.ResolveKernel(FFormula))]) + Msg;
+  end;
   SetPanelText(4, Msg);
 end;
 
@@ -1576,6 +1582,8 @@ begin
 
   FJuliaEngine.Kernel := FEngine.Kernel;
   UpdateKernelEpsilon;
+  // « zoom bloqué » concernait l'ancien moteur ; la barre d'état réévalue la limite avec le nouveau
+  FStatusMessage := '';
   RenderCurrent;
   if FView.IsJuliaVisible then
     RenderJuliaPreview;
