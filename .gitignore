@@ -2,6 +2,8 @@ bin/
 dcu/
 *.dcu
 *.exe
+*.dll
+*.groupproj
 *.~*
 __history/
 *.local
