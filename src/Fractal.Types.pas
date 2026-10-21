@@ -66,6 +66,7 @@ function MakeViewport(ACenterX, ACenterY, AWidth: TFloat; APixelWidth, APixelHei
 function AutoMaxIter(const V: TViewport): Integer;
 function FloatToInvariant(Value: TFloat): string;
 function InvariantToFloat(const S: string; Default: TFloat): TFloat;
+function CoordinateText(const V: TViewport; PX, PY: TFloat): string;   // « x = …   y = … » sous le pixel (PX, PY)
 
 implementation
 
@@ -83,9 +84,14 @@ const
   kAutoIterExponent = 1.4;
   kAutoIterMax = 1000000;
   kEnglishLocale = 1033;
+  kMinCoordDigits = 3;
+  kMaxCoordDigits = 320;
+  kApproxCoordPrecision = 18;                 // chiffres significatifs d'une coordonnée approchée
 
 var
   InvariantSettings: TFormatSettings;
+
+function AxisText(const Exact: THighFloat; Approx, Offset: TFloat; Digits: Integer): string; forward;
 
 {------------------------------------------------------------------------------}
 
@@ -343,6 +349,39 @@ begin
     Result := E
   else
     Result := Default;
+end;
+
+{------------------------------------------------------------------------------}
+
+function CoordinateText(const V: TViewport; PX, PY: TFloat): string;
+var
+  Offset: TComplexPoint;
+  Digits: Integer;
+begin
+  Offset := V.PixelOffset(PX, PY);
+  if IsNan(V.PixelSize) or IsInfinite(V.PixelSize) or not (V.PixelSize > 0) then
+    Digits := kMinCoordDigits
+  else
+    Digits := EnsureRange(Ceil(-Log10(V.PixelSize)) + 1, kMinCoordDigits, kMaxCoordDigits);
+  if IsNan(Offset.X) or IsInfinite(Offset.X) or IsNan(Offset.Y) or IsInfinite(Offset.Y) then
+  begin
+    Offset.X := 0;
+    Offset.Y := 0;
+  end;
+  Result := 'x = ' + AxisText(V.ExactCenterX, V.CenterX, Offset.X, Digits) + '   y = '
+    + AxisText(V.ExactCenterY, V.CenterY, Offset.Y, Digits);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Coordonnée exacte Exact + Offset. Au-delà de ±kMaxCenterCoordinate (grand zoom arrière), la partie entière de
+// THighFloat déborderait : on affiche alors la valeur approchée en TFloat.
+function AxisText(const Exact: THighFloat; Approx, Offset: TFloat; Digits: Integer): string;
+begin
+  if Abs(Approx + Offset) > kMaxCenterCoordinate then
+    Result := FloatToStrF(Approx + Offset, ffFixed, kApproxCoordPrecision, Digits)
+  else
+    Result := Exact.AddFloat(Offset, Exact.FracWords).ToString(Digits);
 end;
 
 initialization

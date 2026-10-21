@@ -26,6 +26,8 @@ type
     procedure TestDeepPrecisionState;
     procedure TestAutoMaxIter;
     procedure TestInvariantFloatRoundTrip;
+    procedure TestCoordinateTextIsExact;
+    procedure TestCoordinateTextAfterHugeZoomOut;
   end;
 
 implementation
@@ -276,6 +278,44 @@ begin
   CheckEquals(1.5e-10, InvariantToFloat(FloatToInvariant(1.5e-10), 0), 1e-27);
   CheckEquals(7.0, InvariantToFloat('abc', 7), 0);
   CheckEquals(0, Pos(',', FloatToInvariant(0.5)));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestCoordinateTextIsExact;
+const
+  kDeepDigits = 30;
+var
+  V: TViewport;
+  Text: string;
+begin
+  // pixel 1e-30 : les chiffres de la fraction viennent du centre exact, pas d'un Extended
+  V := MakeViewport(0, 1, 400e-30, 400, 300);
+  Text := CoordinateText(V, 199.5, 149.5);
+  CheckEquals(1, Pos('x = 0.' + StringOfChar('0', kDeepDigits), Text), Text);
+  CheckTrue(Pos('   y = 1.' + StringOfChar('0', kDeepDigits), Text) > 0, Text);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestCoordinateTextAfterHugeZoomOut;
+const
+  kHugeWidths: array[0..1] of TFloat = (1e12, 1e300);   // ~40 crans de molette ; largeur maximale d'un .frac
+var
+  I: Integer;
+  V: TViewport;
+  Text: string;
+begin
+  // le pixel sous la souris sort de ±kMaxCenterCoordinate : texte approché, jamais EOverflow
+  for I := Low(kHugeWidths) to High(kHugeWidths) do
+  begin
+    V := MakeViewport(0, 0, kHugeWidths[I], 400, 300);
+    Text := CoordinateText(V, 0, 0);
+    CheckEquals(1, Pos('x = ', Text), Text);
+    CheckTrue(Pos('y = ', Text) > 0, Text);
+    Text := CoordinateText(V, 199.5, 149.5);
+    CheckEquals(1, Pos('x = 0', Text), Text);
+  end;
 end;
 
 initialization

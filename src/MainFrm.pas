@@ -33,8 +33,6 @@ const
   kExportWaitMs = 60000;
   kFracFilter = 'Lieu fractal (*.frac)|*.frac';
   kPngFilter = 'Image PNG (*.png)|*.png';
-  kMinCoordDigits = 3;
-  kMaxCoordDigits = 320;
 
 type
   TMainForm = class(TForm)
@@ -679,29 +677,6 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function MouseCoordText(const V: TViewport; MouseX, MouseY: TFloat): string;   // x/y exacts sous la souris
-var
-  Offset: TComplexPoint;
-  Digits: Integer;
-  X, Y: THighFloat;
-begin
-  Offset := V.PixelOffset(MouseX, MouseY);
-  if IsNan(V.PixelSize) or IsInfinite(V.PixelSize) or not (V.PixelSize > 0) then
-    Digits := kMinCoordDigits
-  else
-    Digits := EnsureRange(Ceil(-Log10(V.PixelSize)) + 1, kMinCoordDigits, kMaxCoordDigits);
-  if IsNan(Offset.X) or IsInfinite(Offset.X) or IsNan(Offset.Y) or IsInfinite(Offset.Y) then
-  begin
-    Offset.X := 0;
-    Offset.Y := 0;
-  end;
-  X := V.ExactCenterX.AddFloat(Offset.X, V.ExactCenterX.FracWords);
-  Y := V.ExactCenterY.AddFloat(Offset.Y, V.ExactCenterY.FracWords);
-  Result := 'x = ' + X.ToString(Digits) + '   y = ' + Y.ToString(Digits);
-end;
-
-{------------------------------------------------------------------------------}
-
 procedure TMainForm.UpdateStatus;
 var
   V: TViewport;
@@ -709,7 +684,7 @@ var
   Msg: string;
 begin
   V := FNavigator.Viewport;
-  SetPanelText(0, MouseCoordText(V, FMouseX, FMouseY));
+  SetPanelText(0, CoordinateText(V, FMouseX, FMouseY));
   SetPanelText(1, 'zoom ' + FormatFloat('0.00e+0', V.Zoom));
   SetPanelText(2, IntToStr(FFormula.MaxIter) + ' it.');
   S := FEngine.Status;
