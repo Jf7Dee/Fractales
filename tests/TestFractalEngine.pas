@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, SysUtils, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Engine;
+  Windows, SysUtils, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.RustKernel;
 
 type
   TRaisingFormula = class(TFractalFormula)
@@ -20,7 +20,9 @@ type
     function HeavyViewport: TViewport;
     function CountNegativeValues(E: TRenderEngine): Integer;
     function DeepViewport(CX, CY, PixelSize: TFloat): TViewport;
-    procedure CheckDeepRender(F: TFractalFormula; const V: TViewport);
+    procedure CheckDeepRender(F: TFractalFormula; const V: TViewport; Kernel: TEngineKernelType = ekDelphi;
+      RustKernel: TRustKernel = nil);
+    procedure CheckAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
   published
     procedure TestRenderCompletesWithExactPixels;
     procedure TestValuesMatchDirectIteration;
@@ -37,9 +39,14 @@ type
     procedure TestReferenceIsReused;
     procedure TestReferenceCandidateWhenCentreEscapes;
     procedure TestNewRenderCancelsReference;
+    procedure TestDelphiRenderAtAcceptanceDepths;
+    procedure TestRustRenderAtAcceptanceDepths;
   end;
 
 implementation
+
+uses
+  TestFractalRustKernel;
 
 const
   kWaitMs = 10000;
@@ -50,6 +57,8 @@ const
   kCancelledReferenceMaxIter = 1000000;
   kShallowAfterDeepMaxMs = 2000;
   kShiftPixels = 10;
+  // profondeurs d'acceptation de la spec : 1e-200 (§7) et la limite 1e-300 du palier 2 (§2), sans la franchir
+  kAcceptancePixelSizes: array[0..1] of TFloat = (1e-200, 2e-300);
 
 {------------------------------------------------------------------------------}
 
@@ -404,7 +413,8 @@ end;
 {------------------------------------------------------------------------------}
 
 // Rendu profond complet, en perturbation, sans erreur, et dont les valeurs lissées ne sont pas toutes égales.
-procedure TTestEngine.CheckDeepRender(F: TFractalFormula; const V: TViewport);
+procedure TTestEngine.CheckDeepRender(F: TFractalFormula; const V: TViewport; Kernel: TEngineKernelType;
+  RustKernel: TRustKernel);
 var
   E: TRenderEngine;
   X, Y: Integer;
@@ -412,10 +422,13 @@ var
 begin
   E := TRenderEngine.Create(CpuCount);
   try
+    E.Kernel := Kernel;
+    E.RustKernel := RustKernel;
     E.Render(V, F);
     CheckTrue(E.WaitUntilComplete(kWaitMs), 'délai dépassé');
     CheckTrue(E.Status.IsComplete, 'rendu incomplet');
     CheckTrue(E.Status.IsPerturbation, 'palier 1 au lieu de la perturbation');
+    CheckEquals(Ord(Kernel), Ord(E.Status.Kernel), 'noyau du rendu');
     CheckFalse(E.Status.IsReferencePending);
     CheckEquals('', E.TakeErrors);
     CheckEquals(1, E.ReferenceComputeCount);
@@ -533,6 +546,54 @@ begin
     Shallow.Free;
     Deep.Free;
     E.Free;
+  end;
+end;
+
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestDelphiRenderAtAcceptanceDepths;
+begin
+  CheckAcceptanceDepths(ekDelphi, nil);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Rendu complet de c = i aux profondeurs d'acceptation, MaxIter 2000, petite vue ; durée notée dans le journal.
+procedure TTestEngine.CheckAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
+var
+  F: TMandelbrotFormula;
+  I: Integer;
+  T: Cardinal;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := kDeepMaxIter;
+    for I := Low(kAcceptancePixelSizes) to High(kAcceptancePixelSizes) do
+    begin
+      T := GetTickCount;
+      CheckDeepRender(F, DeepViewport(0, 1, kAcceptancePixelSizes[I]), Kernel, RustKernel);
+      Status(Format('%s, pixel %g : %d ms', [TRenderEngine.GetDisplayName(Kernel), kAcceptancePixelSizes[I],
+        GetTickCount - T]));
+    end;
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestRustRenderAtAcceptanceDepths;
+var
+  Fake: TRustKernel;
+begin
+  // DLL factice : mêmes calculs en Double que fk_compute_row_perturbed
+  Fake := TRustKernel.Create(FakeKernelFileName);
+  try
+    CheckTrue(Fake.IsAvailable, Fake.Status);
+    CheckAcceptanceDepths(ekRust, Fake);
+  finally
+    Fake.Free;
   end;
 end;
 
