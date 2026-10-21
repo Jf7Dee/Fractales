@@ -19,6 +19,8 @@ type
     function CreateHeavyFormula: TFractalFormula;
     function HeavyViewport: TViewport;
     function CountNegativeValues(E: TRenderEngine): Integer;
+    function DeepViewport(CX, CY, PixelSize: TFloat): TViewport;
+    procedure CheckDeepRender(F: TFractalFormula; const V: TViewport);
   published
     procedure TestRenderCompletesWithExactPixels;
     procedure TestValuesMatchDirectIteration;
@@ -29,6 +31,12 @@ type
     procedure TestCancelIsQuick;
     procedure TestCancelIsNotComplete;
     procedure TestDestroyWhileRendering;
+    procedure TestShallowRenderStaysDirect;
+    procedure TestDeepRenderUsesPerturbation;
+    procedure TestTricornDeepRender;
+    procedure TestReferenceIsReused;
+    procedure TestReferenceCandidateWhenCentreEscapes;
+    procedure TestNewRenderCancelsReference;
   end;
 
 implementation
@@ -36,6 +44,12 @@ implementation
 const
   kWaitMs = 10000;
   kRaisingName = 'Raising';
+  kDeepPixelWidth = 160;
+  kDeepPixelHeight = 120;
+  kDeepMaxIter = 2000;
+  kCancelledReferenceMaxIter = 1000000;
+  kShallowAfterDeepMaxMs = 2000;
+  kShiftPixels = 10;
 
 {------------------------------------------------------------------------------}
 
@@ -330,6 +344,195 @@ begin
     CheckTrue(GetTickCount - T < 1000, Format('%d ms', [GetTickCount - T]));
   finally
     Heavy.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestShallowRenderStaysDirect;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  P: TComplexPoint;
+  X, Y, N: Integer;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TMandelbrotFormula.Create;
+  try
+    E.Render(SmallViewport, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckFalse(E.Status.IsPerturbation);
+    CheckEquals(0, E.ReferenceComputeCount);
+    N := 0;
+    for Y := 0 to E.Buffer.Height - 1 do
+      for X := 0 to E.Buffer.Width - 1 do
+      begin
+        P := SmallViewport.PixelToComplex(X, Y);
+        if E.Buffer.Value(X, Y) <> F.Iterate(P.X, P.Y) then
+          Inc(N);
+      end;
+    CheckEquals(0, N);
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestDeepRenderUsesPerturbation;
+var
+  F: TMandelbrotFormula;
+begin
+  // c = i : point de Misiurewicz, de la structure à toutes les échelles
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := kDeepMaxIter;
+    CheckDeepRender(F, DeepViewport(0, 1, 1e-50));
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestEngine.DeepViewport(CX, CY, PixelSize: TFloat): TViewport;
+begin
+  Result := MakeViewport(CX, CY, kDeepPixelWidth * PixelSize, kDeepPixelWidth, kDeepPixelHeight);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Rendu profond complet, en perturbation, sans erreur, et dont les valeurs lissées ne sont pas toutes égales.
+procedure TTestEngine.CheckDeepRender(F: TFractalFormula; const V: TViewport);
+var
+  E: TRenderEngine;
+  X, Y: Integer;
+  HasDistinctValues: Boolean;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  try
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs), 'délai dépassé');
+    CheckTrue(E.Status.IsComplete, 'rendu incomplet');
+    CheckTrue(E.Status.IsPerturbation, 'palier 1 au lieu de la perturbation');
+    CheckFalse(E.Status.IsReferencePending);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(1, E.ReferenceComputeCount);
+    HasDistinctValues := False;
+    for Y := 0 to E.Buffer.Height - 1 do
+      for X := 0 to E.Buffer.Width - 1 do
+        if E.Buffer.Value(X, Y) <> E.Buffer.Value(0, 0) then
+          HasDistinctValues := True;
+    CheckTrue(HasDistinctValues, 'image uniforme');
+  finally
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestTricornDeepRender;
+var
+  F: TTricornFormula;
+begin
+  F := TTricornFormula.Create;
+  try
+    F.MaxIter := kDeepMaxIter;
+    CheckDeepRender(F, DeepViewport(-2, 0, 1e-40));
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestReferenceIsReused;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  V: TViewport;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := kDeepMaxIter;
+    V := DeepViewport(0, 1, 1e-50);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckEquals(1, E.ReferenceComputeCount);
+    E.RenderShifted(V.Panned(kShiftPixels, 0), F, kShiftPixels, 0);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation);
+    CheckEquals(1, E.ReferenceComputeCount, 'orbite recalculée');
+    // un autre MaxIter interdit la réutilisation
+    F.MaxIter := kDeepMaxIter + 1;
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckEquals(2, E.ReferenceComputeCount, 'orbite réutilisée malgré un autre MaxIter');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestReferenceCandidateWhenCentreEscapes;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  W: TFloat;
+begin
+  // centre en i + W/3 : son orbite s'échappe vite ; le candidat à -1/3 de la largeur tombe exactement sur c = i,
+  // dont l'orbite ne s'échappe jamais
+  E := TRenderEngine.Create(CpuCount);
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := kDeepMaxIter;
+    W := kDeepPixelWidth * 1e-30;
+    E.Render(MakeViewport(W / 3, 1, W, kDeepPixelWidth, kDeepPixelHeight), F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(kDeepMaxIter + 1, E.ReferenceLength, 'référence échappée gardée');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestNewRenderCancelsReference;
+var
+  E: TRenderEngine;
+  Deep, Shallow: TMandelbrotFormula;
+  T, Elapsed: Cardinal;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  Deep := TMandelbrotFormula.Create;
+  Shallow := TMandelbrotFormula.Create;
+  try
+    Deep.MaxIter := kCancelledReferenceMaxIter;
+    T := GetTickCount;
+    E.Render(DeepViewport(0, 1, 1e-200), Deep);
+    CheckTrue(E.Status.IsReferencePending);
+    E.Render(SmallViewport, Shallow);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    Elapsed := GetTickCount - T;
+    CheckTrue(E.Status.IsComplete);
+    CheckFalse(E.Status.IsPerturbation);
+    CheckTrue(Elapsed < Cardinal(kShallowAfterDeepMaxMs), Format('%d ms', [Elapsed]));
+    // l'orbite abandonnée n'est jamais installée
+    CheckEquals(0, E.ReferenceComputeCount);
+    CheckEquals(0, E.ReferenceLength);
+  finally
+    Shallow.Free;
+    Deep.Free;
+    E.Free;
   end;
 end;
 

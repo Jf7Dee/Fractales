@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, SysUtils, Classes, SyncObjs, Math, Fractal.Types, Fractal.Formulas, Fractal.Buffer,
+  Windows, SysUtils, Classes, SyncObjs, Math, Fractal.HighFloat, Fractal.Types, Fractal.Formulas, Fractal.Buffer,
   Fractal.RustKernel;
 
 const
@@ -27,6 +27,7 @@ type
     X0, Y0, X1, Y1: Integer;  // X1, Y1 exclus
     Step: Integer;            // taille des blocs de la passe : 8, 4, 2 ou 1
     IsTaken: Boolean;
+    IsReference: Boolean;     // orbite de référence de la perturbation : en tête, avant toute tuile
   end;
 
   TRenderStatus = record
@@ -37,6 +38,8 @@ type
     ElapsedMs: Cardinal;
     IsCancelled: Boolean;
     Kernel: TEngineKernelType;
+    IsPerturbation: Boolean;       // palier 2 : pixels calculés par écart à l'orbite de référence
+    IsReferencePending: Boolean;   // orbite de référence en cours de calcul, aucune tuile commencée
     function IsComplete: Boolean;
     function CurrentPass: Integer;
   end;
@@ -53,6 +56,18 @@ type
   end;
 
   TRenderEngine = class
+  private
+    type
+      // dernière orbite de référence installée, gardée d'un rendu à l'autre pour être réutilisée
+      TReferenceOrbit = record
+        ExactX, ExactY: THighFloat;
+        Orbit: TOrbit;
+        FormulaClass: TClass;
+        Params: array of Double;
+        MaxIter: Integer;
+        FracWords: Integer;
+        IsFullLength: Boolean;   // l'orbite ne s'échappe pas avant MaxIter
+      end;
   private
     FLock: TCriticalSection;
     FWorkEvent: TEvent;
@@ -78,16 +93,29 @@ type
     FActiveKernel: TEngineKernelType;          // figé au début du rendu courant
     FRustKernel: TRustKernel;              // non possédé ; nil = DefaultRustKernel
     FActiveRustKernel: TRustKernel;        // figé au début du rendu courant (nil en mode Delphi)
+    FIsPerturbation: Boolean;              // palier figé au début du rendu courant
+    FIsReferenceReady: Boolean;            // sous FLock : tant qu'il est faux, aucune tuile n'est éligible
+    FOrbit: TOrbit;                        // orbite de référence des tuiles du rendu courant
+    FRefDeltaX, FRefDeltaY: TFloat;        // centre exact − référence, partie constante de δc
+    FReference: TReferenceOrbit;           // sous FLock pendant un rendu
+    FReferenceComputeCount: Integer;
     function TryTakeJob(out Job: TTileJob): Boolean;
     function ProcessJob(const Job: TTileJob): Boolean;
     function ProcessRustJob(const Job: TTileJob): Boolean;
+    function ProcessReferenceJob(const Job: TTileJob): Boolean;
+    procedure InstallReference(Generation: Integer; const RefX, RefY: THighFloat; const Orbit: TOrbit;
+      FracWords: Integer);
+    function PixelValue(X, Y: Integer): Single;
+    function IsReferenceReusable(const V: TViewport; Formula: TFractalFormula): Boolean;
     function CurrentRustKernel: TRustKernel;
     procedure FinishJob(const Job: TTileJob; IsCompleted: Boolean);
     procedure AddError(const Msg: string);
     procedure StopCurrent;
     procedure StartRender(const V: TViewport; Formula: TFractalFormula; IsProgressive, IsShift: Boolean;
       DX, DY: Integer);
-    procedure QueueJobs(IsProgressive: Boolean);
+    procedure QueueJobs(IsProgressive, ShouldComputeReference: Boolean);
+    function GetReferenceComputeCount: Integer;
+    function GetReferenceLength: Integer;
   public
     constructor Create(AThreadCount: Integer);
     destructor Destroy; override;
@@ -99,18 +127,25 @@ type
     function TakeErrors: string;
     class function GetDisplayName(aKernel:TEngineKernelType ): string;
     class function GetEpsilon(aKernel:TEngineKernelType ): TFloat;
-    function ResolveKernel(Formula: TFractalFormula): TEngineKernelType;
+    function ResolveKernel(Formula: TFractalFormula; IsPerturbation: Boolean = False): TEngineKernelType;
     property Buffer: TIterationBuffer read FBuffer;
     property Kernel: TEngineKernelType read FKernel write FKernel;
     property RustKernel: TRustKernel read FRustKernel write FRustKernel;
+    property ReferenceComputeCount: Integer read GetReferenceComputeCount;   // tâches référence installées
+    property ReferenceLength: Integer read GetReferenceLength;               // points de la dernière référence
   end;
 
 function CpuCount: Integer;
 
 implementation
 
+uses
+  Fractal.Perturbation;
+
 const
   kProgressiveSteps: array[0..3] of Integer = (8, 4, 2, 1);
+  kReferenceReuseWidths = 2;     // distance maximale référence - centre, en largeurs de vue, pour la réutiliser
+  kReferenceCandidateGrid = 3;   // grille de kReferenceCandidateGrid x kReferenceCandidateGrid références candidates
 
 {------------------------------------------------------------------------------}
 
@@ -166,7 +201,10 @@ begin
         except
           on E: Exception do
           begin
-            FEngine.AddError(Format('Tuile (%d, %d) : %s', [Job.X0, Job.Y0, E.Message]));
+            if Job.IsReference then
+              FEngine.AddError('Orbite de référence : ' + E.Message)
+            else
+              FEngine.AddError(Format('Tuile (%d, %d) : %s', [Job.X0, Job.Y0, E.Message]));
             IsCompleted := True;
           end;
         end;
@@ -267,10 +305,15 @@ procedure TRenderEngine.StartRender(const V: TViewport; Formula: TFractalFormula
 var
   NewFormula: TFractalFormula;
   NewKernel: TEngineKernelType;
+  IsNewPerturbation, IsReused: Boolean;
 begin
   // clonée avant l'arrêt : si le clonage échoue, le rendu courant reste intact
   NewFormula := Formula.Clone;
   NewKernel := ResolveKernel(NewFormula);
+  // palier 2 dès que le palier 1 n'est plus sûr pour le noyau du rendu (psWarning) : bascule avant la pixelisation
+  IsNewPerturbation := NewFormula.SupportsPerturbation and (V.PrecisionState(GetEpsilon(NewKernel)) <> psOk);
+  if IsNewPerturbation then
+    NewKernel := ResolveKernel(NewFormula, True);
   StopCurrent;
   FLock.Enter;
   try
@@ -286,13 +329,50 @@ begin
   else
     FActiveRustKernel := nil;
   FViewport := V;
+  // aucune tâche ne tourne plus : l'orbite et la référence gardée se lisent sans verrou
+  FIsPerturbation := IsNewPerturbation;
+  FOrbit := nil;
+  IsReused := IsNewPerturbation and IsReferenceReusable(V, NewFormula);
+  if IsReused then
+  begin
+    FOrbit := FReference.Orbit;
+    FRefDeltaX := V.ExactCenterX.Sub(FReference.ExactX).ToFloat;
+    FRefDeltaY := V.ExactCenterY.Sub(FReference.ExactY).ToFloat;
+  end;
   if (FBuffer.Width <> V.PixelWidth) or (FBuffer.Height <> V.PixelHeight) then
     FBuffer.Resize(V.PixelWidth, V.PixelHeight)
   else if IsShift then
     FBuffer.Shift(DX, DY)
   else
     FBuffer.Clear;
-  QueueJobs(IsProgressive);
+  QueueJobs(IsProgressive, IsNewPerturbation and not IsReused);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Écart 2 : même formule (classe et paramètres), même MaxIter, précision suffisante, référence à moins de
+// kReferenceReuseWidths largeurs du centre. Une référence échappée est recalculée pour redonner leur chance aux
+// candidats de la nouvelle vue.
+function TRenderEngine.IsReferenceReusable(const V: TViewport; Formula: TFractalFormula): Boolean;
+var
+  I: Integer;
+  MaxDistance: TFloat;
+begin
+  Result := False;
+  if (FReference.Orbit = nil) or not FReference.IsFullLength then
+    Exit;
+  if (FReference.FormulaClass <> Formula.ClassType) or (FReference.MaxIter <> Formula.MaxIter) then
+    Exit;
+  if Length(FReference.Params) <> Formula.ParamCount then
+    Exit;
+  for I := 0 to High(FReference.Params) do
+    if FReference.Params[I] <> Formula.GetParam(I) then
+      Exit;
+  if FReference.FracWords < FracWordsForPixelSize(V.PixelSize) then
+    Exit;
+  MaxDistance := kReferenceReuseWidths * V.Width;
+  Result := (Abs(FReference.ExactX.Sub(V.ExactCenterX).ToFloat) <= MaxDistance)
+    and (Abs(FReference.ExactY.Sub(V.ExactCenterY).ToFloat) <= MaxDistance);
 end;
 
 {------------------------------------------------------------------------------}
@@ -318,7 +398,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TRenderEngine.QueueJobs(IsProgressive: Boolean);
+procedure TRenderEngine.QueueJobs(IsProgressive, ShouldComputeReference: Boolean);
 var
   TilesX, TilesY, TileCount, StepCount, T, P, I, J, Tmp: Integer;
   Order: array of Integer;
@@ -356,11 +436,21 @@ begin
 
   FLock.Enter;
   try
-    SetLength(FJobs, TileCount * StepCount);
+    SetLength(FJobs, TileCount * StepCount + Ord(ShouldComputeReference));
     SetLength(FTileDone, TileCount);
     for T := 0 to TileCount - 1 do
       FTileDone[T] := 0;
     I := 0;
+    if ShouldComputeReference then
+    begin
+      // tâche référence en tête : hors du compte des tuiles, elle débloque toutes les autres
+      FillChar(FJobs[0], SizeOf(TTileJob), 0);
+      FJobs[0].Generation := FGeneration;
+      FJobs[0].TileIndex := -1;
+      FJobs[0].IsReference := True;
+      Inc(I);
+    end;
+    FIsReferenceReady := not ShouldComputeReference;
     for P := 0 to StepCount - 1 do
       for J := 0 to TileCount - 1 do
       begin
@@ -377,10 +467,11 @@ begin
         else
           FJobs[I].Step := 1;
         FJobs[I].IsTaken := False;
+        FJobs[I].IsReference := False;
         Inc(I);
       end;
     FNextJob := 0;
-    FTotalJobs := Length(FJobs);
+    FTotalJobs := TileCount * StepCount;
     FDoneJobs := 0;
     FPassCount := StepCount;
     FIsCancelled := False;
@@ -408,13 +499,19 @@ begin
       Inc(FNextJob);
     // une passe d'une tuile n'est éligible qu'une fois les passes précédentes de cette tuile terminées
     for I := FNextJob to High(FJobs) do
-      if not FJobs[I].IsTaken and (FTileDone[FJobs[I].TileIndex] = FJobs[I].PassIndex) then
+    begin
+      // tant que l'orbite de référence manque, seule sa tâche (en tête) est éligible
+      if not FIsReferenceReady and not FJobs[I].IsReference then
+        Break;
+      if not FJobs[I].IsTaken
+        and (FJobs[I].IsReference or (FTileDone[FJobs[I].TileIndex] = FJobs[I].PassIndex)) then
       begin
         FJobs[I].IsTaken := True;
         Job := FJobs[I];
         InterlockedIncrement(FActiveJobs);
         Exit(True);
       end;
+    end;
     if not FIsShuttingDown then
       FWorkEvent.ResetEvent;
   finally
@@ -427,8 +524,9 @@ end;
 function TRenderEngine.ProcessJob(const Job: TTileJob): Boolean;
 var
   X, Y: Integer;
-  P: TComplexPoint;
 begin
+  if Job.IsReference then
+    Exit(ProcessReferenceJob(Job));
   if FActiveKernel = ekRust then
     Exit(ProcessRustJob(Job));
   Result := False;
@@ -441,16 +539,32 @@ begin
       if Job.Generation <> FGeneration then
         Exit;
       if not FBuffer.IsExact(X, Y) then
-      begin
-        P := FViewport.PixelToComplex(X, Y);
-        FBuffer.WriteAnchor(X, Y, Job.Step, FFormula.Iterate(P.X, P.Y));
-      end;
+        FBuffer.WriteAnchor(X, Y, Job.Step, PixelValue(X, Y));
       Inc(X, Job.Step);
     end;
     FBuffer.MarkDirty;
     Inc(Y, Job.Step);
   end;
   Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TRenderEngine.PixelValue(X, Y: Integer): Single;
+var
+  P: TComplexPoint;
+begin
+  if FIsPerturbation then
+  begin
+    // δc = (centre exact − référence) + écart du pixel au centre exact
+    P := FViewport.PixelOffset(X, Y);
+    Result := FFormula.IteratePerturbed(FOrbit, Length(FOrbit), FRefDeltaX + P.X, FRefDeltaY + P.Y);
+  end
+  else
+  begin
+    P := FViewport.PixelToComplex(X, Y);
+    Result := FFormula.Iterate(P.X, P.Y);
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -498,11 +612,104 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Choix de la référence. Un pixel qui survit à l'orbite de sa référence est rebasé sur Z0 avec un δ qui n'est plus
+// petit, et perd δc en profondeur. On essaie donc d'abord le centre exact de la vue ; si son orbite s'échappe avant
+// MaxIter, on essaie les autres points d'une grille kReferenceCandidateGrid x kReferenceCandidateGrid sur la vue
+// (à ±1/3 de la largeur et de la hauteur autour du centre), et on s'arrête au premier dont l'orbite ne s'échappe
+// pas. Sinon, on garde l'orbite la plus longue. Chaque calcul d'orbite s'interrompt dès que la génération change.
+function TRenderEngine.ProcessReferenceJob(const Job: TTileJob): Boolean;
+var
+  Generation, Words, CellCount, Candidate, Cell, Half: Integer;
+  IsCancelled: TCancelCheck;
+  StepX, StepY: TFloat;
+  CX, CY, BestX, BestY: THighFloat;
+  Orbit, Best: TOrbit;
+begin
+  Result := False;
+  Generation := Job.Generation;
+  IsCancelled :=
+    function: Boolean
+    begin
+      Result := Generation <> FGeneration;
+    end;
+  // le centre peut porter moins de mots que la taille de pixel n'en demande (vue redimensionnée)
+  Words := Max(Max(FViewport.ExactCenterX.FracWords, FViewport.ExactCenterY.FracWords),
+    FracWordsForPixelSize(FViewport.PixelSize));
+  StepX := FViewport.Width / kReferenceCandidateGrid;
+  StepY := FViewport.Height / kReferenceCandidateGrid;
+  Half := kReferenceCandidateGrid div 2;
+  CellCount := kReferenceCandidateGrid * kReferenceCandidateGrid;
+  Best := nil;
+  for Candidate := 0 to CellCount - 1 do
+  begin
+    // le candidat 0 est la case centrale, puis les autres cases dans l'ordre de la grille
+    Cell := (Candidate + CellCount div 2) mod CellCount;
+    CX := FViewport.ExactCenterX.AddFloat((Cell mod kReferenceCandidateGrid - Half) * StepX, Words);
+    CY := FViewport.ExactCenterY.AddFloat((Half - Cell div kReferenceCandidateGrid) * StepY, Words);
+    if not ComputeReferenceOrbit(FFormula, CX, CY, IsCancelled, Orbit) then
+      Exit;
+    if Length(Orbit) > Length(Best) then
+    begin
+      Best := Orbit;
+      BestX := CX;
+      BestY := CY;
+    end;
+    if Length(Best) > FFormula.MaxIter then
+      Break;
+  end;
+  InstallReference(Generation, BestX, BestY, Best, Words);
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TRenderEngine.InstallReference(Generation: Integer; const RefX, RefY: THighFloat; const Orbit: TOrbit;
+  FracWords: Integer);
+var
+  I: Integer;
+begin
+  FLock.Enter;
+  try
+    // une orbite abandonnée (génération dépassée) n'est jamais installée pour un rendu suivant
+    if Generation <> FGeneration then
+      Exit;
+    FReference.ExactX := RefX;
+    FReference.ExactY := RefY;
+    FReference.Orbit := Orbit;
+    FReference.FormulaClass := FFormula.ClassType;
+    SetLength(FReference.Params, FFormula.ParamCount);
+    for I := 0 to High(FReference.Params) do
+      FReference.Params[I] := FFormula.GetParam(I);
+    FReference.MaxIter := FFormula.MaxIter;
+    FReference.FracWords := FracWords;
+    FReference.IsFullLength := Length(Orbit) > FFormula.MaxIter;
+    FOrbit := Orbit;
+    FRefDeltaX := FViewport.ExactCenterX.Sub(RefX).ToFloat;
+    FRefDeltaY := FViewport.ExactCenterY.Sub(RefY).ToFloat;
+    FIsReferenceReady := True;
+    Inc(FReferenceComputeCount);
+  finally
+    FLock.Leave;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TRenderEngine.FinishJob(const Job: TTileJob; IsCompleted: Boolean);
 begin
   FLock.Enter;
   try
-    if IsCompleted and (Job.Generation = FGeneration) then
+    if IsCompleted and Job.IsReference and (Job.Generation = FGeneration) then
+    begin
+      // orbite en échec (exception déjà notée) : les tuiles repartent en calcul direct plutôt que d'attendre
+      if not FIsReferenceReady then
+      begin
+        FIsPerturbation := False;
+        FIsReferenceReady := True;
+      end;
+      FWorkEvent.SetEvent;
+    end
+    else if IsCompleted and (Job.Generation = FGeneration) then
     begin
       Inc(FTileDone[Job.TileIndex]);
       Inc(FDoneJobs);
@@ -561,6 +768,8 @@ begin
     Result.PassCount := FPassCount;
     Result.IsCancelled := FIsCancelled;
     Result.Kernel := FActiveKernel;
+    Result.IsPerturbation := FIsPerturbation;
+    Result.IsReferencePending := FIsPerturbation and not FIsReferenceReady and not FIsCancelled;
     if FDoneJobs < FTotalJobs then
       Result.ElapsedMs := GetTickCount - FStartTick
     else
@@ -595,13 +804,40 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function TRenderEngine.ResolveKernel(Formula: TFractalFormula): TEngineKernelType;
+function TRenderEngine.ResolveKernel(Formula: TFractalFormula; IsPerturbation: Boolean): TEngineKernelType;
 begin
+  // la perturbation ne tourne encore qu'en Delphi
+  if IsPerturbation then
+    Exit(ekDelphi);
   // la DLL par défaut n'est chargée que si le noyau Rust est demandé
   if (FKernel = ekRust) and (Formula.KernelId <> kKernelNone) and CurrentRustKernel.IsAvailable then
     Result := ekRust
   else
     Result := ekDelphi;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TRenderEngine.GetReferenceComputeCount: Integer;
+begin
+  FLock.Enter;
+  try
+    Result := FReferenceComputeCount;
+  finally
+    FLock.Leave;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TRenderEngine.GetReferenceLength: Integer;
+begin
+  FLock.Enter;
+  try
+    Result := Length(FReference.Orbit);
+  finally
+    FLock.Leave;
+  end;
 end;
 
 end.
