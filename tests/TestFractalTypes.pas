@@ -18,6 +18,9 @@ type
     procedure TestSubViewportMatchesFullPixels;
     procedure TestDeepZoomKeepsPointFixed;
     procedure TestViewportCopiesAreIndependent;
+    procedure TestHugeWidthKeepsCenterBounded;
+    procedure TestMakeViewportClampsBadCenters;
+    procedure TestOnePixelViewportKeepsDefaultCenter;
     procedure TestPrecisionState;
     procedure TestPrecisionStateWithDoubleEpsilon;
     procedure TestAutoMaxIter;
@@ -27,7 +30,7 @@ type
 implementation
 
 uses
-  SysUtils;
+  SysUtils, Math;
 
 const
   kEps = 1e-12;
@@ -175,6 +178,52 @@ begin
   A := A.Panned(5, 0);
   CheckTrue(B.ExactCenterX.IsEqual(X0), 'B garde son centre exact');
   CheckFalse(A.ExactCenterX.IsEqual(X0), 'A a bougé');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestHugeWidthKeepsCenterBounded;
+var
+  V: TViewport;
+begin
+  V := MakeViewport(0.5, 0.1, 1e12, 800, 600);
+  V := V.Panned(500, -300);
+  CheckTrue(Abs(V.CenterX) <= kMaxCenterCoordinate, 'Panned X');
+  CheckTrue(Abs(V.CenterY) <= kMaxCenterCoordinate, 'Panned Y');
+  V := V.ZoomedAt(10, 20, 0.5);
+  CheckTrue(Abs(V.CenterX) <= kMaxCenterCoordinate, 'ZoomedAt X');
+  CheckTrue(Abs(V.CenterY) <= kMaxCenterCoordinate, 'ZoomedAt Y');
+  V := V.FittedToRect(0, 0, 100, 100);
+  CheckTrue(Abs(V.CenterX) <= kMaxCenterCoordinate, 'FittedToRect X');
+  V := V.SubViewport(1, 100, 50);
+  CheckTrue(Abs(V.CenterY) <= kMaxCenterCoordinate, 'SubViewport Y');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestMakeViewportClampsBadCenters;
+var
+  V: TViewport;
+begin
+  V := MakeViewport(NaN, 1e300, 4, 100, 100);
+  CheckEquals(0.0, V.CenterX, kEps);
+  CheckEquals(kMaxCenterCoordinate, V.CenterY, kEps);
+  V := MakeViewport(-Infinity, 0, 4, 100, 100);
+  CheckEquals(-kMaxCenterCoordinate, V.CenterX, kEps);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestOnePixelViewportKeepsDefaultCenter;
+const
+  kCx = -0.7436438870371587;
+  kCy = 0.1318259042053119;
+var
+  A, B: TViewport;
+begin
+  A := MakeViewport(kCx, kCy, 4, 1, 1).Resized(800, 600);
+  B := MakeViewport(kCx, kCy, 4, 800, 600);
+  CheckTrue(A.IsSameView(B));
 end;
 
 {------------------------------------------------------------------------------}

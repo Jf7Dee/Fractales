@@ -21,6 +21,7 @@ type
     procedure TestTextWithoutSectionRaises;
     procedure TestBinaryFileRaisesFileError;
     procedure TestNumbersAreInvariant;
+    procedure TestApplyToHugeCenterDoesNotRaise;
     procedure TestFavoriteStore;
     procedure TestSanitizeFileName;
     procedure TestSaveToMissingFolderRaisesFileError;
@@ -231,6 +232,26 @@ begin
     CheckTrue(IsRaised);
   finally
     L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestApplyToHugeCenterDoesNotRaise;
+var
+  A, B: TFractalLocation;
+  V: TViewport;
+begin
+  A := SampleLocation;
+  B := TFractalLocation.Create;
+  try
+    B.LoadFromText(StringReplace(A.SaveToText, 'CenterX=-0.7436438870', 'CenterX=1e20'#13#10'Junk=', []));
+    V := MakeViewport(0, 0, 4, 800, 600);
+    B.ApplyTo(V);
+    CheckTrue(Abs(V.CenterX) <= kMaxCenterCoordinate);
+  finally
+    B.Free;
+    A.Free;
   end;
 end;
 

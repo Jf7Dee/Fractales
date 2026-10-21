@@ -226,7 +226,8 @@ end;
 
 procedure TFractalLocation.ApplyTo(var V: TViewport);
 begin
-  V.SetCenter(THighFloat.FromFloat(FCenterX, kCenterWords), THighFloat.FromFloat(FCenterY, kCenterWords));
+  V.SetCenter(THighFloat.FromFloat(ClampCenter(FCenterX), kCenterWords),
+    THighFloat.FromFloat(ClampCenter(FCenterY), kCenterWords));
   V.Width := FWidth;
 end;
 

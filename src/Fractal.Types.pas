@@ -24,6 +24,7 @@ type
     FExactX, FExactY: THighFloat;
     FCenterX, FCenterY: TFloat;   // approximations tenues à jour avec le centre exact
     function WordsForPixelSize(NewPixelSize: TFloat): Integer;
+    function Shifted(const Exact: THighFloat; Approx, Offset: TFloat; AFracWords: Integer): THighFloat;
   public
     Width: TFloat;
     PixelWidth, PixelHeight: Integer;
@@ -48,10 +49,15 @@ type
   end;
 
 const
+  // les fractales vivent dans |c| < 4 ; au-delà, le centre est borné pour que le mot entier de THighFloat ne déborde jamais
+  kMaxCenterCoordinate = 1e6;
+
+const
   kInside = -1.0;
   kNotComputed = -2.0;
   kDefaultWidth = 4.0;
 
+function ClampCenter(Value: TFloat): TFloat;   // borne à kMaxCenterCoordinate ; NaN devient 0
 function MakeViewport(ACenterX, ACenterY, AWidth: TFloat; APixelWidth, APixelHeight: Integer): TViewport;
 function AutoMaxIter(const V: TViewport): Integer;
 function FloatToInvariant(Value: TFloat): string;
@@ -63,7 +69,7 @@ uses
   Math;
 
 const
-  kMinWords = 2;                              // mots de fraction au minimum (voir Fractal.HighFloat)
+  kMakeMinWords = 4;                          // mots de fraction de MakeViewport : contient exactement tout Extended avec |x| >= 2^-64
   kLimitUlps = 64;                            // en dessous de 64 ulps par pixel, l'image se pixelise
   kWarningFactor = 8;
   kInvariantPrecision = 18;
@@ -131,7 +137,8 @@ begin
   Result := Self;
   Result.Width := Width / Factor;
   Words := WordsForPixelSize(Result.PixelSize);
-  Result.SetCenter(FExactX.AddFloat(D.X * (1 - 1 / Factor), Words), FExactY.AddFloat(D.Y * (1 - 1 / Factor), Words));
+  Result.SetCenter(Shifted(FExactX, FCenterX, D.X * (1 - 1 / Factor), Words),
+    Shifted(FExactY, FCenterY, D.Y * (1 - 1 / Factor), Words));
 end;
 
 {------------------------------------------------------------------------------}
@@ -143,7 +150,8 @@ begin
   // le contenu se déplace de (DX, DY) pixels
   Result := Self;
   Words := WordsForPixelSize(PixelSize);
-  Result.SetCenter(FExactX.AddFloat(-DX * PixelSize, Words), FExactY.AddFloat(DY * PixelSize, Words));
+  Result.SetCenter(Shifted(FExactX, FCenterX, -DX * PixelSize, Words),
+    Shifted(FExactY, FCenterY, DY * PixelSize, Words));
 end;
 
 {------------------------------------------------------------------------------}
@@ -172,7 +180,7 @@ begin
   Result := Self;
   Result.Width := (X2 - X1) * PixelSize;
   Words := WordsForPixelSize(Result.PixelSize);
-  Result.SetCenter(FExactX.AddFloat(C.X, Words), FExactY.AddFloat(C.Y, Words));
+  Result.SetCenter(Shifted(FExactX, FCenterX, C.X, Words), Shifted(FExactY, FCenterY, C.Y, Words));
 end;
 
 {------------------------------------------------------------------------------}
@@ -197,7 +205,7 @@ begin
   Result.PixelWidth := PixelWidth * Supersample;
   Result.PixelHeight := Rows * Supersample;
   Words := WordsForPixelSize(Result.PixelSize);
-  Result.SetCenter(FExactX.WithFracWords(Words), FExactY.AddFloat(DY, Words));
+  Result.SetCenter(FExactX.WithFracWords(Words), Shifted(FExactY, FCenterY, DY, Words));
 end;
 
 {------------------------------------------------------------------------------}
@@ -256,6 +264,28 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function TViewport.Shifted(const Exact: THighFloat; Approx, Offset: TFloat; AFracWords: Integer): THighFloat;
+begin
+  // décalage appliqué en TFloat, réduit si le centre sortait de [-kMaxCenterCoordinate, +kMaxCenterCoordinate]
+  if IsNan(Offset) then
+    Offset := 0
+  else if Abs(Approx + Offset) > kMaxCenterCoordinate then
+    Offset := ClampCenter(Approx + Offset) - Approx;
+  Result := Exact.AddFloat(Offset, AFracWords);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ClampCenter(Value: TFloat): TFloat;
+begin
+  if IsNan(Value) then
+    Result := 0
+  else
+    Result := Max(-kMaxCenterCoordinate, Min(kMaxCenterCoordinate, Value));
+end;
+
+{------------------------------------------------------------------------------}
+
 function MakeViewport(ACenterX, ACenterY, AWidth: TFloat; APixelWidth, APixelHeight: Integer): TViewport;
 var
   Words: Integer;
@@ -263,10 +293,11 @@ begin
   Result.Width := AWidth;
   Result.PixelWidth := Max(1, APixelWidth);
   Result.PixelHeight := Max(1, APixelHeight);
-  Words := kMinWords;
+  Words := kMakeMinWords;
   if Result.PixelSize > 0 then
-    Words := FracWordsForPixelSize(Result.PixelSize);
-  Result.SetCenter(THighFloat.FromFloat(ACenterX, Words), THighFloat.FromFloat(ACenterY, Words));
+    Words := Max(Words, FracWordsForPixelSize(Result.PixelSize));
+  Result.SetCenter(THighFloat.FromFloat(ClampCenter(ACenterX), Words),
+    THighFloat.FromFloat(ClampCenter(ACenterY), Words));
 end;
 
 {------------------------------------------------------------------------------}
