@@ -30,3 +30,25 @@ En Rust, la limite de zoom arrive plus tôt (pixels d'environ 1e-13 contre 1e-16
 Le moteur choisi n'est pas enregistré dans les lieux.
 
 Compiler la DLL : voir `kernel-rust\README.md`.
+
+## Zoom profond
+
+Le calcul se fait en deux paliers, choisis automatiquement :
+
+1. Calcul direct tant qu'il suffit (Extended en Delphi, Double en Rust).
+2. Perturbation au-delà : une orbite de référence en haute précision, puis un petit écart par pixel. Elle prend le
+   relais dès que le palier 1 annonce une « limite proche ».
+
+La limite commune aux deux moteurs est une taille de pixel de 1e-300. La barre d'état indique « Delphi ·
+perturbation : terminé en … ms », « … : orbite de référence… » pendant le calcul de la référence, et « Limite de
+précision proche » près de 1e-300.
+
+- Formules en zoom profond : Mandelbrot et Tricorn. Julia, Burning Ship et Multibrot gardent la limite actuelle
+  (prévu plus tard, étape D).
+- Référence : le centre de la vue ou, si son orbite s'échappe tôt, la plus longue de 9 points de la vue (grille
+  3 × 3). Elle est réutilisée quand on se déplace ou zoome un peu.
+- Les rendus profonds sont plus lents : plus d'itérations, plus l'orbite de référence.
+- Les lieux (`.frac`, PNG) gardent le centre avec tous ses chiffres (environ 48 pour un fichier peu profond) ; les
+  anciens fichiers se relisent à l'identique.
+- Rust : la DLL doit être recompilée (ABI 2, nouvel export `fk_compute_row_perturbed`). Une ancienne DLL (ABI 1)
+  fonctionne encore : rendus peu profonds en Rust, rendus profonds repris par Delphi.
