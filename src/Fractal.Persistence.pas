@@ -17,8 +17,8 @@ type
   private
     FFormulaName: string;
     FParams: TStringList;
-    FCenterX: TFloat;
-    FCenterY: TFloat;
+    FCenterX: THighFloat;
+    FCenterY: THighFloat;
     FWidth: TFloat;
     FMaxIter: Integer;
     FIsAutoIter: Boolean;
@@ -39,8 +39,8 @@ type
     procedure LoadFromFile(const FileName: string);
     property FormulaName: string read FFormulaName;
     property Params: TStringList read FParams;
-    property CenterX: TFloat read FCenterX;
-    property CenterY: TFloat read FCenterY;
+    property CenterX: THighFloat read FCenterX;
+    property CenterY: THighFloat read FCenterY;
     property Width: TFloat read FWidth;
     property MaxIter: Integer read FMaxIter;
     property IsAutoIter: Boolean read FIsAutoIter;
@@ -72,7 +72,13 @@ function FavoritesFolder: string;
 implementation
 
 const
-  kCenterWords = 4;   // mots de fraction du centre relu (provisoire : la tâche 3 le lit en haute précision)
+  kMinCenterWords = 4;          // mots de fraction minimaux du centre : contient tout Extended avec |x| >= 2^-64
+  kCenterMarginWords = 1;       // un mot de 32 bits en plus : marge pour une image jusqu'à 4e9 pixels de large
+  kMinCenterDigits = 18;        // chiffres écrits au minimum, comme les anciens fichiers
+  kBitsPerCenterWord = 32;      // bits d'un mot de fraction de THighFloat
+  kReadExtraWords = 2;          // mots que la relecture peut avoir en plus : marge + largeur vs pixels
+  kExtraCenterDigits = 3;      // chiffres au-delà de la taille de pixel
+  kWidthDigitsMargin = 10;      // log10 de 4e9 pixels : le lieu ignore la largeur en pixels
   kSectionFractal = 'Fractal';
   kSectionParams = 'Params';
   kSectionColors = 'Colors';
@@ -132,8 +138,8 @@ begin
   FParams := TStringList.Create;
   FPalette := TGradientPalette.Create;
   FFormulaName := kDefaultFormula;
-  FCenterX := TMandelbrotFormula.DefaultCenterX;
-  FCenterY := TMandelbrotFormula.DefaultCenterY;
+  FCenterX := THighFloat.FromFloat(TMandelbrotFormula.DefaultCenterX, kMinCenterWords);
+  FCenterY := THighFloat.FromFloat(TMandelbrotFormula.DefaultCenterY, kMinCenterWords);
   FWidth := TMandelbrotFormula.DefaultWidth;
   FMaxIter := kDefaultMaxIter;
   FIsAutoIter := True;
@@ -160,8 +166,8 @@ begin
   FParams.Clear;
   for I := 0 to Formula.ParamCount - 1 do
     FParams.Add(Formula.ParamInfo(I).Name + '=' + FloatToInvariant(Formula.GetParam(I)));
-  FCenterX := V.CenterX;
-  FCenterY := V.CenterY;
+  FCenterX := V.ExactCenterX;
+  FCenterY := V.ExactCenterY;
   FWidth := V.Width;
   FMaxIter := Formula.MaxIter;
   FIsAutoIter := AIsAutoIter;
@@ -224,11 +230,34 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function BoundedCenter(const C: THighFloat): THighFloat;   // borne à ±kMaxCenterCoordinate
+var
+  Approx: TFloat;
+begin
+  Approx := C.ToFloat;
+  if IsNan(Approx) or (Abs(Approx) > kMaxCenterCoordinate) then
+    Result := THighFloat.FromFloat(ClampCenter(Approx), Max(C.FracWords, kMinCenterWords))
+  else
+    Result := C;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TFractalLocation.ApplyTo(var V: TViewport);
 begin
-  V.SetCenter(THighFloat.FromFloat(ClampCenter(FCenterX), kCenterWords),
-    THighFloat.FromFloat(ClampCenter(FCenterY), kCenterWords));
+  V.SetCenter(BoundedCenter(FCenterX), BoundedCenter(FCenterY));
   V.Width := FWidth;
+end;
+
+{------------------------------------------------------------------------------}
+
+function CenterDigits(AWidth: TFloat; const C: THighFloat): Integer;   // chiffres à écrire pour ce centre
+begin
+  Result := kMinCenterDigits;
+  if AWidth > 0 then
+    Result := Max(Result, Ceil(-Log10(AWidth)) + kExtraCenterDigits + kWidthDigitsMargin);
+  // assez de chiffres pour que la relecture, qui peut avoir plus de mots, retrouve le centre exact
+  Result := Max(Result, Ceil((C.FracWords + kReadExtraWords) * kBitsPerCenterWord * Log10(2)) + kExtraCenterDigits);
 end;
 
 {------------------------------------------------------------------------------}
@@ -243,8 +272,8 @@ begin
     L.Add('[' + kSectionFractal + ']');
     L.Add('Version=' + IntToStr(kFormatVersion));
     L.Add('Formula=' + FFormulaName);
-    L.Add('CenterX=' + FloatToInvariant(FCenterX));
-    L.Add('CenterY=' + FloatToInvariant(FCenterY));
+    L.Add('CenterX=' + FCenterX.ToString(CenterDigits(FWidth, FCenterX)));
+    L.Add('CenterY=' + FCenterY.ToString(CenterDigits(FWidth, FCenterY)));
     L.Add('Width=' + FloatToInvariant(FWidth));
     L.Add('MaxIter=' + IntToStr(FMaxIter));
     L.Add('AutoIter=' + BoolTo01(FIsAutoIter));
@@ -270,6 +299,26 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function ParseCenter(const S: string; AWidth, Default: TFloat): THighFloat;   // repli sur Default si illisible
+var
+  Words: Integer;
+  HalfUnit: TFloat;
+begin
+  Words := Max(FracWordsForPixelSize(AWidth) + kCenterMarginWords, kMinCenterWords);
+  // TryParse tronque : on lit un mot de plus, on ajoute une demi-unité du dernier mot, puis on tronque (arrondi)
+  if THighFloat.TryParse(Trim(S), Words + 1, Result) then
+  begin
+    HalfUnit := Ldexp(1, -(kBitsPerCenterWord * Words + 1));
+    if Pos('-', Trim(S)) = 1 then
+      HalfUnit := -HalfUnit;
+    Result := Result.AddFloat(HalfUnit, Words + 1).WithFracWords(Words);
+  end
+  else
+    Result := THighFloat.FromFloat(Default, Words);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TFractalLocation.DoLoadFromText(const AText: string);
 var
   Ini: TMemIniFile;
@@ -289,11 +338,11 @@ begin
     if FormulaClass = nil then
       raise EFractalFileError.CreateFmt('Formule inconnue : %s', [Name]);
     FFormulaName := FormulaClass.FormulaName;
-    FCenterX := InvariantToFloat(Ini.ReadString(kSectionFractal, 'CenterX', ''), FormulaClass.DefaultCenterX);
-    FCenterY := InvariantToFloat(Ini.ReadString(kSectionFractal, 'CenterY', ''), FormulaClass.DefaultCenterY);
     FWidth := InvariantToFloat(Ini.ReadString(kSectionFractal, 'Width', ''), FormulaClass.DefaultWidth);
     if not (FWidth >= kMinLocationWidth) or not (FWidth <= kMaxLocationWidth) then
       FWidth := FormulaClass.DefaultWidth;
+    FCenterX := ParseCenter(Ini.ReadString(kSectionFractal, 'CenterX', ''), FWidth, FormulaClass.DefaultCenterX);
+    FCenterY := ParseCenter(Ini.ReadString(kSectionFractal, 'CenterY', ''), FWidth, FormulaClass.DefaultCenterY);
     FMaxIter := EnsureRange(Ini.ReadInteger(kSectionFractal, 'MaxIter', kDefaultMaxIter), kMinMaxIter, kMaxMaxIter);
     FIsAutoIter := Ini.ReadBool(kSectionFractal, 'AutoIter', True);
 

@@ -4,7 +4,8 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Types, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
-  AppEvnts, Math, Contnrs, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.Palette, Fractal.Navigation,
+  AppEvnts, Math, Contnrs, Fractal.Types, Fractal.HighFloat, Fractal.Formulas, Fractal.Engine, Fractal.Palette,
+  Fractal.Navigation,
   {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
   Fractal.Persistence, Fractal.Png, Fractal.View, Fractal.RustKernel, ImgList, Menus, ToolWin,
   HelpFrm, ActnList;
@@ -29,7 +30,7 @@ const
   kFracFilter = 'Lieu fractal (*.frac)|*.frac';
   kPngFilter = 'Image PNG (*.png)|*.png';
   kMinCoordDigits = 3;
-  kMaxCoordDigits = 18;
+  kMaxCoordDigits = 320;
 
 type
   TMainForm = class(TForm)
@@ -671,21 +672,37 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TMainForm.UpdateStatus;
+function MouseCoordText(const V: TViewport; MouseX, MouseY: TFloat): string;   // x/y exacts sous la souris
 var
-  V: TViewport;
-  P: TComplexPoint;
+  Offset: TComplexPoint;
   Digits: Integer;
-  S: TRenderStatus;
-  Msg: string;
+  X, Y: THighFloat;
 begin
-  V := FNavigator.Viewport;
-  P := V.PixelToComplex(FMouseX, FMouseY);
+  Offset := V.PixelOffset(MouseX, MouseY);
   if IsNan(V.PixelSize) or IsInfinite(V.PixelSize) or not (V.PixelSize > 0) then
     Digits := kMinCoordDigits
   else
     Digits := EnsureRange(Ceil(-Log10(V.PixelSize)) + 1, kMinCoordDigits, kMaxCoordDigits);
-  SetPanelText(0, 'x = ' + FloatToStrF(P.X, ffFixed, 18, Digits) + '   y = ' + FloatToStrF(P.Y, ffFixed, 18, Digits));
+  if IsNan(Offset.X) or IsInfinite(Offset.X) or IsNan(Offset.Y) or IsInfinite(Offset.Y) then
+  begin
+    Offset.X := 0;
+    Offset.Y := 0;
+  end;
+  X := V.ExactCenterX.AddFloat(Offset.X, V.ExactCenterX.FracWords);
+  Y := V.ExactCenterY.AddFloat(Offset.Y, V.ExactCenterY.FracWords);
+  Result := 'x = ' + X.ToString(Digits) + '   y = ' + Y.ToString(Digits);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.UpdateStatus;
+var
+  V: TViewport;
+  S: TRenderStatus;
+  Msg: string;
+begin
+  V := FNavigator.Viewport;
+  SetPanelText(0, MouseCoordText(V, FMouseX, FMouseY));
   SetPanelText(1, 'zoom ' + FormatFloat('0.00e+0', V.Zoom));
   SetPanelText(2, IntToStr(FFormula.MaxIter) + ' it.');
   S := FEngine.Status;
