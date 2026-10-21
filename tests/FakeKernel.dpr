@@ -113,7 +113,7 @@ var
   DCX: Double;
 begin
   if (ParamCount < 0) or (MaxIter < 0) or (Count < 0) or (Output = nil) or ((ParamCount > 0) and (Params = nil))
-    or (RefOrbit = nil) or (RefLength < 1) then
+    or (RefOrbit = nil) or (RefLength < kMinOrbitLength) then
     Exit(kInvalidArgument);
   try
     Result := CreateFormula(Formula, Params, ParamCount, MaxIter, F);

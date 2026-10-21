@@ -25,6 +25,7 @@ type
     procedure TestReferenceEscapingEarlyStillMatches;
     procedure TestReferenceOrbitCancels;
     procedure TestUnsupportedFormulaRaises;
+    procedure TestOnePointOrbitRaises;
   end;
 
 implementation
@@ -318,6 +319,34 @@ begin
         IsRaised := True;
     end;
     Check(IsRaised, 'StepReference doit lever une exception');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Après le premier pas, IteratePerturbed lit Orbit[1] : une orbite d'un seul point est refusée.
+procedure TTestPerturbation.TestOnePointOrbitRaises;
+var
+  F: TMandelbrotFormula;
+  Orbit: TOrbit;
+  IsRaised: Boolean;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    SetLength(Orbit, kMinOrbitLength);
+    Orbit[0].X := 0;
+    Orbit[0].Y := 0;
+    Orbit[1] := Orbit[0];
+    IsRaised := False;
+    try
+      F.IteratePerturbed(Orbit, kMinOrbitLength - 1, 0, 0);
+    except
+      on EArgumentException do
+        IsRaised := True;
+    end;
+    Check(IsRaised, 'IteratePerturbed doit refuser une orbite d''un seul point');
   finally
     F.Free;
   end;

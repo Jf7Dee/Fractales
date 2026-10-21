@@ -18,6 +18,8 @@ const
   kKernelBurningShip = 3;
   kKernelTricorn = 4;
   kParamSliderSteps = 1000;  // crans du curseur d'un paramètre de formule
+  // longueur minimale d'une orbite de référence : après le premier pas, la perturbation lit Orbit[1]
+  kMinOrbitLength = 2;
 
 type
   TFormulaParam = record
@@ -236,10 +238,11 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Garde commune aux IteratePerturbed : une orbite vide ou une longueur hors du tableau fausserait tout le calcul.
+// Garde commune aux IteratePerturbed : une orbite de moins de kMinOrbitLength points ou une longueur hors du
+// tableau fausserait tout le calcul.
 procedure CheckOrbit(const Orbit: TOrbit; OrbitLength: Integer);
 begin
-  if (OrbitLength < 1) or (OrbitLength > Length(Orbit)) then
+  if (OrbitLength < kMinOrbitLength) or (OrbitLength > Length(Orbit)) then
     raise EArgumentException.CreateFmt(kBadOrbitMessage, [OrbitLength, Length(Orbit)]);
 end;
 

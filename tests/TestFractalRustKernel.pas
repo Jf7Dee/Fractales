@@ -54,6 +54,7 @@ type
     procedure TestDefaultKernelIsShared;
     procedure TestFakeKernelPerturbedMatchesDelphi;
     procedure TestPerturbedKernelErrorRaises;
+    procedure TestPerturbedKernelRejectsOnePointOrbit;
     procedure TestAbi1KernelHasNoPerturbation;
   end;
 
@@ -337,12 +338,14 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Orbite minimale Z0 = 0, en Double : x et y alternés.
-function ZeroDoubleOrbit: TDoubleOrbit;
+// Orbite nulle de PointCount points (Z0 = Z1 = ... = 0), en Double : x et y alternés.
+function ZeroDoubleOrbit(PointCount: Integer = kMinOrbitLength): TDoubleOrbit;
+var
+  I: Integer;
 begin
-  SetLength(Result, 2);
-  Result[0] := 0;
-  Result[1] := 0;
+  SetLength(Result, 2 * PointCount);
+  for I := 0 to High(Result) do
+    Result[I] := 0;
 end;
 
 {------------------------------------------------------------------------------}
@@ -363,6 +366,33 @@ begin
       on E: ERustKernelError do
         CheckTrue(Pos('(code 5)', E.Message) > 0, E.Message);
     end;
+  finally
+    F.Free;
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Une orbite d'un seul point ferait lire Z1 après le premier pas : argument invalide (code 3).
+procedure TTestRustKernel.TestPerturbedKernelRejectsOnePointOrbit;
+var
+  K: TRustKernel;
+  F: TMandelbrotFormula;
+  Values: array[0..0] of Single;
+begin
+  K := TRustKernel.Create(FakeKernelFileName);
+  F := TMandelbrotFormula.Create;
+  try
+    Values[0] := kRowDX;
+    try
+      K.ComputeRowPerturbed(F, ZeroDoubleOrbit(kMinOrbitLength - 1), 0, kRowDX, 0, 1, @Values[0]);
+      Fail('ERustKernelError attendue');
+    except
+      on E: ERustKernelError do
+        CheckTrue(Pos('(code 3)', E.Message) > 0, E.Message);
+    end;
+    CheckEquals(kRowDX, Values[0], 0, 'aucun pixel écrit');
   finally
     F.Free;
     K.Free;

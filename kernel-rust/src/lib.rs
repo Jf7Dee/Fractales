@@ -27,6 +27,8 @@ pub const FK_INVALID_ARGUMENT: i32 = 3;
 pub const FK_INTERNAL_ERROR: i32 = 4;
 pub const FK_UNSUPPORTED: i32 = 5; // formule sans perturbation demandée à fk_compute_row_perturbed
 
+const MIN_ORBIT_LENGTH: i32 = 2; // orbite de référence : Z0 et au moins Z1, lu après le premier pas
+
 const ESCAPE_RADIUS2: f64 = 65536.0; // rayon d'échappement 256, comme Fractal.Formulas
 const INSIDE: f32 = -1.0;
 const LANES: usize = 4;
@@ -236,7 +238,8 @@ fn iterate4_quadratic(
 // Perturbation (zoom profond) : calcul scalaire, mêmes opérations dans le même ordre que
 // TMandelbrotFormula.IteratePerturbed et TTricornFormula.IteratePerturbed.
 
-// Pixel d'écart (dcx, dcy) à la référence. `orbit` = x0, y0, x1, y1, ... avec Z0 = 0 ; au moins un point.
+// Pixel d'écart (dcx, dcy) à la référence. `orbit` = x0, y0, x1, y1, ... avec Z0 = 0 ; au moins deux points
+// (après le premier pas, la boucle lit Z1).
 fn iterate_perturbed(formula: Formula, max_iter: i32, orbit: &[f64], dcx: f64, dcy: f64) -> f32 {
     let orbit_len = orbit.len() / 2;
     let is_conjugate = matches!(formula, Formula::Tricorn);
@@ -371,7 +374,7 @@ pub unsafe extern "C" fn fk_compute_row_perturbed(
         if param_count < 0 || max_iter < 0 || count < 0 || out.is_null() || (param_count > 0 && params.is_null()) {
             return FK_INVALID_ARGUMENT;
         }
-        if ref_orbit.is_null() || ref_len < 1 {
+        if ref_orbit.is_null() || ref_len < MIN_ORBIT_LENGTH {
             return FK_INVALID_ARGUMENT;
         }
         let formula = match formula_from_raw(formula, params, param_count) {
@@ -628,6 +631,10 @@ mod tests {
             let o = orbit.as_ptr();
             assert_eq!(
                 fk_compute_row_perturbed(MANDELBROT, null_params, 0, MAX_ITER, o, 0, dcx0, ddx, 0.0, 4, p),
+                FK_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                fk_compute_row_perturbed(MANDELBROT, null_params, 0, MAX_ITER, o, 1, dcx0, ddx, 0.0, 4, p),
                 FK_INVALID_ARGUMENT
             );
             assert_eq!(
