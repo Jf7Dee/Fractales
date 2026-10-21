@@ -16,6 +16,9 @@ type
     X, Y: TFloat;
   end;
 
+  // orbite de référence Z0 = 0, Z1, ... en précision Extended (perturbation)
+  TOrbit = array of TComplexPoint;
+
   TPrecisionState = (psOk, psWarning, psLimit);
 
   // Fenêtre sur le plan complexe. Le pixel (PX, PY) a son centre en PX + 0,5 ; l'axe imaginaire monte.

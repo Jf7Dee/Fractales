@@ -3,7 +3,7 @@
 interface
 
 uses
-  SysUtils, Math, Fractal.Types;
+  SysUtils, Math, Fractal.HighFloat, Fractal.Types;
 
 const
   kEscapeRadius2 = 65536.0;  // rayon d'échappement 256 : lissage précis
@@ -51,6 +51,11 @@ type
     class function KernelId: Integer; virtual;
     function Clone: TFractalFormula;
     function Iterate(const CX, CY: TFloat): Single; virtual; abstract;
+    class function SupportsPerturbation: Boolean; virtual;
+    // un pas de l'orbite de référence, en haute précision ; lève une exception si non pris en charge
+    procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); virtual;
+    // pixel d'écart (DCX, DCY) à la référence ; Orbit[0] = 0 ; même convention de compte et de lissage qu'Iterate
+    function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; virtual;
     function ParamCount: Integer;
     function ParamInfo(Index: Integer): TFormulaParam;
     function GetParam(Index: Integer): Double;
@@ -67,6 +72,9 @@ type
     class function DefaultCenterX: TFloat; override;
     class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
+    class function SupportsPerturbation: Boolean; override;
+    procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
+    function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
   end;
 
   TMultibrotFormula = class(TFractalFormula)
@@ -116,6 +124,9 @@ type
     class function DefaultCenterX: TFloat; override;
     class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
+    class function SupportsPerturbation: Boolean; override;
+    procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
+    function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
   end;
 
 procedure RegisterFormula(AClass: TFractalFormulaClass);
@@ -129,6 +140,8 @@ implementation
 
 const
   kLn2 = 0.69314718055994530942;
+  kNoPerturbationMessage = '%s : perturbation non prise en charge';
+  kBadOrbitMessage = 'Orbite de référence invalide (longueur %d, tableau de %d points)';
 
 var
   FormulaRegistry: array of TFractalFormulaClass;
@@ -171,6 +184,27 @@ end;
 
 {------------------------------------------------------------------------------}
 
+class function TFractalFormula.SupportsPerturbation: Boolean;
+begin
+  Result := False;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFractalFormula.StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat);
+begin
+  raise Exception.CreateFmt(kNoPerturbationMessage, [FormulaName]);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFractalFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
+begin
+  raise Exception.CreateFmt(kNoPerturbationMessage, [FormulaName]);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TFractalFormula.SetMaxIter(Value: Integer);
 begin
   FMaxIter := EnsureRange(Value, kMinMaxIter, kMaxMaxIter);
@@ -198,6 +232,15 @@ end;
 procedure TFractalFormula.ParamsChanged;
 begin
   // rien par défaut : les formules qui mettent des valeurs en cache le redéfinissent
+end;
+
+{------------------------------------------------------------------------------}
+
+// Garde commune aux IteratePerturbed : une orbite vide ou une longueur hors du tableau fausserait tout le calcul.
+procedure CheckOrbit(const Orbit: TOrbit; OrbitLength: Integer);
+begin
+  if (OrbitLength < 1) or (OrbitLength > Length(Orbit)) then
+    raise EArgumentException.CreateFmt(kBadOrbitMessage, [OrbitLength, Length(Orbit)]);
 end;
 
 {------------------------------------------------------------------------------}
@@ -330,6 +373,63 @@ begin
       Exit(SmoothValue(N, X2 + Y2, kLn2));
     Y := 2 * X * Y + CY;
     X := X2 - Y2 + CX;
+    Inc(N);
+  end;
+  Result := kInside;
+end;
+
+{------------------------------------------------------------------------------}
+
+class function TMandelbrotFormula.SupportsPerturbation: Boolean;
+begin
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMandelbrotFormula.StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat);
+var
+  NewX, NewY: THighFloat;
+begin
+  // z := z^2 + c
+  NewX := ZX.Sqr.Sub(ZY.Sqr).Add(CX);
+  NewY := ZX.Mul(ZY).Twice.Add(CY);
+  ZX := NewX;
+  ZY := NewY;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMandelbrotFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
+var
+  DX, DY, ZX, ZY, R2, NewDX, NewDY: TFloat;
+  N, M: Integer;
+begin
+  CheckOrbit(Orbit, OrbitLength);
+  DX := 0;
+  DY := 0;
+  N := 0;
+  M := 0;
+  while N < FMaxIter do
+  begin
+    ZX := Orbit[M].X + DX;
+    ZY := Orbit[M].Y + DY;
+    R2 := ZX * ZX + ZY * ZY;
+    if R2 > kEscapeRadius2 then
+      Exit(SmoothValue(N, R2, kLn2));
+    if (R2 < DX * DX + DY * DY) or (M = OrbitLength - 1) then
+    begin
+      // rebasage : la référence redevient Z0 = 0
+      DX := ZX;
+      DY := ZY;
+      M := 0;
+    end;
+    // δ' = 2·Z·δ + δ² + δc
+    NewDX := 2 * (Orbit[M].X * DX - Orbit[M].Y * DY) + DX * DX - DY * DY + DCX;
+    NewDY := 2 * (Orbit[M].X * DY + Orbit[M].Y * DX) + 2 * DX * DY + DCY;
+    DX := NewDX;
+    DY := NewDY;
+    Inc(M);
     Inc(N);
   end;
   Result := kInside;
@@ -587,6 +687,63 @@ begin
       Exit(SmoothValue(N, X2 + Y2, kLn2));
     Y := -2 * X * Y + CY;
     X := X2 - Y2 + CX;
+    Inc(N);
+  end;
+  Result := kInside;
+end;
+
+{------------------------------------------------------------------------------}
+
+class function TTricornFormula.SupportsPerturbation: Boolean;
+begin
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTricornFormula.StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat);
+var
+  NewX, NewY: THighFloat;
+begin
+  // z := conj(z)^2 + c
+  NewX := ZX.Sqr.Sub(ZY.Sqr).Add(CX);
+  NewY := CY.Sub(ZX.Mul(ZY).Twice);
+  ZX := NewX;
+  ZY := NewY;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTricornFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
+var
+  DX, DY, ZX, ZY, R2, NewDX, NewDY: TFloat;
+  N, M: Integer;
+begin
+  CheckOrbit(Orbit, OrbitLength);
+  DX := 0;
+  DY := 0;
+  N := 0;
+  M := 0;
+  while N < FMaxIter do
+  begin
+    ZX := Orbit[M].X + DX;
+    ZY := Orbit[M].Y + DY;
+    R2 := ZX * ZX + ZY * ZY;
+    if R2 > kEscapeRadius2 then
+      Exit(SmoothValue(N, R2, kLn2));
+    if (R2 < DX * DX + DY * DY) or (M = OrbitLength - 1) then
+    begin
+      // rebasage : la référence redevient Z0 = 0
+      DX := ZX;
+      DY := ZY;
+      M := 0;
+    end;
+    // δ' = conj(2·Z·δ + δ²) + δc
+    NewDX := 2 * (Orbit[M].X * DX - Orbit[M].Y * DY) + DX * DX - DY * DY + DCX;
+    NewDY := -(2 * (Orbit[M].X * DY + Orbit[M].Y * DX) + 2 * DX * DY) + DCY;
+    DX := NewDX;
+    DY := NewDY;
+    Inc(M);
     Inc(N);
   end;
   Result := kInside;
