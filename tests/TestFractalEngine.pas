@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, SysUtils, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.RustKernel;
+  Windows, SysUtils, Math, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.RustKernel;
 
 type
   TRaisingFormula = class(TFractalFormula)
@@ -41,6 +41,8 @@ type
     procedure TestNewRenderCancelsReference;
     procedure TestDelphiRenderAtAcceptanceDepths;
     procedure TestRustRenderAtAcceptanceDepths;
+    procedure TestReferenceReusedWithinIterHeadroom;
+    procedure TestEscapedReferenceReusedForBands;
   end;
 
 implementation
@@ -59,6 +61,12 @@ const
   kShiftPixels = 10;
   // profondeurs d'acceptation de la spec : 1e-200 (§7) et la limite 1e-300 du palier 2 (§2), sans la franchir
   kAcceptancePixelSizes: array[0..1] of TFloat = (1e-200, 2e-300);
+  kHeadroomPixelSize = 1e-50;
+  kZoomFactor = 2;
+  kBeyondHeadroomFactor = 1.3;      // au-delà de kReferenceIterHeadroom
+  kEscapingCenterX = 0.5;           // hors de l'ensemble : le centre et les 8 autres candidates s'échappent vite
+  kEscapingPixelSize = 1e-30;
+  kBandRows = 16;
 
 {------------------------------------------------------------------------------}
 
@@ -479,11 +487,11 @@ begin
     CheckTrue(E.Status.IsComplete);
     CheckTrue(E.Status.IsPerturbation);
     CheckEquals(1, E.ReferenceComputeCount, 'orbite recalculée');
-    // un autre MaxIter interdit la réutilisation
-    F.MaxIter := kDeepMaxIter + 1;
+    // un MaxIter au-delà de la marge de l'orbite interdit la réutilisation
+    F.MaxIter := Ceil(kDeepMaxIter * kReferenceIterHeadroom) + 1;
     E.Render(V, F);
     CheckTrue(E.WaitUntilComplete(kWaitMs));
-    CheckEquals(2, E.ReferenceComputeCount, 'orbite réutilisée malgré un autre MaxIter');
+    CheckEquals(2, E.ReferenceComputeCount, 'orbite réutilisée malgré un MaxIter hors marge');
   finally
     F.Free;
     E.Free;
@@ -510,7 +518,8 @@ begin
     CheckTrue(E.Status.IsComplete);
     CheckTrue(E.Status.IsPerturbation);
     CheckEquals('', E.TakeErrors);
-    CheckEquals(kDeepMaxIter + 1, E.ReferenceLength, 'référence échappée gardée');
+    // orbite calculée avec la marge d'itérations
+    CheckEquals(Ceil(kDeepMaxIter * kReferenceIterHeadroom) + 1, E.ReferenceLength, 'référence échappée gardée');
   finally
     F.Free;
     E.Free;
@@ -594,6 +603,82 @@ begin
     CheckAcceptanceDepths(ekRust, Fake);
   finally
     Fake.Free;
+  end;
+end;
+
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestReferenceReusedWithinIterHeadroom;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  V: TViewport;
+  PreviousMaxIter: Integer;
+begin
+  // zoom x2 au centre avec l'auto-itération : MaxIter augmente de moins de 25 %, l'orbite sert encore
+  E := TRenderEngine.Create(CpuCount);
+  F := TMandelbrotFormula.Create;
+  try
+    V := DeepViewport(0, 1, kHeadroomPixelSize);
+    F.MaxIter := AutoMaxIter(V);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckEquals(1, E.ReferenceComputeCount);
+    PreviousMaxIter := F.MaxIter;
+    V := V.ZoomedAt(V.PixelWidth / 2 - 0.5, V.PixelHeight / 2 - 0.5, kZoomFactor);
+    F.MaxIter := AutoMaxIter(V);
+    CheckTrue(F.MaxIter > PreviousMaxIter, 'MaxIter inchangé');
+    CheckTrue(F.MaxIter < PreviousMaxIter * kReferenceIterHeadroom, 'MaxIter hors marge');
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(1, E.ReferenceComputeCount, 'orbite recalculée malgré la marge');
+    // au-delà de la marge, l'orbite est recalculée
+    F.MaxIter := Round(F.MaxIter * kBeyondHeadroomFactor);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckEquals(2, E.ReferenceComputeCount, 'orbite réutilisée hors marge');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestEscapedReferenceReusedForBands;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  V: TViewport;
+begin
+  // deux bandes d'un rendu HD : le centre et toutes les candidates s'échappent, une seule orbite pour les deux
+  E := TRenderEngine.Create(CpuCount);
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := kDeepMaxIter;
+    V := DeepViewport(kEscapingCenterX, 0, kEscapingPixelSize);
+    E.IsEscapedReferenceReusable := True;
+    E.Render(V.SubViewport(1, 0, kBandRows), F, False);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsPerturbation);
+    CheckTrue(E.ReferenceLength <= kDeepMaxIter, 'référence non échappée');
+    E.Render(V.SubViewport(1, kBandRows, kBandRows), F, False);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(1, E.ReferenceComputeCount, 'orbite échappée recalculée');
+    // sans l'option, une référence échappée est recalculée pour la vue suivante
+    E.IsEscapedReferenceReusable := False;
+    E.Render(V.SubViewport(1, 2 * kBandRows, kBandRows), F, False);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckEquals(2, E.ReferenceComputeCount, 'orbite échappée réutilisée sans l''option');
+  finally
+    F.Free;
+    E.Free;
   end;
 end;
 

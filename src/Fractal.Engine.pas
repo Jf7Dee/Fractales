@@ -10,6 +10,7 @@ const
   kTileSize = 64;
   kMaxErrorLines = 20;
   kIdleWaitMs = 250;
+  kReferenceIterHeadroom = 1.25;   // MaxIter de l'orbite de référence = Ceil(MaxIter x 1,25) : réutilisable au zoom
 
 type
   // noyau de calcul des pixels : Delphi (Extended, x87) ou DLL Rust (Double, SIMD)
@@ -65,8 +66,9 @@ type
         DoubleOrbit: TDoubleOrbit;   // la même en Double pour la DLL Rust, construite une fois au besoin
         FormulaClass: TClass;
         Params: array of Double;
-        MaxIter: Integer;
+        MaxIter: Integer;        // MaxIter de l'orbite, marge kReferenceIterHeadroom comprise
         FracWords: Integer;
+        Width: TFloat;           // largeur de la vue qui l'a calculée
         IsFullLength: Boolean;   // l'orbite ne s'échappe pas avant MaxIter
       end;
   private
@@ -101,12 +103,14 @@ type
     FRefDeltaX, FRefDeltaY: TFloat;        // centre exact − référence, partie constante de δc
     FReference: TReferenceOrbit;           // sous FLock pendant un rendu
     FReferenceComputeCount: Integer;
+    FIsEscapedReferenceReusable: Boolean;
     function TryTakeJob(out Job: TTileJob): Boolean;
     function ProcessJob(const Job: TTileJob): Boolean;
     function ProcessRustJob(const Job: TTileJob): Boolean;
     function ProcessReferenceJob(const Job: TTileJob): Boolean;
+    class function ReferenceMaxIter(MaxIter: Integer): Integer;
     procedure InstallReference(Generation: Integer; const RefX, RefY: THighFloat; const Orbit: TOrbit;
-      FracWords: Integer);
+      FracWords, OrbitMaxIter: Integer);
     function PixelValue(X, Y: Integer): Single;
     function IsReferenceReusable(const V: TViewport; Formula: TFractalFormula): Boolean;
     function CurrentRustKernel: TRustKernel;
@@ -133,6 +137,8 @@ type
     property Buffer: TIterationBuffer read FBuffer;
     property Kernel: TEngineKernelType read FKernel write FKernel;
     property RustKernel: TRustKernel read FRustKernel write FRustKernel;
+    // rendu HD par bandes : une référence échappée sert aussi aux bandes suivantes de même largeur
+    property IsEscapedReferenceReusable: Boolean read FIsEscapedReferenceReusable write FIsEscapedReferenceReusable;
     property ReferenceComputeCount: Integer read GetReferenceComputeCount;   // tâches référence installées
     property ReferenceLength: Integer read GetReferenceLength;               // points de la dernière référence
   end;
@@ -360,18 +366,21 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Écart 2 : même formule (classe et paramètres), même MaxIter, précision suffisante, référence à moins de
-// kReferenceReuseWidths largeurs du centre. Une référence échappée est recalculée pour redonner leur chance aux
-// candidats de la nouvelle vue.
+// Écart 2 : même formule (classe et paramètres), MaxIter de l'orbite (marge comprise) au moins égal à celui de la
+// formule, précision suffisante, référence à moins de kReferenceReuseWidths largeurs du centre. Une référence
+// échappée est recalculée pour redonner leur chance aux candidates de la nouvelle vue, sauf si
+// IsEscapedReferenceReusable (bandes du rendu HD) et que la largeur de vue n'a pas changé.
 function TRenderEngine.IsReferenceReusable(const V: TViewport; Formula: TFractalFormula): Boolean;
 var
   I: Integer;
   MaxDistance: TFloat;
 begin
   Result := False;
-  if (FReference.Orbit = nil) or not FReference.IsFullLength then
+  if FReference.Orbit = nil then
     Exit;
-  if (FReference.FormulaClass <> Formula.ClassType) or (FReference.MaxIter <> Formula.MaxIter) then
+  if not FReference.IsFullLength and not (FIsEscapedReferenceReusable and (FReference.Width = V.Width)) then
+    Exit;
+  if (FReference.FormulaClass <> Formula.ClassType) or (FReference.MaxIter < Formula.MaxIter) then
     Exit;
   if Length(FReference.Params) <> Formula.ParamCount then
     Exit;
@@ -637,6 +646,8 @@ end;
 // MaxIter, on essaie les autres points d'une grille kReferenceCandidateGrid x kReferenceCandidateGrid sur la vue
 // (à ±1/3 de la largeur et de la hauteur autour du centre), et on s'arrête au premier dont l'orbite ne s'échappe
 // pas. Sinon, on garde l'orbite la plus longue. Chaque calcul d'orbite s'interrompt dès que la génération change.
+// L'orbite va jusqu'à ReferenceMaxIter : la marge la garde réutilisable quand l'auto-itération relève MaxIter.
+// La recherche s'arrête dès qu'une orbite suffit au rendu courant (plus de MaxIter points), marge atteinte ou non.
 function TRenderEngine.ProcessReferenceJob(const Job: TTileJob): Boolean;
 var
   Generation, Words, CellCount, Candidate, Cell, Half: Integer;
@@ -644,6 +655,7 @@ var
   StepX, StepY: TFloat;
   CX, CY, BestX, BestY: THighFloat;
   Orbit, Best: TOrbit;
+  RefFormula: TFractalFormula;
 begin
   Result := False;
   Generation := Job.Generation;
@@ -660,31 +672,45 @@ begin
   Half := kReferenceCandidateGrid div 2;
   CellCount := kReferenceCandidateGrid * kReferenceCandidateGrid;
   Best := nil;
-  for Candidate := 0 to CellCount - 1 do
-  begin
-    // le candidat 0 est la case centrale, puis les autres cases dans l'ordre de la grille
-    Cell := (Candidate + CellCount div 2) mod CellCount;
-    CX := FViewport.ExactCenterX.AddFloat((Cell mod kReferenceCandidateGrid - Half) * StepX, Words);
-    CY := FViewport.ExactCenterY.AddFloat((Half - Cell div kReferenceCandidateGrid) * StepY, Words);
-    if not ComputeReferenceOrbit(FFormula, CX, CY, IsCancelled, Orbit) then
-      Exit;
-    if Length(Orbit) > Length(Best) then
+  // copie privée : la formule du rendu n'est jamais modifiée par un thread de calcul
+  RefFormula := FFormula.Clone;
+  try
+    RefFormula.MaxIter := ReferenceMaxIter(FFormula.MaxIter);
+    for Candidate := 0 to CellCount - 1 do
     begin
-      Best := Orbit;
-      BestX := CX;
-      BestY := CY;
+      // le candidat 0 est la case centrale, puis les autres cases dans l'ordre de la grille
+      Cell := (Candidate + CellCount div 2) mod CellCount;
+      CX := FViewport.ExactCenterX.AddFloat((Cell mod kReferenceCandidateGrid - Half) * StepX, Words);
+      CY := FViewport.ExactCenterY.AddFloat((Half - Cell div kReferenceCandidateGrid) * StepY, Words);
+      if not ComputeReferenceOrbit(RefFormula, CX, CY, IsCancelled, Orbit) then
+        Exit;
+      if Length(Orbit) > Length(Best) then
+      begin
+        Best := Orbit;
+        BestX := CX;
+        BestY := CY;
+      end;
+      if Length(Best) > FFormula.MaxIter then
+        Break;
     end;
-    if Length(Best) > FFormula.MaxIter then
-      Break;
+    InstallReference(Generation, BestX, BestY, Best, Words, RefFormula.MaxIter);
+  finally
+    RefFormula.Free;
   end;
-  InstallReference(Generation, BestX, BestY, Best, Words);
   Result := True;
 end;
 
 {------------------------------------------------------------------------------}
 
+class function TRenderEngine.ReferenceMaxIter(MaxIter: Integer): Integer;
+begin
+  Result := Min(Ceil(MaxIter * kReferenceIterHeadroom), kMaxMaxIter);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TRenderEngine.InstallReference(Generation: Integer; const RefX, RefY: THighFloat; const Orbit: TOrbit;
-  FracWords: Integer);
+  FracWords, OrbitMaxIter: Integer);
 var
   I: Integer;
 begin
@@ -705,9 +731,10 @@ begin
     SetLength(FReference.Params, FFormula.ParamCount);
     for I := 0 to High(FReference.Params) do
       FReference.Params[I] := FFormula.GetParam(I);
-    FReference.MaxIter := FFormula.MaxIter;
+    FReference.MaxIter := OrbitMaxIter;
     FReference.FracWords := FracWords;
-    FReference.IsFullLength := Length(Orbit) > FFormula.MaxIter;
+    FReference.Width := FViewport.Width;
+    FReference.IsFullLength := Length(Orbit) > OrbitMaxIter;
     FOrbit := Orbit;
     FDoubleOrbit := FReference.DoubleOrbit;
     FRefDeltaX := FViewport.ExactCenterX.Sub(RefX).ToFloat;

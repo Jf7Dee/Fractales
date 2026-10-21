@@ -156,6 +156,8 @@ begin
   Engine := TRenderEngine.Create(CpuCount);
   try
     Engine.Kernel := FKernel;
+    // les bandes partagent une seule orbite, même échappée : sinon chacune en recalculerait jusqu'à neuf
+    Engine.IsEscapedReferenceReusable := True;
     Writer := TPngWriter.Create(Stream, FSettings.Width, FSettings.Height);
     try
       if FLocationText <> '' then

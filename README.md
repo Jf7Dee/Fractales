@@ -46,7 +46,10 @@ précision proche » près de 1e-300.
 - Formules en zoom profond : Mandelbrot et Tricorn. Julia, Burning Ship et Multibrot gardent la limite actuelle
   (prévu plus tard).
 - Référence : le centre de la vue ou, si son orbite s'échappe tôt, la plus longue de 9 points de la vue (grille
-  3 × 3). Elle est réutilisée quand on se déplace ou zoome un peu.
+  3 × 3), calculée avec 25 % d'itérations en plus. Si elle ne s'échappe pas, elle est réutilisée par la vue
+  suivante (déplacement ou zoom) de même formule et mêmes paramètres, tant qu'elle reste à moins de deux largeurs
+  de vue du centre, que sa précision suffit et que MaxIter ne dépasse pas sa marge. Entre les bandes du rendu HD
+  (même largeur de vue), une orbite échappée est elle aussi réutilisée.
 - Les rendus profonds sont plus lents : plus d'itérations, plus l'orbite de référence.
 - Les lieux (`.frac`, PNG) gardent le centre avec tous ses chiffres utiles ; les anciens fichiers se relisent à
   l'identique.
