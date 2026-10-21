@@ -11,9 +11,8 @@ DLL appelée par l'application Delphi quand on choisit « Moteur : Rust ». Mêm
 - `fk_compute_row_perturbed(formula, params, param_count, max_iter, ref_orbit, ref_len, dcx0, ddx, dcy, count,
   out) -> i32` : palier 2 (zoom profond), pixels d'écart `(dcx0 + i·ddx, dcy)` à la référence, en f64 scalaire.
 - `ref_orbit` : orbite de référence Z0 = 0, Z1, ... en f64, x et y alternés (`2·ref_len` valeurs), au moins
-  deux points. Même
-  algorithme que `IteratePerturbed` dans `src\Fractal.Formulas.pas` (rebasage compris), pour Mandelbrot et
-  Tricorn seulement.
+  deux points. Même algorithme que `IteratePerturbed` dans `src\Fractal.Formulas.pas` (rebasage compris), pour
+  Mandelbrot et Tricorn seulement.
 - Codes de retour : 0 succès, 1 formule inconnue, 2 nombre de paramètres incorrect, 3 argument invalide
   (pointeur nul, compte négatif, `ref_orbit` nul ou `ref_len < 2`), 4 erreur interne (panique rattrapée),
   5 formule sans perturbation (`fk_compute_row_perturbed` seulement).

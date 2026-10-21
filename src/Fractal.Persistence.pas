@@ -77,7 +77,7 @@ const
   kMinCenterDigits = 18;        // chiffres écrits au minimum, comme les anciens fichiers
   kBitsPerCenterWord = 32;      // bits d'un mot de fraction de THighFloat
   kReadExtraWords = 2;          // mots que la relecture peut avoir en plus : marge + largeur vs pixels
-  kExtraCenterDigits = 3;      // chiffres au-delà de la taille de pixel
+  kExtraCenterDigits = 3;       // chiffres au-delà de la taille de pixel
   kWidthDigitsMargin = 10;      // log10 de 4e9 pixels : le lieu ignore la largeur en pixels
   kSectionFractal = 'Fractal';
   kSectionParams = 'Params';
@@ -299,7 +299,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function ParseCenter(const S: string; AWidth, Default: TFloat): THighFloat;   // repli sur Default si illisible
+function ParseCenter(const S: string; AWidth, ADefault: TFloat): THighFloat;   // repli sur ADefault si illisible
 var
   Words: Integer;
   HalfUnit: TFloat;
@@ -314,7 +314,7 @@ begin
     Result := Result.AddFloat(HalfUnit, Words + 1).WithFracWords(Words);
   end
   else
-    Result := THighFloat.FromFloat(Default, Words);
+    Result := THighFloat.FromFloat(ADefault, Words);
 end;
 
 {------------------------------------------------------------------------------}

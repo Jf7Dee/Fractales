@@ -53,7 +53,8 @@ type
   end;
 
 const
-  // les fractales vivent dans |c| < 4 ; au-delà, le centre est borné pour que le mot entier de THighFloat ne déborde jamais
+  // les fractales vivent dans |c| < 4 ; au-delà, le centre est borné pour que le mot entier de THighFloat ne
+  // déborde jamais
   kMaxCenterCoordinate = 1e6;
 
 const
@@ -74,7 +75,8 @@ uses
   Math;
 
 const
-  kMakeMinWords = 4;                          // mots de fraction de MakeViewport : contient exactement tout Extended avec |x| >= 2^-64
+  // mots de fraction de MakeViewport : contient exactement tout Extended avec |x| >= 2^-64
+  kMakeMinWords = 4;
   kLimitUlps = 64;                            // en dessous de 64 ulps par pixel, l'image se pixelise
   kWarningFactor = 8;
   kPerturbationLimit = 1e-300;                // taille de pixel minimale du palier 2 (perturbation)

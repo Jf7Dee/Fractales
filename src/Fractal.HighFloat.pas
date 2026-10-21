@@ -10,14 +10,14 @@ uses
 type
   TFloat = Extended;
 
-  TWordArray = array of Cardinal;
+  THighWords = array of Cardinal;
 
   // Réel à virgule fixe, signe + grandeur : FWords[0] = partie entière, FWords[1..FracWords] = fraction
   // (poids fort d'abord). Valeur immuable : aucune opération ne modifie ses opérandes ni un tableau partagé.
   THighFloat = record
   private
     FIsNegative: Boolean;
-    FWords: TWordArray;
+    FWords: THighWords;
   public
     class function Zero(AFracWords: Integer): THighFloat; static;
     class function FromFloat(Value: TFloat; AFracWords: Integer): THighFloat; static;
@@ -42,10 +42,13 @@ implementation
 const
   kWordBits = 32;
   kWordBase = 4294967296.0;                   // 2^32
+  kWordBaseInteger: UInt64 = 4294967296;      // 2^32, pour le calcul entier
+  kWordMask = $FFFFFFFF;                      // mot de poids faible d'un UInt64
   kMantissaBits = 64;                         // mantisse d'un Extended
   kMinFracWords = 2;
   kExtraBits = 64;                            // bits de garde au-delà de la taille de pixel
   kMaxExponent10 = 10000;                     // exposant décimal toléré par TryParse
+  kMaxExponentDigits = 6;                     // chiffres d'exposant lus par TryParse : au-delà, hors kMaxExponent10
   kMaxIntegerDigits = 10;                     // 2^32 - 1 = 4294967295
   kRoundDigit = 5;
 
@@ -66,7 +69,7 @@ end;
 {------------------------------------------------------------------------------}
 
 // Copie de A sur N mots (complétée par des zéros ou tronquée) ; toujours un tableau neuf.
-function PadWords(const A: TWordArray; N: Integer): TWordArray;
+function PadWords(const A: THighWords; N: Integer): THighWords;
 var
   I: Integer;
 begin
@@ -77,7 +80,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function IsZeroMagnitude(const A: TWordArray): Boolean;
+function IsZeroMagnitude(const A: THighWords): Boolean;
 var
   I: Integer;
 begin
@@ -91,7 +94,7 @@ end;
 {------------------------------------------------------------------------------}
 
 // A et B ont le même nombre de mots.
-function CompareMagnitude(const A, B: TWordArray): Integer;
+function CompareMagnitude(const A, B: THighWords): Integer;
 var
   I: Integer;
 begin
@@ -110,7 +113,7 @@ end;
 {------------------------------------------------------------------------------}
 
 // A et B ont le même nombre de mots. Lève EOverflow si la retenue sort de la partie entière.
-function AddMagnitude(const A, B: TWordArray): TWordArray;
+function AddMagnitude(const A, B: THighWords): THighWords;
 var
   I: Integer;
   Sum, Carry: UInt64;
@@ -120,7 +123,7 @@ begin
   for I := High(A) downto 0 do
   begin
     Sum := UInt64(A[I]) + B[I] + Carry;
-    Result[I] := Cardinal(Sum and $FFFFFFFF);
+    Result[I] := Cardinal(Sum and kWordMask);
     Carry := Sum shr kWordBits;
   end;
   if Carry <> 0 then
@@ -130,7 +133,7 @@ end;
 {------------------------------------------------------------------------------}
 
 // A et B ont le même nombre de mots et A >= B.
-function SubMagnitude(const A, B: TWordArray): TWordArray;
+function SubMagnitude(const A, B: THighWords): THighWords;
 var
   I: Integer;
   Diff: Int64;
@@ -154,7 +157,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function MakeValue(IsNegative: Boolean; const AWords: TWordArray): THighFloat;
+function MakeValue(IsNegative: Boolean; const AWords: THighWords): THighFloat;
 begin
   Result.FWords := AWords;
   Result.FIsNegative := IsNegative and not IsZeroMagnitude(AWords);   // pas de zéro négatif
@@ -164,7 +167,7 @@ end;
 
 class function THighFloat.Zero(AFracWords: Integer): THighFloat;
 var
-  W: TWordArray;
+  W: THighWords;
 begin
   if AFracWords < 0 then
     RaiseBadFracWords;
@@ -176,7 +179,7 @@ end;
 
 class function THighFloat.FromFloat(Value: TFloat; AFracWords: Integer): THighFloat;
 var
-  W: TWordArray;
+  W: THighWords;
   N, B, Pos, E: Integer;
   M, Rem: TFloat;
   Hi, Lo: Int64;
@@ -224,7 +227,7 @@ var
   Digits: array of Byte;
   IntValue: Int64;
   Carry, T: UInt64;
-  W: TWordArray;
+  W: THighWords;
 begin
   Result := False;
   Value := Zero(Max(AFracWords, 0));
@@ -267,7 +270,7 @@ begin
     ExpDigits := 0;
     while (I <= Len) and (S[I] >= '0') and (S[I] <= '9') do
     begin
-      if ExpDigits < 6 then
+      if ExpDigits < kMaxExponentDigits then
         Exp10 := Exp10 * 10 + Ord(S[I]) - Ord('0');
       Inc(ExpDigits);
       Inc(I);
@@ -321,7 +324,7 @@ begin
     Carry := 0;                               // fraction décimale * 2^32 : la retenue finale est le mot suivant
     for K := High(Digits) downto 0 do
     begin
-      T := UInt64(Digits[K]) * 4294967296 + Carry;
+      T := UInt64(Digits[K]) * kWordBaseInteger + Carry;
       Digits[K] := Byte(T mod 10);
       Carry := T div 10;
     end;
@@ -352,7 +355,7 @@ end;
 function THighFloat.Add(const B: THighFloat): THighFloat;
 var
   N: Integer;
-  WA, WB: TWordArray;
+  WA, WB: THighWords;
 begin
   N := Max(FracWords, B.FracWords) + 1;
   WA := PadWords(FWords, N);
@@ -381,7 +384,7 @@ end;
 function THighFloat.Mul(const B: THighFloat): THighFloat;
 var
   F, N, I, J: Integer;
-  WA, WB, P, R: TWordArray;
+  WA, WB, P, R: THighWords;
   T, Carry: UInt64;
 begin
   F := Max(FracWords, B.FracWords);
@@ -395,7 +398,7 @@ begin
     for J := 0 to N - 1 do
     begin
       T := UInt64(WA[N - 1 - I]) * WB[N - 1 - J] + P[I + J] + Carry;
-      P[I + J] := Cardinal(T and $FFFFFFFF);
+      P[I + J] := Cardinal(T and kWordMask);
       Carry := T shr kWordBits;
     end;
     P[I + N] := Cardinal(Carry);
@@ -448,7 +451,7 @@ end;
 
 function THighFloat.ToString(Digits: Integer): string;
 var
-  Fr: TWordArray;
+  Fr: THighWords;
   Dg: array of Byte;
   I, K: Integer;
   Carry, T: UInt64;
@@ -465,7 +468,7 @@ begin
     for K := FracWords downto 1 do
     begin
       T := UInt64(Fr[K]) * 10 + Carry;
-      Fr[K] := Cardinal(T and $FFFFFFFF);
+      Fr[K] := Cardinal(T and kWordMask);
       Carry := T shr kWordBits;
     end;
     Dg[I] := Byte(Carry);
