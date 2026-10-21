@@ -6,6 +6,11 @@
 //   fk_compute_row(formula, params, param_count, max_iter, x0, dx, y, count, out) -> i32
 // Calcule `count` pixels de la ligne d'ordonnée y, d'abscisses x0 + i·dx ; out[i] reçoit la valeur lissée,
 // ou -1 pour un point intérieur.
+//   fk_compute_row_perturbed(formula, params, param_count, max_iter, ref_orbit, ref_len, dcx0, ddx, dcy, count,
+//                            out) -> i32   (version 2)
+// Zoom profond par perturbation : `count` pixels d'écart (dcx0 + i·ddx, dcy) au point de référence dont l'orbite
+// Z0 = 0, Z1, ... est donnée par ref_orbit = x0, y0, x1, y1, ... (2·ref_len valeurs). Mandelbrot et Tricorn
+// seulement ; même algorithme que IteratePerturbed dans src\Fractal.Formulas.pas.
 //
 // Compiler la DLL 32 bits :  cargo build --release --target i686-pc-windows-msvc
 
@@ -13,13 +18,14 @@ use std::f64::consts::LN_2;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use wide::*;
 
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 pub const FK_OK: i32 = 0;
 pub const FK_UNKNOWN_FORMULA: i32 = 1;
 pub const FK_BAD_PARAM_COUNT: i32 = 2;
 pub const FK_INVALID_ARGUMENT: i32 = 3;
 pub const FK_INTERNAL_ERROR: i32 = 4;
+pub const FK_UNSUPPORTED: i32 = 5; // formule sans perturbation demandée à fk_compute_row_perturbed
 
 const ESCAPE_RADIUS2: f64 = 65536.0; // rayon d'échappement 256, comme Fractal.Formulas
 const INSIDE: f32 = -1.0;
@@ -65,6 +71,11 @@ impl Formula {
     // Multibrot passe par exp, ln, atan2, cos et sin : calcul scalaire seulement.
     fn is_vectorizable(self) -> bool {
         !matches!(self, Formula::Multibrot { .. })
+    }
+
+    // TFractalFormula.SupportsPerturbation côté Delphi.
+    fn supports_perturbation(self) -> bool {
+        matches!(self, Formula::Mandelbrot | Formula::Tricorn)
     }
 }
 
@@ -222,6 +233,58 @@ fn iterate4_quadratic(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Perturbation (zoom profond) : calcul scalaire, mêmes opérations dans le même ordre que
+// TMandelbrotFormula.IteratePerturbed et TTricornFormula.IteratePerturbed.
+
+// Pixel d'écart (dcx, dcy) à la référence. `orbit` = x0, y0, x1, y1, ... avec Z0 = 0 ; au moins un point.
+fn iterate_perturbed(formula: Formula, max_iter: i32, orbit: &[f64], dcx: f64, dcy: f64) -> f32 {
+    let orbit_len = orbit.len() / 2;
+    let is_conjugate = matches!(formula, Formula::Tricorn);
+    let mut dx = 0.0_f64;
+    let mut dy = 0.0_f64;
+    let mut m: usize = 0;
+    let mut n: i32 = 0;
+    while n < max_iter {
+        let zx = orbit[2 * m] + dx;
+        let zy = orbit[2 * m + 1] + dy;
+        let r2 = zx * zx + zy * zy;
+        if r2 > ESCAPE_RADIUS2 {
+            return smooth_value(n, r2, LN_2);
+        }
+        if r2 < dx * dx + dy * dy || m == orbit_len - 1 {
+            // rebasage : la référence redevient Z0 = 0
+            dx = zx;
+            dy = zy;
+            m = 0;
+        }
+        let (ox, oy) = (orbit[2 * m], orbit[2 * m + 1]);
+        // δ' = 2·Z·δ + δ² + δc ; Tricorn : δ' = conj(2·Z·δ + δ²) + δc
+        let new_dx = 2.0 * (ox * dx - oy * dy) + dx * dx - dy * dy + dcx;
+        let cross = 2.0 * (ox * dy + oy * dx) + 2.0 * dx * dy;
+        let new_dy = if is_conjugate { -cross + dcy } else { cross + dcy };
+        dx = new_dx;
+        dy = new_dy;
+        m += 1;
+        n += 1;
+    }
+    INSIDE
+}
+
+fn compute_row_perturbed(
+    formula: Formula,
+    max_iter: i32,
+    orbit: &[f64],
+    dcx0: f64,
+    ddx: f64,
+    dcy: f64,
+    out: &mut [f32],
+) {
+    for (i, value) in out.iter_mut().enumerate() {
+        *value = iterate_perturbed(formula, max_iter, orbit, dcx0 + i as f64 * ddx, dcy);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 
 fn compute_row(formula: Formula, max_iter: i32, x0: f64, dx: f64, y: f64, is_simd: bool, out: &mut [f32]) {
     let pixel_x = |i: usize| x0 + i as f64 * dx;
@@ -264,17 +327,63 @@ pub unsafe extern "C" fn fk_compute_row(
         if param_count < 0 || max_iter < 0 || count < 0 || out.is_null() || (param_count > 0 && params.is_null()) {
             return FK_INVALID_ARGUMENT;
         }
-        let params: &[f64] = if param_count == 0 {
-            &[]
-        } else {
-            std::slice::from_raw_parts(params, param_count as usize)
-        };
-        let formula = match Formula::from_id(formula, params) {
+        let formula = match formula_from_raw(formula, params, param_count) {
             Ok(formula) => formula,
             Err(code) => return code,
         };
         let out = std::slice::from_raw_parts_mut(out, count as usize);
         compute_row(formula, max_iter, x0, dx, y, true, out);
+        FK_OK
+    }));
+    result.unwrap_or(FK_INTERNAL_ERROR)
+}
+
+/// # Safety
+/// `params` désigne `param_count` f64 lisibles (`param_count` >= 0, `params` non nul si `param_count` > 0).
+unsafe fn formula_from_raw(id: i32, params: *const f64, param_count: i32) -> Result<Formula, i32> {
+    let params: &[f64] = if param_count == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(params, param_count as usize)
+    };
+    Formula::from_id(id, params)
+}
+
+/// # Safety
+/// `params` désigne `param_count` f64 lisibles, `ref_orbit` désigne 2·`ref_len` f64 lisibles et `out` désigne
+/// `count` f32 modifiables.
+#[no_mangle]
+pub unsafe extern "C" fn fk_compute_row_perturbed(
+    formula: i32,
+    params: *const f64,
+    param_count: i32,
+    max_iter: i32,
+    ref_orbit: *const f64,
+    ref_len: i32,
+    dcx0: f64,
+    ddx: f64,
+    dcy: f64,
+    count: i32,
+    out: *mut f32,
+) -> i32 {
+    // aucune panique ne doit traverser la frontière avec Delphi
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if param_count < 0 || max_iter < 0 || count < 0 || out.is_null() || (param_count > 0 && params.is_null()) {
+            return FK_INVALID_ARGUMENT;
+        }
+        if ref_orbit.is_null() || ref_len < 1 {
+            return FK_INVALID_ARGUMENT;
+        }
+        let formula = match formula_from_raw(formula, params, param_count) {
+            Ok(formula) => formula,
+            Err(code) => return code,
+        };
+        if !formula.supports_perturbation() {
+            return FK_UNSUPPORTED;
+        }
+        let orbit = std::slice::from_raw_parts(ref_orbit, 2 * ref_len as usize);
+        let out = std::slice::from_raw_parts_mut(out, count as usize);
+        compute_row_perturbed(formula, max_iter, orbit, dcx0, ddx, dcy, out);
         FK_OK
     }));
     result.unwrap_or(FK_INTERNAL_ERROR)
@@ -318,8 +427,8 @@ mod tests {
     }
 
     #[test]
-    fn abi_version_is_1() {
-        assert_eq!(fk_abi_version(), 1);
+    fn abi_version_is_2() {
+        assert_eq!(fk_abi_version(), 2);
     }
 
     #[test]
@@ -397,6 +506,142 @@ mod tests {
             assert_eq!(fk_compute_row(MANDELBROT, std::ptr::null(), 0, MAX_ITER, 0.0, 0.01, 0.0, -1, out.as_mut_ptr()), 3);
             assert_eq!(fk_compute_row(JULIA, std::ptr::null(), 2, MAX_ITER, 0.0, 0.01, 0.0, 4, out.as_mut_ptr()), 3);
             assert_eq!(fk_compute_row(MANDELBROT, std::ptr::null(), 0, MAX_ITER, 0.0, 0.01, 0.0, 0, out.as_mut_ptr()), 0);
+        }
+        assert!(out.iter().all(|v| *v == NOT_WRITTEN), "aucun pixel ne doit être écrit en cas d'erreur");
+    }
+
+    // Points d'intérêt de tests\TestFractalPerturbation.pas ; une ligne de 1 000 pixels de 1e-12 y mêle intérieur
+    // et extérieur (mesuré côté Delphi en précision Double : 38 % et 50 % de pixels extérieurs).
+    const PERTURBED_MAX_ITER: i32 = 10000;
+    const PERTURBED_PIXEL_SIZE: f64 = 1e-12;
+    const MIN_AGREEMENT: f64 = 0.98;
+
+    // Orbite Z0 = 0, Z1, ... de la référence (cx, cy), comme ComputeReferenceOrbit (ici en f64) : jusqu'à
+    // l'échappement inclus ou max_iter + 1 points ; x et y alternés.
+    fn reference_orbit(formula: Formula, max_iter: i32, cx: f64, cy: f64) -> Vec<f64> {
+        let mut orbit = Vec::new();
+        let mut x = 0.0_f64;
+        let mut y = 0.0_f64;
+        let mut k = 0;
+        loop {
+            orbit.push(x);
+            orbit.push(y);
+            if x * x + y * y > ESCAPE_RADIUS2 || k >= max_iter {
+                break;
+            }
+            let new_y = match formula {
+                Formula::Tricorn => -2.0 * x * y + cy,
+                _ => 2.0 * x * y + cy,
+            };
+            x = x * x - y * y + cx;
+            y = new_y;
+            k += 1;
+        }
+        orbit
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn call_perturbed(
+        formula: i32,
+        params: &[f64],
+        max_iter: i32,
+        orbit: &[f64],
+        dcx0: f64,
+        ddx: f64,
+        dcy: f64,
+        count: usize,
+    ) -> (i32, Vec<f32>) {
+        let mut out = vec![NOT_WRITTEN; count];
+        let code = unsafe {
+            fk_compute_row_perturbed(
+                formula,
+                params.as_ptr(),
+                params.len() as i32,
+                max_iter,
+                orbit.as_ptr(),
+                (orbit.len() / 2) as i32,
+                dcx0,
+                ddx,
+                dcy,
+                count as i32,
+                out.as_mut_ptr(),
+            )
+        };
+        (code, out)
+    }
+
+    #[test]
+    fn perturbed_matches_direct() {
+        let cases = [
+            (MANDELBROT, Formula::Mandelbrot, 0.390797755594254, -0.230650338697738),
+            (TRICORN, Formula::Tricorn, -0.104560602519813, 0.228469084632435),
+        ];
+        let half = (ROW_LENGTH / 2) as f64;
+        for &(id, formula, cx, cy) in &cases {
+            let orbit = reference_orbit(formula, PERTURBED_MAX_ITER, cx, cy);
+            let dcx0 = -half * PERTURBED_PIXEL_SIZE;
+            let (code, perturbed) =
+                call_perturbed(id, &[], PERTURBED_MAX_ITER, &orbit, dcx0, PERTURBED_PIXEL_SIZE, 0.0, ROW_LENGTH);
+            assert_eq!(code, FK_OK);
+            let mut agreeing = 0;
+            let mut outside = 0;
+            for (i, value) in perturbed.iter().enumerate() {
+                let direct = iterate(formula, PERTURBED_MAX_ITER, cx + (i as f64 - half) * PERTURBED_PIXEL_SIZE, cy);
+                if (direct < 0.0) == (*value < 0.0) {
+                    agreeing += 1;
+                }
+                if direct >= 0.0 {
+                    outside += 1;
+                }
+            }
+            assert!(outside > 0 && outside < ROW_LENGTH, "{:?} : la ligne doit mêler intérieur et extérieur", formula);
+            assert!(
+                agreeing as f64 >= MIN_AGREEMENT * ROW_LENGTH as f64,
+                "{:?} : {} verdicts communs sur {}",
+                formula,
+                agreeing,
+                ROW_LENGTH
+            );
+        }
+    }
+
+    #[test]
+    fn perturbed_error_codes() {
+        let orbit = reference_orbit(Formula::Mandelbrot, MAX_ITER, -0.75, 0.1);
+        let (dcx0, ddx) = (0.0, PERTURBED_PIXEL_SIZE);
+        assert_eq!(call_perturbed(99, &[], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_UNKNOWN_FORMULA);
+        assert_eq!(call_perturbed(MANDELBROT, &[1.0], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_BAD_PARAM_COUNT);
+        assert_eq!(call_perturbed(JULIA, &[0.0, 0.0], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_UNSUPPORTED);
+        assert_eq!(call_perturbed(MULTIBROT, &[3.0], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_UNSUPPORTED);
+        assert_eq!(call_perturbed(BURNING_SHIP, &[], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_UNSUPPORTED);
+        assert_eq!(call_perturbed(MANDELBROT, &[], MAX_ITER, &[], dcx0, ddx, 0.0, 4).0, FK_INVALID_ARGUMENT);
+        let mut out = [NOT_WRITTEN; 4];
+        unsafe {
+            let null_orbit: *const f64 = std::ptr::null();
+            let null_params: *const f64 = std::ptr::null();
+            let null_out: *mut f32 = std::ptr::null_mut();
+            let p = out.as_mut_ptr();
+            assert_eq!(
+                fk_compute_row_perturbed(MANDELBROT, null_params, 0, MAX_ITER, null_orbit, 2, dcx0, ddx, 0.0, 4, p),
+                FK_INVALID_ARGUMENT
+            );
+            let o = orbit.as_ptr();
+            assert_eq!(
+                fk_compute_row_perturbed(MANDELBROT, null_params, 0, MAX_ITER, o, 0, dcx0, ddx, 0.0, 4, p),
+                FK_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                fk_compute_row_perturbed(MANDELBROT, null_params, 0, -1, o, 2, dcx0, ddx, 0.0, 4, p),
+                FK_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                fk_compute_row_perturbed(MANDELBROT, null_params, 0, MAX_ITER, o, 2, dcx0, ddx, 0.0, 4, null_out),
+                FK_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                fk_compute_row_perturbed(MANDELBROT, null_params, 0, MAX_ITER, o, 2, dcx0, ddx, 0.0, 0, p),
+                FK_OK
+            );
         }
         assert!(out.iter().all(|v| *v == NOT_WRITTEN), "aucun pixel ne doit être écrit en cas d'erreur");
     }

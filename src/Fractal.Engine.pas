@@ -62,6 +62,7 @@ type
       TReferenceOrbit = record
         ExactX, ExactY: THighFloat;
         Orbit: TOrbit;
+        DoubleOrbit: TDoubleOrbit;   // la même en Double pour la DLL Rust, construite une fois au besoin
         FormulaClass: TClass;
         Params: array of Double;
         MaxIter: Integer;
@@ -96,6 +97,7 @@ type
     FIsPerturbation: Boolean;              // palier figé au début du rendu courant
     FIsReferenceReady: Boolean;            // sous FLock : tant qu'il est faux, aucune tuile n'est éligible
     FOrbit: TOrbit;                        // orbite de référence des tuiles du rendu courant
+    FDoubleOrbit: TDoubleOrbit;            // FOrbit en Double, en mode Rust seulement
     FRefDeltaX, FRefDeltaY: TFloat;        // centre exact − référence, partie constante de δc
     FReference: TReferenceOrbit;           // sous FLock pendant un rendu
     FReferenceComputeCount: Integer;
@@ -332,10 +334,18 @@ begin
   // aucune tâche ne tourne plus : l'orbite et la référence gardée se lisent sans verrou
   FIsPerturbation := IsNewPerturbation;
   FOrbit := nil;
+  FDoubleOrbit := nil;
   IsReused := IsNewPerturbation and IsReferenceReusable(V, NewFormula);
   if IsReused then
   begin
     FOrbit := FReference.Orbit;
+    if NewKernel = ekRust then
+    begin
+      // orbite installée en mode Delphi : convertie une seule fois, puis gardée avec elle
+      if FReference.DoubleOrbit = nil then
+        FReference.DoubleOrbit := MakeDoubleOrbit(FReference.Orbit);
+      FDoubleOrbit := FReference.DoubleOrbit;
+    end;
     FRefDeltaX := V.ExactCenterX.Sub(FReference.ExactX).ToFloat;
     FRefDeltaY := V.ExactCenterY.Sub(FReference.ExactY).ToFloat;
   end;
@@ -599,8 +609,18 @@ begin
       end;
       if Job.Generation <> FGeneration then
         Exit;
-      P := FViewport.PixelToComplex(RunStart, Y);
-      FActiveRustKernel.ComputeRow(FFormula, P.X, DX, P.Y, Count, @Values[0]);
+      if FIsPerturbation then
+      begin
+        // δc du premier pixel de la suite, comme PixelValue ; PixelOffset tient compte de l'axe imaginaire qui monte
+        P := FViewport.PixelOffset(RunStart, Y);
+        FActiveRustKernel.ComputeRowPerturbed(FFormula, FDoubleOrbit, FRefDeltaX + P.X, DX, FRefDeltaY + P.Y, Count,
+          @Values[0]);
+      end
+      else
+      begin
+        P := FViewport.PixelToComplex(RunStart, Y);
+        FActiveRustKernel.ComputeRow(FFormula, P.X, DX, P.Y, Count, @Values[0]);
+      end;
       for I := 0 to Count - 1 do
         FBuffer.WriteAnchor(RunStart + I * Job.Step, Y, Job.Step, Values[I]);
     end;
@@ -676,6 +696,11 @@ begin
     FReference.ExactX := RefX;
     FReference.ExactY := RefY;
     FReference.Orbit := Orbit;
+    // orbite en Double pour la DLL : une fois par orbite installée, jamais par tuile
+    if FActiveKernel = ekRust then
+      FReference.DoubleOrbit := MakeDoubleOrbit(Orbit)
+    else
+      FReference.DoubleOrbit := nil;
     FReference.FormulaClass := FFormula.ClassType;
     SetLength(FReference.Params, FFormula.ParamCount);
     for I := 0 to High(FReference.Params) do
@@ -684,6 +709,7 @@ begin
     FReference.FracWords := FracWords;
     FReference.IsFullLength := Length(Orbit) > FFormula.MaxIter;
     FOrbit := Orbit;
+    FDoubleOrbit := FReference.DoubleOrbit;
     FRefDeltaX := FViewport.ExactCenterX.Sub(RefX).ToFloat;
     FRefDeltaY := FViewport.ExactCenterY.Sub(RefY).ToFloat;
     FIsReferenceReady := True;
@@ -806,11 +832,10 @@ end;
 
 function TRenderEngine.ResolveKernel(Formula: TFractalFormula; IsPerturbation: Boolean): TEngineKernelType;
 begin
-  // la perturbation ne tourne encore qu'en Delphi
-  if IsPerturbation then
-    Exit(ekDelphi);
-  // la DLL par défaut n'est chargée que si le noyau Rust est demandé
-  if (FKernel = ekRust) and (Formula.KernelId <> kKernelNone) and CurrentRustKernel.IsAvailable then
+  // la DLL par défaut n'est chargée que si le noyau Rust est demandé ; une DLL de version 1 laisse le palier 2
+  // au moteur Delphi
+  if (FKernel = ekRust) and (Formula.KernelId <> kKernelNone) and CurrentRustKernel.IsAvailable
+    and (not IsPerturbation or CurrentRustKernel.HasPerturbation) then
     Result := ekRust
   else
     Result := ekDelphi;

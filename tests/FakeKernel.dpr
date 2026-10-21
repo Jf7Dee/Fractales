@@ -2,6 +2,8 @@
 
 // DLL de substitution pour les tests : mêmes exports que la DLL Rust (kernel-rust), mais calculée par
 // Fractal.Formulas. Elle permet de vérifier le chargement et le moteur en mode Rust sur une machine sans Rust.
+// Compilée avec FAKE_ABI1 (build.sh tests → FakeKernelAbi1.dll), elle imite une DLL de version 1 : sans
+// fk_compute_row_perturbed.
 
 uses
   SysUtils,
@@ -10,12 +12,20 @@ uses
   Fractal.Formulas in '..\src\Fractal.Formulas.pas';
 
 const
+{$IFDEF FAKE_ABI1}
   kAbiVersion = 1;
+{$ELSE}
+  kAbiVersion = 2;
+{$ENDIF}
   kOk = 0;
   kUnknownFormula = 1;
   kBadParamCount = 2;
   kInvalidArgument = 3;
   kInternalError = 4;
+  kUnsupported = 5;
+
+function CreateFormula(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
+  out F: TFractalFormula): Integer; forward;
 
 {------------------------------------------------------------------------------}
 
@@ -29,35 +39,21 @@ end;
 function fk_compute_row(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer; X0, DX, Y: Double;
   Count: Integer; Output: PSingle): Integer; cdecl;
 var
-  FormulaClass: TFractalFormulaClass;
   F: TFractalFormula;
   I: Integer;
 begin
   if (ParamCount < 0) or (MaxIter < 0) or (Count < 0) or (Output = nil) or ((ParamCount > 0) and (Params = nil)) then
     Exit(kInvalidArgument);
-  FormulaClass := nil;
-  for I := 0 to FormulaClassCount - 1 do
-    if FormulaClassAt(I).KernelId = Formula then
-      FormulaClass := FormulaClassAt(I);
-  if FormulaClass = nil then
-    Exit(kUnknownFormula);
   try
-    F := FormulaClass.Create;
+    Result := CreateFormula(Formula, Params, ParamCount, MaxIter, F);
+    if Result <> kOk then
+      Exit;
     try
-      if ParamCount <> F.ParamCount then
-        Exit(kBadParamCount);
-      for I := 0 to ParamCount - 1 do
-      begin
-        F.SetParam(I, Params^);
-        Inc(Params);
-      end;
-      F.MaxIter := MaxIter;
       for I := 0 to Count - 1 do
       begin
         Output^ := F.Iterate(X0 + I * DX, Y);
         Inc(Output);
       end;
-      Result := kOk;
     finally
       F.Free;
     end;
@@ -66,7 +62,95 @@ begin
   end;
 end;
 
+{------------------------------------------------------------------------------}
+
+// Formule de la DLL Rust d'identifiant Formula, paramètres et MaxIter réglés ; F = nil si le code n'est pas kOk.
+function CreateFormula(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
+  out F: TFractalFormula): Integer;
+var
+  FormulaClass: TFractalFormulaClass;
+  I: Integer;
+begin
+  F := nil;
+  FormulaClass := nil;
+  for I := 0 to FormulaClassCount - 1 do
+    if FormulaClassAt(I).KernelId = Formula then
+      FormulaClass := FormulaClassAt(I);
+  if FormulaClass = nil then
+    Exit(kUnknownFormula);
+  F := FormulaClass.Create;
+  try
+    if ParamCount <> F.ParamCount then
+    begin
+      FreeAndNil(F);
+      Exit(kBadParamCount);
+    end;
+    for I := 0 to ParamCount - 1 do
+    begin
+      F.SetParam(I, Params^);
+      Inc(Params);
+    end;
+    F.MaxIter := MaxIter;
+    Result := kOk;
+  except
+    FreeAndNil(F);
+    raise;
+  end;
+end;
+
+{$IFNDEF FAKE_ABI1}
+
+{------------------------------------------------------------------------------}
+
+// Même contrat que fk_compute_row_perturbed de kernel-rust : RefOrbit = x0, y0, x1, y1, ... (2·RefLength valeurs).
+// L'orbite en Double est relue en TOrbit et chaque pixel passe par IteratePerturbed.
+function fk_compute_row_perturbed(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
+  RefOrbit: PDouble; RefLength: Integer; DCX0, DDX, DCY: Double; Count: Integer; Output: PSingle): Integer; cdecl;
+var
+  F: TFractalFormula;
+  Orbit: TOrbit;
+  I: Integer;
+  DCX: Double;
+begin
+  if (ParamCount < 0) or (MaxIter < 0) or (Count < 0) or (Output = nil) or ((ParamCount > 0) and (Params = nil))
+    or (RefOrbit = nil) or (RefLength < 1) then
+    Exit(kInvalidArgument);
+  try
+    Result := CreateFormula(Formula, Params, ParamCount, MaxIter, F);
+    if Result <> kOk then
+      Exit;
+    try
+      if not F.SupportsPerturbation then
+        Exit(kUnsupported);
+      SetLength(Orbit, RefLength);
+      for I := 0 to RefLength - 1 do
+      begin
+        Orbit[I].X := RefOrbit^;
+        Inc(RefOrbit);
+        Orbit[I].Y := RefOrbit^;
+        Inc(RefOrbit);
+      end;
+      for I := 0 to Count - 1 do
+      begin
+        // arrondi en Double comme dans la DLL Rust et dans TestFakeKernelPerturbedMatchesDelphi
+        DCX := DCX0 + I * DDX;
+        Output^ := F.IteratePerturbed(Orbit, RefLength, DCX, DCY);
+        Inc(Output);
+      end;
+    finally
+      F.Free;
+    end;
+  except
+    Result := kInternalError;
+  end;
+end;
+
+{$ENDIF}
+
 exports
+{$IFNDEF FAKE_ABI1}
+  fk_compute_row_perturbed,
+{$ENDIF}
   fk_abi_version,
   fk_compute_row;
 
