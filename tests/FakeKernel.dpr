@@ -5,6 +5,7 @@
 
 uses
   SysUtils,
+  Fractal.HighFloat in '..\src\Fractal.HighFloat.pas',
   Fractal.Types in '..\src\Fractal.Types.pas',
   Fractal.Formulas in '..\src\Fractal.Formulas.pas';
 

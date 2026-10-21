@@ -580,7 +580,7 @@ procedure TNavigator.GoToView(const V: TViewport);
 begin
   // nouvelle vue ajoutée à l'historique, comme un zoom : Précédent y revient. Taille en pixels conservée.
   // La vue déjà affichée est ignorée : un second clic n'ajoute pas de doublon à l'historique.
-  if (V.CenterX = FViewport.CenterX) and (V.CenterY = FViewport.CenterY) and (V.Width = FViewport.Width) then
+  if V.Resized(FViewport.PixelWidth, FViewport.PixelHeight).IsSameView(FViewport) then
     Exit;
   TryCommit(V.Resized(FViewport.PixelWidth, FViewport.PixelHeight));
 end;

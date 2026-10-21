@@ -3,7 +3,8 @@
 interface
 
 uses
-  Windows, SysUtils, Classes, IniFiles, Math, ShlObj, Fractal.Types, Fractal.Formulas, Fractal.Palette;
+  Windows, SysUtils, Classes, IniFiles, Math, ShlObj, Fractal.Types, Fractal.HighFloat, Fractal.Formulas,
+  Fractal.Palette;
 
 const
   kLocationExtension = '.frac';
@@ -71,6 +72,7 @@ function FavoritesFolder: string;
 implementation
 
 const
+  kCenterWords = 4;   // mots de fraction du centre relu (provisoire : la tâche 3 le lit en haute précision)
   kSectionFractal = 'Fractal';
   kSectionParams = 'Params';
   kSectionColors = 'Colors';
@@ -224,8 +226,7 @@ end;
 
 procedure TFractalLocation.ApplyTo(var V: TViewport);
 begin
-  V.CenterX := FCenterX;
-  V.CenterY := FCenterY;
+  V.SetCenter(THighFloat.FromFloat(FCenterX, kCenterWords), THighFloat.FromFloat(FCenterY, kCenterWords));
   V.Width := FWidth;
 end;
 

@@ -3,7 +3,7 @@
 interface
 
 uses
-  TestFramework, Fractal.Types;
+  TestFramework, Fractal.Types, Fractal.HighFloat;
 
 type
   TTestViewport = class(TTestCase)
@@ -16,6 +16,8 @@ type
     procedure TestPannedMovesContent;
     procedure TestFittedToRect;
     procedure TestSubViewportMatchesFullPixels;
+    procedure TestDeepZoomKeepsPointFixed;
+    procedure TestViewportCopiesAreIndependent;
     procedure TestPrecisionState;
     procedure TestPrecisionStateWithDoubleEpsilon;
     procedure TestAutoMaxIter;
@@ -131,6 +133,48 @@ begin
   Full := V.PixelToComplex(7, 11);
   CheckEquals(Full.X, (A.X + B.X + C.X + D.X) / 4, kEps);
   CheckEquals(Full.Y, (A.Y + B.Y + C.Y + D.Y) / 4, kEps);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestDeepZoomKeepsPointFixed;
+const
+  kPX = 613;
+  kPY = 211;
+  kZoomCount = 70;
+  kWords = 8;
+var
+  V: TViewport;
+  I: Integer;
+  O: TComplexPoint;
+  PX, PY, QX, QY: THighFloat;
+begin
+  V := MakeViewport(-0.75, 0.1, 4, 800, 600);
+  O := V.PixelOffset(kPX, kPY);
+  PX := V.ExactCenterX.AddFloat(O.X, kWords);
+  PY := V.ExactCenterY.AddFloat(O.Y, kWords);
+  for I := 1 to kZoomCount do
+    V := V.ZoomedAt(kPX, kPY, 2);
+  O := V.PixelOffset(kPX, kPY);
+  QX := V.ExactCenterX.AddFloat(O.X, kWords);
+  QY := V.ExactCenterY.AddFloat(O.Y, kWords);
+  CheckTrue(Abs(QX.Sub(PX).ToFloat) < V.PixelSize, 'X');
+  CheckTrue(Abs(QY.Sub(PY).ToFloat) < V.PixelSize, 'Y');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestViewportCopiesAreIndependent;
+var
+  A, B: TViewport;
+  X0: THighFloat;
+begin
+  A := MakeViewport(-0.75, 0.1, 4, 800, 600);
+  B := A;
+  X0 := B.ExactCenterX;
+  A := A.Panned(5, 0);
+  CheckTrue(B.ExactCenterX.IsEqual(X0), 'B garde son centre exact');
+  CheckFalse(A.ExactCenterX.IsEqual(X0), 'A a bougé');
 end;
 
 {------------------------------------------------------------------------------}

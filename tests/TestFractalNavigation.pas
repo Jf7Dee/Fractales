@@ -3,7 +3,7 @@
 interface
 
 uses
-  Types, SysUtils, TestFramework, Fractal.Types, Fractal.Navigation;
+  Types, SysUtils, TestFramework, Fractal.Types, Fractal.HighFloat, Fractal.Navigation;
 
 type
   TTestNavigator = class(TTestCase)
@@ -45,6 +45,7 @@ type
     procedure TestHistoryChangeReportedAfterDragPan;
     procedure TestHistoryChangeReportedAfterKeyPan;
     procedure TestGoToViewAddsHistory;
+    procedure TestGoToViewDistinguishesDeepCenters;
     procedure TestGoToSameViewIsIgnored;
     procedure TestPinchZoomFactor;
     procedure TestZoomPreviewRect;
@@ -357,6 +358,33 @@ begin
   FNavigator.KeyPan(1, 0);
   CheckEquals(1, FHistoryChangeCount);
   CheckTrue(FIsBackSeen);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestGoToViewDistinguishesDeepCenters;
+const
+  kWords = 6;
+  kWidth = 1e-25;
+var
+  A, B: TViewport;
+  X0, X1, Y0: THighFloat;
+begin
+  CheckTrue(THighFloat.TryParse('-0.75', kWords, X0));
+  CheckTrue(THighFloat.TryParse('-0.749999999999999999999999', kWords, X1));
+  CheckTrue(THighFloat.TryParse('0.1', kWords, Y0));
+  A := MakeViewport(-0.75, 0.1, kWidth, 400, 300);
+  A.SetCenter(X0, Y0);
+  B := A;
+  B.SetCenter(X1, Y0);
+  CheckTrue(A.IsSameView(A), 'identique à elle-même');
+  CheckFalse(A.IsSameView(B), 'centres différents à 1e-24');
+  FNavigator.Reset(A);
+  FHistoryChangeCount := 0;
+  FNavigator.GoToView(A);
+  CheckEquals(0, FHistoryChangeCount, 'même vue ignorée');
+  FNavigator.GoToView(B);
+  CheckEquals(1, FHistoryChangeCount, 'vue distincte acceptée');
 end;
 
 {------------------------------------------------------------------------------}

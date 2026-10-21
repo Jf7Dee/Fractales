@@ -3,14 +3,14 @@
 interface
 
 uses
-  SysUtils;
+  SysUtils, Fractal.HighFloat;
 
 const
   kExtendedEpsilon = 1.0842021724855044e-19;  // 2^-63 : un ulp relatif en Extended (moteur Delphi)
   kDoubleEpsilon = 2.2204460492503131e-16;    // 2^-52 : un ulp relatif en Double (moteur Rust)
 
 type
-  TFloat = Extended;
+  TFloat = Fractal.HighFloat.TFloat;
 
   TComplexPoint = record
     X, Y: TFloat;
@@ -20,9 +20,16 @@ type
 
   // Fenêtre sur le plan complexe. Le pixel (PX, PY) a son centre en PX + 0,5 ; l'axe imaginaire monte.
   TViewport = record
-    CenterX, CenterY: TFloat;
+  private
+    FExactX, FExactY: THighFloat;
+    FCenterX, FCenterY: TFloat;   // approximations tenues à jour avec le centre exact
+    function WordsForPixelSize(NewPixelSize: TFloat): Integer;
+  public
     Width: TFloat;
     PixelWidth, PixelHeight: Integer;
+    procedure SetCenter(const X, Y: THighFloat);
+    function PixelOffset(PX, PY: TFloat): TComplexPoint;   // écart au centre exact, en TFloat
+    function IsSameView(const B: TViewport): Boolean;   // centre exact, largeur et taille en pixels
     function PixelSize: TFloat;
     function Height: TFloat;
     function Zoom: TFloat;
@@ -34,6 +41,10 @@ type
     function Resized(APixelWidth, APixelHeight: Integer): TViewport;
     function SubViewport(Supersample, Row0, Rows: Integer): TViewport;
     function PrecisionState(Epsilon: TFloat = kExtendedEpsilon): TPrecisionState;
+    property CenterX: TFloat read FCenterX;
+    property CenterY: TFloat read FCenterY;
+    property ExactCenterX: THighFloat read FExactX;
+    property ExactCenterY: THighFloat read FExactY;
   end;
 
 const
@@ -52,6 +63,7 @@ uses
   Math;
 
 const
+  kMinWords = 2;                              // mots de fraction au minimum (voir Fractal.HighFloat)
   kLimitUlps = 64;                            // en dessous de 64 ulps par pixel, l'image se pixelise
   kWarningFactor = 8;
   kInvariantPrecision = 18;
@@ -92,8 +104,8 @@ var
   S: TFloat;
 begin
   S := PixelSize;
-  Result.X := CenterX + (PX + 0.5 - PixelWidth / 2) * S;
-  Result.Y := CenterY - (PY + 0.5 - PixelHeight / 2) * S;
+  Result.X := FCenterX + (PX + 0.5 - PixelWidth / 2) * S;
+  Result.Y := FCenterY - (PY + 0.5 - PixelHeight / 2) * S;
 end;
 
 {------------------------------------------------------------------------------}
@@ -111,24 +123,27 @@ end;
 
 function TViewport.ZoomedAt(PX, PY, Factor: TFloat): TViewport;
 var
-  P: TComplexPoint;
+  D: TComplexPoint;
+  Words: Integer;
 begin
-  // le point sous (PX, PY) reste immobile
-  P := PixelToComplex(PX, PY);
+  // le point sous (PX, PY) reste immobile : nouveau centre = centre + D * (1 - 1 / Factor)
+  D := PixelOffset(PX, PY);
   Result := Self;
   Result.Width := Width / Factor;
-  Result.CenterX := P.X + (CenterX - P.X) / Factor;
-  Result.CenterY := P.Y + (CenterY - P.Y) / Factor;
+  Words := WordsForPixelSize(Result.PixelSize);
+  Result.SetCenter(FExactX.AddFloat(D.X * (1 - 1 / Factor), Words), FExactY.AddFloat(D.Y * (1 - 1 / Factor), Words));
 end;
 
 {------------------------------------------------------------------------------}
 
 function TViewport.Panned(DX, DY: Integer): TViewport;
+var
+  Words: Integer;
 begin
   // le contenu se déplace de (DX, DY) pixels
   Result := Self;
-  Result.CenterX := CenterX - DX * PixelSize;
-  Result.CenterY := CenterY + DY * PixelSize;
+  Words := WordsForPixelSize(PixelSize);
+  Result.SetCenter(FExactX.AddFloat(-DX * PixelSize, Words), FExactY.AddFloat(DY * PixelSize, Words));
 end;
 
 {------------------------------------------------------------------------------}
@@ -137,6 +152,7 @@ function TViewport.FittedToRect(X1, Y1, X2, Y2: Integer): TViewport;
 var
   T: Integer;
   C: TComplexPoint;
+  Words: Integer;
 begin
   if X1 > X2 then
   begin
@@ -152,11 +168,11 @@ begin
   end;
   if X2 - X1 < 1 then
     Exit(Self);
-  C := PixelToComplex((X1 + X2) / 2 - 0.5, (Y1 + Y2) / 2 - 0.5);
+  C := PixelOffset((X1 + X2) / 2 - 0.5, (Y1 + Y2) / 2 - 0.5);
   Result := Self;
-  Result.CenterX := C.X;
-  Result.CenterY := C.Y;
   Result.Width := (X2 - X1) * PixelSize;
+  Words := WordsForPixelSize(Result.PixelSize);
+  Result.SetCenter(FExactX.AddFloat(C.X, Words), FExactY.AddFloat(C.Y, Words));
 end;
 
 {------------------------------------------------------------------------------}
@@ -171,12 +187,17 @@ end;
 {------------------------------------------------------------------------------}
 
 function TViewport.SubViewport(Supersample, Row0, Rows: Integer): TViewport;
+var
+  Words: Integer;
+  DY: TFloat;
 begin
   // bande de lignes [Row0, Row0 + Rows) de l'image, suréchantillonnée Supersample x Supersample
+  DY := -(Row0 + Rows / 2 - PixelHeight / 2) * PixelSize;
   Result := Self;
   Result.PixelWidth := PixelWidth * Supersample;
   Result.PixelHeight := Rows * Supersample;
-  Result.CenterY := CenterY - (Row0 + Rows / 2 - PixelHeight / 2) * PixelSize;
+  Words := WordsForPixelSize(Result.PixelSize);
+  Result.SetCenter(FExactX.WithFracWords(Words), FExactY.AddFloat(DY, Words));
 end;
 
 {------------------------------------------------------------------------------}
@@ -196,13 +217,56 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function MakeViewport(ACenterX, ACenterY, AWidth: TFloat; APixelWidth, APixelHeight: Integer): TViewport;
+procedure TViewport.SetCenter(const X, Y: THighFloat);
 begin
-  Result.CenterX := ACenterX;
-  Result.CenterY := ACenterY;
+  FExactX := X;
+  FExactY := Y;
+  FCenterX := X.ToFloat;
+  FCenterY := Y.ToFloat;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TViewport.PixelOffset(PX, PY: TFloat): TComplexPoint;
+var
+  S: TFloat;
+begin
+  S := PixelSize;
+  Result.X := (PX + 0.5 - PixelWidth / 2) * S;
+  Result.Y := -(PY + 0.5 - PixelHeight / 2) * S;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TViewport.IsSameView(const B: TViewport): Boolean;
+begin
+  Result := FExactX.IsEqual(B.FExactX) and FExactY.IsEqual(B.FExactY) and (Width = B.Width)
+    and (PixelWidth = B.PixelWidth) and (PixelHeight = B.PixelHeight);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TViewport.WordsForPixelSize(NewPixelSize: TFloat): Integer;
+begin
+  // jamais moins de mots que le centre actuel ; une taille de pixel nulle ou négative n'ajoute rien
+  Result := Max(FExactX.FracWords, FExactY.FracWords);
+  if NewPixelSize > 0 then
+    Result := Max(Result, FracWordsForPixelSize(NewPixelSize));
+end;
+
+{------------------------------------------------------------------------------}
+
+function MakeViewport(ACenterX, ACenterY, AWidth: TFloat; APixelWidth, APixelHeight: Integer): TViewport;
+var
+  Words: Integer;
+begin
   Result.Width := AWidth;
   Result.PixelWidth := Max(1, APixelWidth);
   Result.PixelHeight := Max(1, APixelHeight);
+  Words := kMinWords;
+  if Result.PixelSize > 0 then
+    Words := FracWordsForPixelSize(Result.PixelSize);
+  Result.SetCenter(THighFloat.FromFloat(ACenterX, Words), THighFloat.FromFloat(ACenterY, Words));
 end;
 
 {------------------------------------------------------------------------------}
