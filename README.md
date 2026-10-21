@@ -26,8 +26,8 @@ La liste « Moteur » du panneau Navigation choisit qui calcule les pixels : le 
 DLL Rust `fractal_kernel.dll` (Double 64 bits, SIMD SSE2), placée à côté de `Fractales.exe`. La barre d'état
 indique le moteur et le temps de chaque rendu. Sans la DLL, la liste est grisée et l'application calcule en Delphi.
 
-En Rust, la limite de zoom arrive plus tôt (pixels d'environ 1e-13 contre 1e-16) : c'est la précision du Double.
-Le moteur choisi n'est pas enregistré dans les lieux.
+Hors zoom profond (calcul direct), en Rust, la limite de zoom arrive plus tôt (pixels d'environ 1e-13 contre
+1e-16) : c'est la précision du Double. Le moteur choisi n'est pas enregistré dans les lieux.
 
 Compiler la DLL : voir `kernel-rust\README.md`.
 
@@ -44,11 +44,11 @@ perturbation : terminé en … ms », « … : orbite de référence… » penda
 précision proche » près de 1e-300.
 
 - Formules en zoom profond : Mandelbrot et Tricorn. Julia, Burning Ship et Multibrot gardent la limite actuelle
-  (prévu plus tard, étape D).
+  (prévu plus tard).
 - Référence : le centre de la vue ou, si son orbite s'échappe tôt, la plus longue de 9 points de la vue (grille
   3 × 3). Elle est réutilisée quand on se déplace ou zoome un peu.
 - Les rendus profonds sont plus lents : plus d'itérations, plus l'orbite de référence.
-- Les lieux (`.frac`, PNG) gardent le centre avec tous ses chiffres (environ 48 pour un fichier peu profond) ; les
-  anciens fichiers se relisent à l'identique.
+- Les lieux (`.frac`, PNG) gardent le centre avec tous ses chiffres utiles ; les anciens fichiers se relisent à
+  l'identique.
 - Rust : la DLL doit être recompilée (ABI 2, nouvel export `fk_compute_row_perturbed`). Une ancienne DLL (ABI 1)
   fonctionne encore : rendus peu profonds en Rust, rendus profonds repris par Delphi.
