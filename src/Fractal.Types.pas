@@ -45,6 +45,7 @@ type
     function Resized(APixelWidth, APixelHeight: Integer): TViewport;
     function SubViewport(Supersample, Row0, Rows: Integer): TViewport;
     function PrecisionState(Epsilon: TFloat = kExtendedEpsilon): TPrecisionState;
+    function DeepPrecisionState: TPrecisionState;
     property CenterX: TFloat read FCenterX;
     property CenterY: TFloat read FCenterY;
     property ExactCenterX: THighFloat read FExactX;
@@ -75,6 +76,7 @@ const
   kMakeMinWords = 4;                          // mots de fraction de MakeViewport : contient exactement tout Extended avec |x| >= 2^-64
   kLimitUlps = 64;                            // en dessous de 64 ulps par pixel, l'image se pixelise
   kWarningFactor = 8;
+  kPerturbationLimit = 1e-300;                // taille de pixel minimale du palier 2 (perturbation)
   kInvariantPrecision = 18;
   kAutoIterBase = 250;
   kAutoIterScale = 150;
@@ -221,6 +223,19 @@ begin
   if PixelSize < MinSize then
     Result := psLimit
   else if PixelSize < MinSize * kWarningFactor then
+    Result := psWarning
+  else
+    Result := psOk;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TViewport.DeepPrecisionState: TPrecisionState;
+begin
+  // palier 2 : la perturbation travaille en Double sur les deltas, seule la plage d'exposant limite la taille de pixel
+  if PixelSize < kPerturbationLimit then
+    Result := psLimit
+  else if PixelSize < kPerturbationLimit * kWarningFactor then
     Result := psWarning
   else
     Result := psOk;

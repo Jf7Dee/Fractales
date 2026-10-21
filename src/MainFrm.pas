@@ -18,6 +18,10 @@ const
   kJuliaThreadCount = 2;
   kKeyZoomFactor = 2.0;
   kSmokeTimeoutMs = 30000;
+  kSmokeDeepPixelSize = 1e-30;
+  kPerturbationDoneText = '%s · perturbation : terminé en %d ms';
+  kPerturbationProgressText = '%s · perturbation : passe %d/%d   %d ms';
+  kPerturbationReferenceText = '%s · perturbation : orbite de référence…';
   kRenderPollMs = 20;
   // éditeur d'un paramètre de formule : libellé et champ sur une ligne, curseur sur toute la largeur en dessous
   kParamRowHeight = 56;
@@ -179,6 +183,7 @@ type
     procedure ColorizeBuffer(Engine: TRenderEngine; Bitmap: TBitmap);
     procedure SetPanelText(Index: Integer; const Text: string);
     procedure UpdateStatus;
+    function PerturbationStatusText(const S: TRenderStatus): string;
     procedure UpdateHistoryButtons;
     function WaitForRender(TimeoutMs: Cardinal): Boolean;
     procedure InitFormulaPanel;
@@ -291,6 +296,7 @@ begin
   InitColorPanel;
   InitFilePanel;
   InitKernelPanel;
+  UpdateKernelEpsilon;
   FView.OnResize := ViewResize;
 
   FNavigator.Reset(MakeViewport(FFormula.DefaultCenterX, FFormula.DefaultCenterY, FFormula.DefaultWidth,
@@ -539,6 +545,7 @@ procedure TMainForm.UpdateKernelEpsilon;
 begin
   // la limite de zoom suit le noyau réellement utilisé (une formule sans équivalent Rust reste en Delphi)
   FNavigator.Epsilon := TRenderEngine.GetEpsilon(FEngine.ResolveKernel(FFormula));
+  FNavigator.IsPerturbationAllowed := FFormula.SupportsPerturbation;
 end;
 
 {------------------------------------------------------------------------------}
@@ -706,21 +713,38 @@ begin
   SetPanelText(1, 'zoom ' + FormatFloat('0.00e+0', V.Zoom));
   SetPanelText(2, IntToStr(FFormula.MaxIter) + ' it.');
   S := FEngine.Status;
-  if S.IsComplete then
+  if S.IsPerturbation then
+    SetPanelText(3, PerturbationStatusText(S))
+  else if S.IsComplete then
     SetPanelText(3, Format('%s : terminé en %d ms', [fEngine.GetDisplayName(S.Kernel), S.ElapsedMs]))
   else
     SetPanelText(3, Format('%s : passe %d/%d   %d ms', [fEngine.GetDisplayName(S.Kernel), S.CurrentPass, S.PassCount,
       S.ElapsedMs]));
   Msg := FStatusMessage;
   // l'epsilon du navigateur suit le moteur choisi : une vue profonde en Delphi peut dépasser la limite de Rust
-  case V.PrecisionState(FNavigator.Epsilon) of
+  case FNavigator.PrecisionOf(V) of
     psWarning:
       Msg := 'Limite de précision proche. ' + Msg;
     psLimit:
       Msg := Format('Vue au-delà de la précision du moteur %s : revenez en arrière ou changez de moteur. ',
-        [FEngine.GetDisplayName(FEngine.ResolveKernel(FFormula))]) + Msg;
+        [FEngine.GetDisplayName(S.Kernel)]) + Msg;
   end;
   SetPanelText(4, Msg);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMainForm.PerturbationStatusText(const S: TRenderStatus): string;
+var
+  Name: string;
+begin
+  Name := FEngine.GetDisplayName(S.Kernel);
+  if S.IsReferencePending then
+    Result := Format(kPerturbationReferenceText, [Name])
+  else if S.IsComplete then
+    Result := Format(kPerturbationDoneText, [Name, S.ElapsedMs])
+  else
+    Result := Format(kPerturbationProgressText, [Name, S.CurrentPass, S.PassCount, S.ElapsedMs]);
 end;
 
 {------------------------------------------------------------------------------}
@@ -817,6 +841,21 @@ begin
       end
       else
         FSmokeLog.Add(RustKernelStatus + ' Étape ignorée.');
+      // zoom profond : (0 ; 1) est exactement représentable, taille de pixel 1e-30 hors de portée du palier 1
+      if not FFormula.SupportsPerturbation then
+        raise Exception.Create('zoom profond : formule sans perturbation');
+      FNavigator.GoToView(MakeViewport(0, 1, kSmokeDeepPixelSize * FNavigator.Viewport.PixelWidth,
+        FNavigator.Viewport.PixelWidth, FNavigator.Viewport.PixelHeight));
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu du zoom profond non terminé');
+      CheckSmokeStep('zoom profond');
+      if not FEngine.Status.IsPerturbation then
+        raise Exception.Create('le zoom profond n''a pas utilisé la perturbation');
+      FSmokeLog.Add(Format('Zoom profond OK : %d ms', [FEngine.Status.ElapsedMs]));
+      // retour à la vue précédente : les étapes suivantes en dépendent
+      FNavigator.GoBack;
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu après retour du zoom profond non terminé');
       // pincement simulé (les messages tactiles de Windows ne peuvent pas être fabriqués) : aperçu puis zoom x2
       Width0 := FNavigator.Viewport.Width;
       FNavigator.PinchGesture(100, 80, 100, True, False);

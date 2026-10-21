@@ -37,6 +37,9 @@ type
     procedure TestBackAndForward;
     procedure TestPrecisionLimitBlocksZoom;
     procedure TestDoubleEpsilonBlocksZoomEarlier;
+    procedure TestPerturbationAllowsZoomPastExtended;
+    procedure TestPerturbationLimitBlocksAt1e300;
+    procedure TestNoPerturbationKeepsTier1Limit;
     procedure TestZoomOutAllowedPastLimit;
     procedure TestResizeKeepsWidthWithoutHistory;
     procedure TestKeyPanMovesByTenthOfWidth;
@@ -260,6 +263,48 @@ begin
   FNavigator.ZoomCenter(1000);
   CheckTrue(FIsLimitHit, 'Double : zoom bloqué');
   CheckEquals(1e-9, FNavigator.Viewport.Width, 1e-21);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestPerturbationAllowsZoomPastExtended;
+var
+  I: Integer;
+begin
+  FNavigator.Reset(MakeViewport(0.5, 0, 400e-15, 400, 300));
+  FNavigator.IsPerturbationAllowed := True;
+  for I := 1 to 60 do
+  begin
+    FNavigator.ZoomCenter(2);
+    CheckFalse(FIsLimitHit, Format('zoom %d accepté', [I]));
+  end;
+  CheckTrue(FNavigator.Viewport.PixelSize < 1e-32);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestPerturbationLimitBlocksAt1e300;
+begin
+  FNavigator.Reset(MakeViewport(0.5, 0, 400 * 2e-300, 400, 300));
+  FNavigator.IsPerturbationAllowed := True;
+  FNavigator.ZoomCenter(4);
+  CheckTrue(FIsLimitHit, 'zoom bloqué');
+  FIsLimitHit := False;
+  FNavigator.ZoomCenter(0.5);
+  CheckFalse(FIsLimitHit, 'dézoom accepté');
+  CheckTrue(FNavigator.Viewport.PixelSize > 3e-300);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestNavigator.TestNoPerturbationKeepsTier1Limit;
+begin
+  // Julia : pas de perturbation, la limite du palier 1 s'applique comme avant
+  FNavigator.Reset(MakeViewport(0.5, 0, 1e-14, 400, 300));
+  FNavigator.IsPerturbationAllowed := False;
+  FNavigator.ZoomCenter(1000);
+  CheckTrue(FIsLimitHit);
+  CheckEquals(1e-14, FNavigator.Viewport.Width, 1e-28);
 end;
 
 {------------------------------------------------------------------------------}

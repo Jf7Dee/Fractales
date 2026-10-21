@@ -85,6 +85,7 @@ type
   private
     FViewport: TViewport;
     FEpsilon: TFloat;
+    FIsPerturbationAllowed: Boolean;
     FHistory: TViewHistory;
     FMode: TNavigationMode;
     FIsSelecting: Boolean;
@@ -134,10 +135,13 @@ type
     function CanGoBack: Boolean;
     function CanGoForward: Boolean;
     procedure NotifyJuliaPoint(X, Y: Integer);
+    function PrecisionOf(const V: TViewport): TPrecisionState;
     property Viewport: TViewport read FViewport;
     property Mode: TNavigationMode read FMode;
     // ulp relatif du noyau de calcul courant : fixe la limite de zoom
     property Epsilon: TFloat read FEpsilon write FEpsilon;
+    // vrai si la formule courante admet la perturbation : la limite de zoom est alors celle du palier 2
+    property IsPerturbationAllowed: Boolean read FIsPerturbationAllowed write FIsPerturbationAllowed;
     property History: TViewHistory read FHistory;
     property OnViewChanged: TViewChangedEvent read FOnViewChanged write FOnViewChanged;
     property OnSelectionChanged: TNotifyEvent read FOnSelectionChanged write FOnSelectionChanged;
@@ -384,7 +388,7 @@ function TNavigator.TryCommit(const V: TViewport): Boolean;
 begin
   // seul un zoom plus profond est refusé : une vue déjà au-delà de la limite (moteur Rust choisi en profondeur,
   // lieu profond chargé) doit pouvoir être quittée
-  if (V.PrecisionState(FEpsilon) = psLimit) and (V.PixelSize < FViewport.PixelSize) then
+  if (PrecisionOf(V) = psLimit) and (V.PixelSize < FViewport.PixelSize) then
   begin
     if Assigned(FOnPrecisionLimit) then
       FOnPrecisionLimit(Self);
@@ -395,6 +399,16 @@ begin
   DoViewChanged(vckReset, 0, 0);
   DoHistoryChanged;
   Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TNavigator.PrecisionOf(const V: TViewport): TPrecisionState;
+begin
+  if FIsPerturbationAllowed then
+    Result := V.DeepPrecisionState
+  else
+    Result := V.PrecisionState(FEpsilon);
 end;
 
 {------------------------------------------------------------------------------}

@@ -23,6 +23,7 @@ type
     procedure TestOnePixelViewportKeepsDefaultCenter;
     procedure TestPrecisionState;
     procedure TestPrecisionStateWithDoubleEpsilon;
+    procedure TestDeepPrecisionState;
     procedure TestAutoMaxIter;
     procedure TestInvariantFloatRoundTrip;
   end;
@@ -233,6 +234,17 @@ begin
   CheckEquals(Ord(psOk), Ord(StandardViewport.PrecisionState));
   CheckEquals(Ord(psWarning), Ord(MakeViewport(0.5, 0, 1e-14, 400, 300).PrecisionState));
   CheckEquals(Ord(psLimit), Ord(MakeViewport(0.5, 0, 1e-17, 400, 300).PrecisionState));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestViewport.TestDeepPrecisionState;
+begin
+  // palier 2 : limite à 1e-300 par pixel, avertissement sous 8e-300, quel que soit le centre
+  CheckEquals(Ord(psOk), Ord(MakeViewport(0.5, 0, 400e-30, 400, 300).DeepPrecisionState));
+  CheckEquals(Ord(psWarning), Ord(MakeViewport(0.5, 0, 400 * 4e-300, 400, 300).DeepPrecisionState));
+  CheckEquals(Ord(psLimit), Ord(MakeViewport(0.5, 0, 400e-301, 400, 300).DeepPrecisionState));
+  CheckEquals(Ord(psOk), Ord(MakeViewport(2, 3, 400e-30, 400, 300).DeepPrecisionState));
 end;
 
 {------------------------------------------------------------------------------}

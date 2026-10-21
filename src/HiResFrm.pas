@@ -222,6 +222,8 @@ end;
 procedure THiResForm.StartRender;
 var
   Settings: THiResSettings;
+  Supersampled: TViewport;
+  IsAtLimit: Boolean;
 begin
   if IsRunning then
     Exit;
@@ -229,8 +231,13 @@ begin
     FOnRequestSnapshot(Self);
   if (FFormula = nil) or not ReadSettings(Settings) then
     Exit;
-  if (FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample)
-    .PrecisionState(TRenderEngine.GetEpsilon(FKernel)) = psLimit)
+  Supersampled := FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample);
+  // même règle que le navigateur : avec la perturbation, seule la limite du palier 2 compte
+  if FFormula.SupportsPerturbation then
+    IsAtLimit := Supersampled.DeepPrecisionState = psLimit
+  else
+    IsAtLimit := Supersampled.PrecisionState(TRenderEngine.GetEpsilon(FKernel)) = psLimit;
+  if IsAtLimit
     and (MessageDlg('Ce rendu dépasse la limite de précision : l''image sera pixelisée. Rendre quand même ?',
       mtWarning, [mbYes, mbNo], 0) <> mrYes) then
     Exit;
