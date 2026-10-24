@@ -15,16 +15,29 @@ const
   kBurningShipFavouriteCenterX = '-1.97764332392038208691244765792158434937619029395172813310368221039931841';
   kBurningShipFavouriteCenterY = '0.00000040943449145950818875937261165274938022740420622961170582366426700';
   kBurningShipFavouriteWidth = 2.69976921794239817E-14;
-  // Le centre de JF est à 100 % extérieur à sa largeur (test sans valeur) : on prend le point du bord sur la verticale
-  // qui descend de ce centre vers l'axe. Bissection exacte (THighFloat, 100 pas, MaxIter kBurningShipBordMaxIter)
-  // entre un point intérieur (cy du favori x 5/60) et un point extérieur (x 7/60), cx inchangé. Au-delà de quelques
-  // centaines d'itérations, les points du bord sont chaotiques : l'Extended ne suit plus la vérité exacte (écarts dès
-  // 1000 itérations), d'où ce MaxIter bas. Les vues d'essai sont centrées ici : environ 55 % de pixels extérieurs,
-  // à la largeur du favori comme 10^6 fois plus étroit.
-  kBurningShipFavouriteBordY = '0.00000004159599724145695425193358193503';
-  kBurningShipBordMaxIter = 300;
+  kBurningShipFavouriteMaxIter = 6388;   // itérations du fichier favori de JF
+  // Point du bord près de l'axe : le centre de JF est à 100 % extérieur à sa largeur, donc on cherche le bord sur la
+  // verticale qui descend de ce centre vers l'axe. Bissection exacte (THighFloat, 100 pas, MaxIter
+  // kBurningShipBorderMaxIter) entre un point intérieur (cy du favori x 5/60) et un point extérieur (x 7/60), cx
+  // inchangé. Avec MaxIter 10000 le bord est mal conditionné : la vérité à 192 bits et à 320 bits diverge dès 3000
+  // itérations et l'Extended ne suit plus dès 1000 ; d'où ce MaxIter bas. Environ 55 % de pixels extérieurs, au pixel
+  // 1e-16 comme 10^6 fois plus fin.
+  kBurningShipBorderX = kBurningShipFavouriteCenterX;
+  kBurningShipBorderY = '0.00000004159599724145695425193358193503';
+  kBurningShipBorderMaxIter = 300;
+  // Bord du corps du navire, hors de l'axe (|X·Y| de la référence grand devant δ) : bissection exacte (THighFloat,
+  // 120 pas, MaxIter kBurningShipBodyMaxIter) du segment (-0,5 ; 0,5) intérieur vers (-1 ; 0,75) extérieur. Avec 300
+  // itérations la vue ne concorde qu'à 88 % (orbites trop sensibles pour l'Extended) ; 150 est sûr. Vue au
+  // pixel 1e-27 : l'Extended naïf |c + d| - |c| y perd tout δ (2^-64 de |c| ~ 1e-20 >> δ·X ~ 1e-27).
+  kBurningShipBodyX = '-0.868566310663065831244242013278299537360098976';
+  kBurningShipBodyY = '0.684283155331532915622121006639149768680049488';
+  kBurningShipBodyMaxIter = 150;
+  kBurningShipBodyPixelSize = 1e-27;
 
 type
+  // Un pas direct (Extended) de l'itération d'une formule, pour comparer l'orbite de référence à Iterate.
+  TDirectStep = reference to procedure(var X, Y: TFloat);
+
   // Valeurs de référence « exactes » (THighFloat) sur une sous-grille régulière de la vue.
   TGroundTruth = record
     FormulaName: string;
@@ -38,10 +51,14 @@ type
     function MakeScene(CenterX, CenterY: TFloat): TViewport;
     function MakeExactScene(const TextX, TextY: string; Width: TFloat): TViewport;
     function TruthFor(Formula: TFractalFormula; const V: TViewport): TGroundTruth;
-    function Concordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat; AMaxIter: Integer): Double;
+    // IsMixRequired : exige 10 à 90 % de pixels extérieurs (sinon le test ne prouve rien) ; False pour une vue
+    // volontairement toute extérieure, où les valeurs lissées restent comparées à kSmoothTolerance.
+    function Concordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat; AMaxIter: Integer;
+      const ViewLabel: string; IsMixRequired: Boolean): Double;
     procedure CheckConcordance(Formula: TFractalFormula; CenterX, CenterY, ShiftX: TFloat); overload;
-    procedure CheckConcordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat;
-      AMaxIter: Integer); overload;
+    procedure CheckConcordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat; AMaxIter: Integer;
+      const ViewLabel: string; IsMixRequired: Boolean); overload;
+    procedure CheckReferenceOrbit(Formula: TFractalFormula; RefX, RefY: TFloat; DirectStep: TDirectStep);
   published
     procedure TestSupportsPerturbation;
     procedure TestDiffAbs;
@@ -49,6 +66,8 @@ type
     procedure TestBurningShipReferenceMatchesIterate;
     procedure TestBurningShipAxisMatchesExact;
     procedure TestBurningShipFavouriteMatchesExact;
+    procedure TestBurningShipNearAxisBorderMatchesExact;
+    procedure TestBurningShipDeepBodyMatchesExact;
     procedure TestPerturbedMatchesDirect;
     procedure TestReferenceEscapingEarlyStillMatches;
     procedure TestReferenceOrbitCancels;
@@ -76,7 +95,8 @@ const
   kViewHeight = 150;
   kTestMaxIter = 10000;   // les points d'intérêt échappent jusqu'à plusieurs milliers d'itérations
   kSampleStep = 17;       // une sous-grille : la vérité exacte coûte cher
-  kTruthFracWords = 6;    // 192 bits, bien au-delà du pixel de 1e-12
+  // 256 bits : le pixel le plus fin utilisé est 1e-27 (~90 bits), et le chaos des orbites en consomme encore
+  kTruthFracWords = 8;
   kMinConcordance = 0.98;
   kSmoothTolerance = 1e-3;
   kMinEscapeFraction = 0.1;   // en dessous ou au-dessus, le test ne prouve rien
@@ -111,6 +131,7 @@ begin
   Check(THighFloat.TryParse(TextY, Words, Y), 'centre Y lisible');
   Result.SetCenter(X, Y);
 end;
+
 {------------------------------------------------------------------------------}
 
 // Itération en haute précision du pixel (PX, PY), même convention de compte et de lissage qu'Iterate.
@@ -176,7 +197,7 @@ end;
 // Part des pixels échantillonnés pour lesquels IteratePerturbed concorde avec la vérité exacte (même verdict ;
 // valeurs lissées proches si les deux sont à l'extérieur). La référence est au centre décalé de ShiftX.
 function TTestPerturbation.Concordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat;
-  AMaxIter: Integer): Double;
+  AMaxIter: Integer; const ViewLabel: string; IsMixRequired: Boolean): Double;
 var
   Orbit: TOrbit;
   Truth: TGroundTruth;
@@ -219,10 +240,13 @@ begin
     end;
     Inc(Y, kSampleStep);
   end;
-  Status(Format('%s, décalage %g : %d pixels, extérieur %.1f %%, concordance %.2f %%',
-    [Formula.FormulaName, ShiftX, Index, 100 * EscapeCount / Index, 100 * Agree / Index]));
-  Check(EscapeCount >= kMinEscapeFraction * Index, 'trop peu de pixels extérieurs : test sans valeur');
-  Check(EscapeCount <= kMaxEscapeFraction * Index, 'trop peu de pixels intérieurs : test sans valeur');
+  Status(Format('%s [%s], décalage %g : %d pixels, extérieur %.1f %%, concordance %.2f %%',
+    [Formula.FormulaName, ViewLabel, ShiftX, Index, 100 * EscapeCount / Index, 100 * Agree / Index]));
+  if IsMixRequired then
+  begin
+    Check(EscapeCount >= kMinEscapeFraction * Index, 'trop peu de pixels extérieurs : test sans valeur');
+    Check(EscapeCount <= kMaxEscapeFraction * Index, 'trop peu de pixels intérieurs : test sans valeur');
+  end;
   Result := Agree / Index;
 end;
 
@@ -230,18 +254,19 @@ end;
 
 procedure TTestPerturbation.CheckConcordance(Formula: TFractalFormula; CenterX, CenterY, ShiftX: TFloat);
 begin
-  CheckConcordance(Formula, MakeScene(CenterX, CenterY), ShiftX, kTestMaxIter);
+  CheckConcordance(Formula, MakeScene(CenterX, CenterY), ShiftX, kTestMaxIter,
+    Format('pixel %g, centre %g ; %g', [kPixelSize, CenterX, CenterY]), True);
 end;
 
 {------------------------------------------------------------------------------}
 
 procedure TTestPerturbation.CheckConcordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat;
-  AMaxIter: Integer);
+  AMaxIter: Integer; const ViewLabel: string; IsMixRequired: Boolean);
 var
   Ratio: Double;
 begin
   try
-    Ratio := Concordance(Formula, V, ShiftX, AMaxIter);
+    Ratio := Concordance(Formula, V, ShiftX, AMaxIter, ViewLabel, IsMixRequired);
     Check(Ratio >= kMinConcordance, Format('%s : concordance %.4f', [Formula.FormulaName, Ratio]));
   finally
     Formula.Free;
@@ -279,47 +304,61 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Orbite de référence de (RefX, RefY) comparée à l'itération directe : longueur, Z0 = 0 et dernier point échappé.
+// DirectStep fait un pas de la formule en Extended. Le point doit échapper vite, avant que le chaos de l'orbite ne
+// sépare l'Extended de la haute précision.
+procedure TTestPerturbation.CheckReferenceOrbit(Formula: TFractalFormula; RefX, RefY: TFloat; DirectStep: TDirectStep);
+var
+  Orbit: TOrbit;
+  X, Y, LastR2: TFloat;
+  N: Integer;
+begin
+  Check(Assigned(DirectStep), 'pas direct absent');
+  Formula.MaxIter := kTestMaxIter;
+  Check(ComputeReferenceOrbit(Formula, THighFloat.FromFloat(RefX, kOrbitFracWords),
+    THighFloat.FromFloat(RefY, kOrbitFracWords),
+    function: Boolean
+    begin
+      Result := False;
+    end, Orbit), 'orbite');
+  Check(Formula.Iterate(RefX, RefY) >= 0, 'le point doit échapper');
+  X := 0;
+  Y := 0;
+  N := 0;
+  while (N < Formula.MaxIter) and (X * X + Y * Y <= kEscapeRadius2) do
+  begin
+    DirectStep(X, Y);
+    Inc(N);
+  end;
+  LastR2 := Sqr(Orbit[High(Orbit)].X) + Sqr(Orbit[High(Orbit)].Y);
+  CheckEquals(N + 1, Length(Orbit), 'longueur');
+  CheckEquals(0, Orbit[0].X, 'Z0.X');
+  CheckEquals(0, Orbit[0].Y, 'Z0.Y');
+  Check(Abs(LastR2 - (X * X + Y * Y)) <= kRelativeTolerance * LastR2, 'dernier |Z|2');
+  Check(LastR2 > kEscapeRadius2, 'le dernier point échappe');
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TTestPerturbation.TestReferenceOrbitMatchesIterate;
 const
   kRefX = -0.75;
   kRefY = 0.1;
 var
   F: TFractalFormula;
-  Orbit: TOrbit;
-  X, Y, X2, Y2, LastR2: TFloat;
-  N: Integer;
 begin
   F := TMandelbrotFormula.Create;
   try
-    F.MaxIter := kTestMaxIter;
-    Check(ComputeReferenceOrbit(F, THighFloat.FromFloat(kRefX, kOrbitFracWords),
-      THighFloat.FromFloat(kRefY, kOrbitFracWords),
-      function: Boolean
+    CheckReferenceOrbit(F, kRefX, kRefY,
+      procedure(var X, Y: TFloat)
+      var
+        X2, Y2: TFloat;
       begin
-        Result := False;
-      end, Orbit), 'orbite');
-    Check(F.Iterate(kRefX, kRefY) >= 0, 'le point doit échapper');
-    X := 0;
-    Y := 0;
-    N := 0;
-    X2 := 0;
-    Y2 := 0;
-    while N < F.MaxIter do
-    begin
-      X2 := X * X;
-      Y2 := Y * Y;
-      if X2 + Y2 > kEscapeRadius2 then
-        Break;
-      Y := 2 * X * Y + kRefY;
-      X := X2 - Y2 + kRefX;
-      Inc(N);
-    end;
-    LastR2 := Sqr(Orbit[High(Orbit)].X) + Sqr(Orbit[High(Orbit)].Y);
-    CheckEquals(N + 1, Length(Orbit), 'longueur');
-    CheckEquals(0, Orbit[0].X, 'Z0.X');
-    CheckEquals(0, Orbit[0].Y, 'Z0.Y');
-    Check(Abs(LastR2 - (X2 + Y2)) <= kRelativeTolerance * LastR2, 'dernier |Z|2');
-    Check(LastR2 > kEscapeRadius2, 'le dernier point échappe');
+        X2 := X * X;
+        Y2 := Y * Y;
+        Y := 2 * X * Y + kRefY;
+        X := X2 - Y2 + kRefX;
+      end);
   finally
     F.Free;
   end;
@@ -330,44 +369,22 @@ end;
 procedure TTestPerturbation.TestBurningShipReferenceMatchesIterate;
 const
   kRefX = -1.0;
-  kRefY = 0.75;
+  kRefY = 0.75;   // s'échappe en une douzaine d'itérations
 var
   F: TFractalFormula;
-  Orbit: TOrbit;
-  X, Y, X2, Y2, LastR2: TFloat;
-  N: Integer;
 begin
   F := TBurningShipFormula.Create;
   try
-    F.MaxIter := kTestMaxIter;
-    Check(ComputeReferenceOrbit(F, THighFloat.FromFloat(kRefX, kOrbitFracWords),
-      THighFloat.FromFloat(kRefY, kOrbitFracWords),
-      function: Boolean
+    CheckReferenceOrbit(F, kRefX, kRefY,
+      procedure(var X, Y: TFloat)
+      var
+        X2, Y2: TFloat;
       begin
-        Result := False;
-      end, Orbit), 'orbite');
-    Check(F.Iterate(kRefX, kRefY) >= 0, 'le point doit échapper');
-    X := 0;
-    Y := 0;
-    N := 0;
-    X2 := 0;
-    Y2 := 0;
-    while N < F.MaxIter do
-    begin
-      X2 := X * X;
-      Y2 := Y * Y;
-      if X2 + Y2 > kEscapeRadius2 then
-        Break;
-      Y := 2 * Abs(X * Y) - kRefY;
-      X := X2 - Y2 + kRefX;
-      Inc(N);
-    end;
-    LastR2 := Sqr(Orbit[High(Orbit)].X) + Sqr(Orbit[High(Orbit)].Y);
-    CheckEquals(N + 1, Length(Orbit), 'longueur');
-    CheckEquals(0, Orbit[0].X, 'Z0.X');
-    CheckEquals(0, Orbit[0].Y, 'Z0.Y');
-    Check(Abs(LastR2 - (X2 + Y2)) <= kRelativeTolerance * LastR2, 'dernier |Z|2');
-    Check(LastR2 > kEscapeRadius2, 'le dernier point échappe');
+        X2 := X * X;
+        Y2 := Y * Y;
+        Y := 2 * Abs(X * Y) - kRefY;
+        X := X2 - Y2 + kRefX;
+      end);
   finally
     F.Free;
   end;
@@ -379,23 +396,51 @@ end;
 // cx = kBurningShipAntennaX ; fraction de pixels extérieurs mesurée au journal (Status).
 procedure TTestPerturbation.TestBurningShipAxisMatchesExact;
 begin
-  CheckConcordance(TBurningShipFormula.Create, MakeScene(kBurningShipAntennaX, 0), 0, kTestMaxIter);
+  CheckConcordance(TBurningShipFormula.Create, MakeScene(kBurningShipAntennaX, 0), 0, kTestMaxIter, 'axe', True);
 end;
 
 {------------------------------------------------------------------------------}
 
-// Favori de JF (point du bord sous son centre, voir kBurningShipFavouriteBordY) : à sa largeur, puis 10^6 fois plus
-// étroit.
+// Lieu d'essai de JF : son centre exact, sa largeur et ses 6388 itérations, puis la même vue 10^6 fois plus étroite.
+// Ces vues sont entièrement extérieures (la mixité 10-90 % est donc levée, IsMixRequired = False) : la concordance
+// porte sur les valeurs lissées, comparées à kSmoothTolerance.
 procedure TTestPerturbation.TestBurningShipFavouriteMatchesExact;
 const
   kDeepFactor = 1e-6;
 begin
   CheckConcordance(TBurningShipFormula.Create,
-    MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteBordY, kBurningShipFavouriteWidth), 0,
-    kBurningShipBordMaxIter);
+    MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteCenterY, kBurningShipFavouriteWidth), 0,
+    kBurningShipFavouriteMaxIter, 'favori JF', False);
   CheckConcordance(TBurningShipFormula.Create,
-    MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteBordY,
-      kBurningShipFavouriteWidth * kDeepFactor), 0, kBurningShipBordMaxIter);
+    MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteCenterY,
+      kBurningShipFavouriteWidth * kDeepFactor), 0, kBurningShipFavouriteMaxIter, 'favori JF x 1e-6', False);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Bord près de l'axe (voir kBurningShipBorderY) : vue mêlant intérieur et extérieur, à la largeur du favori puis
+// 10^6 fois plus étroite.
+procedure TTestPerturbation.TestBurningShipNearAxisBorderMatchesExact;
+const
+  kDeepFactor = 1e-6;
+begin
+  CheckConcordance(TBurningShipFormula.Create,
+    MakeExactScene(kBurningShipBorderX, kBurningShipBorderY, kBurningShipFavouriteWidth), 0,
+    kBurningShipBorderMaxIter, 'bord près de l''axe', True);
+  CheckConcordance(TBurningShipFormula.Create,
+    MakeExactScene(kBurningShipBorderX, kBurningShipBorderY, kBurningShipFavouriteWidth * kDeepFactor), 0,
+    kBurningShipBorderMaxIter, 'bord près de l''axe x 1e-6', True);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue profonde hors de l'axe, où |X·Y| de la référence est grand devant δ : un DiffAbs naïf (|c + d| - |c|) y perd
+// tout δ et la concordance s'effondre ; c'est ce test (et non les vues à 1e-12) qui protège la technique de diffabs.
+procedure TTestPerturbation.TestBurningShipDeepBodyMatchesExact;
+begin
+  CheckConcordance(TBurningShipFormula.Create,
+    MakeExactScene(kBurningShipBodyX, kBurningShipBodyY, kBurningShipBodyPixelSize * kViewWidth), 0,
+    kBurningShipBodyMaxIter, 'corps du navire, pixel 1e-27', True);
 end;
 
 {------------------------------------------------------------------------------}
