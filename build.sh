@@ -7,12 +7,14 @@ BDS='C:\Program Files (x86)\Embarcadero\RAD Studio\7.0'
 mkdir -p bin dcu
 case "$1" in
   tests)
-    # DLL factice en version 1 (sans fk_compute_row_perturbed), en version 2 (sans fk_perturbation_supported), puis en
-    # version 3
+    # DLL factice en version 1 (sans fk_compute_row_perturbed), en version 2 (sans fk_perturbation_supported), en
+    # version 3 (sans fk_compute_row_perturbed2), puis en version 4
     (cd tests && "$DCC" -B -Q -N0../dcu -E../bin -DFAKE_ABI1 FakeKernel.dpr)
     mv -f bin/FakeKernel.dll bin/FakeKernelAbi1.dll
     (cd tests && "$DCC" -B -Q -N0../dcu -E../bin -DFAKE_ABI2 FakeKernel.dpr)
     mv -f bin/FakeKernel.dll bin/FakeKernelAbi2.dll
+    (cd tests && "$DCC" -B -Q -N0../dcu -E../bin -DFAKE_ABI3 FakeKernel.dpr)
+    mv -f bin/FakeKernel.dll bin/FakeKernelAbi3.dll
     (cd tests && "$DCC" -B -Q -N0../dcu -E../bin FakeKernel.dpr)
     (cd tests && "$DCC" -B -Q -N0../dcu -E../bin -U"$BDS\source\dUnit\src" FractalesTests.dpr)
     ./bin/FractalesTests.exe ;;

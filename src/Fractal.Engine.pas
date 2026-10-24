@@ -107,6 +107,7 @@ type
     FOrbit: TOrbit;                        // orbite de référence des tuiles du rendu courant
     FCritical: TOrbit;                     // orbite critique des tuiles du rendu courant (nil sauf Julia)
     FDoubleOrbit: TDoubleOrbit;            // FOrbit en Double, en mode Rust seulement
+    FDoubleCritical: TDoubleOrbit;         // FCritical en Double, en mode Rust seulement (nil sauf Julia)
     FRefDeltaX, FRefDeltaY: TFloat;        // centre exact − référence, partie constante de δc
     FReference: TReferenceOrbit;           // sous FLock pendant un rendu
     FReferenceComputeCount: Integer;
@@ -355,6 +356,7 @@ begin
   FOrbit := nil;
   FCritical := nil;
   FDoubleOrbit := nil;
+  FDoubleCritical := nil;
   // Z réutilisable, et W aussi pour une formule HasPixelStart (sinon le travail de référence la reprend ou la refait)
   IsReused := IsNewPerturbation and IsReferenceReusable(V, NewFormula)
     and (not NewFormula.HasPixelStart or IsCriticalReusable(NewFormula, ReferenceFracWords(V)));
@@ -370,6 +372,7 @@ begin
       FDoubleOrbit := FReference.DoubleOrbit;
       if (FReference.Critical <> nil) and (FReference.CriticalDouble = nil) then
         FReference.CriticalDouble := MakeDoubleOrbit(FReference.Critical);
+      FDoubleCritical := FReference.CriticalDouble;
     end;
     FRefDeltaX := V.ExactCenterX.Sub(FReference.ExactX).ToFloat;
     FRefDeltaY := V.ExactCenterY.Sub(FReference.ExactY).ToFloat;
@@ -677,8 +680,13 @@ begin
       begin
         // δc du premier pixel de la suite, comme PixelValue ; PixelOffset tient compte de l'axe imaginaire qui monte
         P := FViewport.PixelOffset(RunStart, Y);
-        FActiveRustKernel.ComputeRowPerturbed(FFormula, FDoubleOrbit, FRefDeltaX + P.X, DX, FRefDeltaY + P.Y, Count,
-          @Values[0]);
+        if FFormula.HasPixelStart then
+          // Julia : la DLL reçoit aussi l'orbite critique W, (δc) est ici δ0
+          FActiveRustKernel.ComputeRowPerturbed2(FFormula, FDoubleOrbit, FDoubleCritical, FRefDeltaX + P.X, DX,
+            FRefDeltaY + P.Y, Count, @Values[0])
+        else
+          FActiveRustKernel.ComputeRowPerturbed(FFormula, FDoubleOrbit, FRefDeltaX + P.X, DX, FRefDeltaY + P.Y, Count,
+            @Values[0]);
       end
       else
       begin
@@ -833,6 +841,7 @@ begin
     FOrbit := Orbit;
     FCritical := FReference.Critical;
     FDoubleOrbit := FReference.DoubleOrbit;
+    FDoubleCritical := FReference.CriticalDouble;
     FRefDeltaX := FViewport.ExactCenterX.Sub(RefX).ToFloat;
     FRefDeltaY := FViewport.ExactCenterY.Sub(RefY).ToFloat;
     FIsReferenceReady := True;
@@ -956,11 +965,9 @@ end;
 function TRenderEngine.ResolveKernel(Formula: TFractalFormula; IsPerturbation: Boolean): TEngineKernelType;
 begin
   // la DLL par défaut n'est chargée que si le noyau Rust est demandé ; une DLL sans perturbation pour cette formule
-  // laisse le palier 2 au moteur Delphi. Une formule HasPixelStart (Julia) aussi : fk_compute_row_perturbed ne reçoit
-  // pas l'orbite critique
+  // (HasPerturbationFor : v4 et fk_compute_row_perturbed2 pour Julia) laisse le palier 2 au moteur Delphi
   if (FKernel = ekRust) and (Formula.KernelId <> kKernelNone) and CurrentRustKernel.IsAvailable
-    and (not IsPerturbation
-      or (not Formula.HasPixelStart and CurrentRustKernel.HasPerturbationFor(Formula.KernelId))) then
+    and (not IsPerturbation or CurrentRustKernel.HasPerturbationFor(Formula.KernelId)) then
     Result := ekRust
   else
     Result := ekDelphi;

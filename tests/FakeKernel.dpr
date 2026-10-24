@@ -4,7 +4,8 @@
 // Fractal.Formulas. Elle permet de vérifier le chargement et le moteur en mode Rust sur une machine sans Rust.
 // Compilée avec FAKE_ABI1 (build.sh tests → FakeKernelAbi1.dll), elle imite une DLL de version 1 : sans
 // fk_compute_row_perturbed. Compilée avec FAKE_ABI2 (FakeKernelAbi2.dll), elle imite une DLL de version 2 : sans
-// fk_perturbation_supported. Par défaut, version 3.
+// fk_perturbation_supported. Compilée avec FAKE_ABI3 (FakeKernelAbi3.dll), elle imite une DLL de version 3 : sans
+// fk_compute_row_perturbed2, et fk_perturbation_supported répond 0 pour Julia et Multibrot. Par défaut, version 4.
 
 uses
   SysUtils,
@@ -19,7 +20,11 @@ const
 {$IFDEF FAKE_ABI2}
   kAbiVersion = 2;
 {$ELSE}
+{$IFDEF FAKE_ABI3}
   kAbiVersion = 3;
+{$ELSE}
+  kAbiVersion = 4;
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
   kOk = 0;
@@ -107,8 +112,26 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Orbite x0, y0, x1, y1, ... (2·PointCount valeurs en Double) relue en TOrbit.
+function ReadOrbit(Source: PDouble; PointCount: Integer): TOrbit;
+var
+  I: Integer;
+begin
+  SetLength(Result, PointCount);
+  for I := 0 to PointCount - 1 do
+  begin
+    Result[I].X := Source^;
+    Inc(Source);
+    Result[I].Y := Source^;
+    Inc(Source);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 // Même contrat que fk_compute_row_perturbed de kernel-rust : RefOrbit = x0, y0, x1, y1, ... (2·RefLength valeurs).
-// L'orbite en Double est relue en TOrbit et chaque pixel passe par IteratePerturbed.
+// L'orbite en Double est relue en TOrbit et chaque pixel passe par IteratePerturbed. Julia (deux orbites) et une
+// puissance non entière de Multibrot : kUnsupported.
 function fk_compute_row_perturbed(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
   RefOrbit: PDouble; RefLength: Integer; DCX0, DDX, DCY: Double; Count: Integer; Output: PSingle): Integer; cdecl;
 var
@@ -125,22 +148,19 @@ begin
     if Result <> kOk then
       Exit;
     try
-      // la DLL factice reste en version 3 (ni Multibrot ni Julia perturbés) jusqu'à l'ABI 4
-      if not F.IsPerturbationSupported or (Formula = kKernelMultibrot) or (Formula = kKernelJulia) then
+      if not F.IsPerturbationSupported or F.HasPixelStart then
         Exit(kUnsupported);
+{$IFDEF FAKE_ABI3}
+      // une DLL v3 ne sait pas perturber Multibrot
+      if Formula = kKernelMultibrot then
+        Exit(kUnsupported);
+{$ENDIF}
 {$IFDEF FAKE_ABI2}
       // une DLL v2 ne sait pas encore perturber le Burning Ship
       if Formula = kKernelBurningShip then
         Exit(kUnsupported);
 {$ENDIF}
-      SetLength(Orbit, RefLength);
-      for I := 0 to RefLength - 1 do
-      begin
-        Orbit[I].X := RefOrbit^;
-        Inc(RefOrbit);
-        Orbit[I].Y := RefOrbit^;
-        Inc(RefOrbit);
-      end;
+      Orbit := ReadOrbit(RefOrbit, RefLength);
       for I := 0 to Count - 1 do
       begin
         // arrondi en Double comme dans la DLL Rust et dans TestFakeKernelPerturbedMatchesDelphi
@@ -160,32 +180,69 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Réponse d'après le registre des formules (instance temporaire aux valeurs par défaut) : 1 si la
-// formule d'identifiant Formula existe et supporte la perturbation, 0 sinon.
+// Réponse sur l'identifiant seul, sans construire de formule (comme la DLL Rust) : 1 pour les cinq formules connues,
+// 0 sinon ; une DLL v3 répond 0 pour Julia et Multibrot (limite connue).
 function fk_perturbation_supported(Formula: Integer): Integer; cdecl;
-var
-  I: Integer;
-  F: TFractalFormula;
 begin
-  Result := 0;
-  // version 3 : ni Multibrot ni Julia (sans orbite critique), comme la DLL Rust v3 ; la version 4 viendra avec l'ABI 4
-  if (Formula = kKernelMultibrot) or (Formula = kKernelJulia) then
-    Exit;
-  for I := 0 to FormulaClassCount - 1 do
-    if FormulaClassAt(I).KernelId = Formula then
-    begin
-      // la prise en charge dépend désormais de l'instance (puissance de Multibrot) : instance temporaire, valeurs
-      // par défaut, comme le fait la DLL Rust pour un identifiant seul
-      F := FormulaClassAt(I).Create;
-      try
-        if F.IsPerturbationSupported then
-          Result := 1;
-      finally
-        F.Free;
-      end;
-    end;
+  case Formula of
+    kKernelMandelbrot, kKernelBurningShip, kKernelTricorn:
+      Result := 1;
+{$IFNDEF FAKE_ABI3}
+    kKernelMultibrot, kKernelJulia:
+      Result := 1;
+{$ENDIF}
+  else
+    Result := 0;
+  end;
 end;
 
+{$IFNDEF FAKE_ABI3}
+
+{------------------------------------------------------------------------------}
+
+// Même contrat que fk_compute_row_perturbed2 de kernel-rust : comme fk_compute_row_perturbed, plus l'orbite critique
+// W (CritOrbit, CritLength points), obligatoire pour Julia (kInvalidArgument sinon) et ignorée par les autres
+// formules ; (DCX0 + I·DDX ; DCY) est δ0 pour Julia. Chaque pixel passe par IteratePerturbedCritical.
+function fk_compute_row_perturbed2(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
+  RefOrbit: PDouble; RefLength: Integer; CritOrbit: PDouble; CritLength: Integer; DCX0, DDX, DCY: Double;
+  Count: Integer; Output: PSingle): Integer; cdecl;
+var
+  F: TFractalFormula;
+  Orbit, Critical: TOrbit;
+  I: Integer;
+  DCX: Double;
+begin
+  if (ParamCount < 0) or (MaxIter < 0) or (Count < 0) or (Output = nil) or ((ParamCount > 0) and (Params = nil))
+    or (RefOrbit = nil) or (RefLength < kMinOrbitLength) or (CritLength < 0) then
+    Exit(kInvalidArgument);
+  try
+    Result := CreateFormula(Formula, Params, ParamCount, MaxIter, F);
+    if Result <> kOk then
+      Exit;
+    try
+      if not F.IsPerturbationSupported then
+        Exit(kUnsupported);
+      if F.HasPixelStart and ((CritOrbit = nil) or (CritLength < kMinOrbitLength)) then
+        Exit(kInvalidArgument);
+      Orbit := ReadOrbit(RefOrbit, RefLength);
+      Critical := nil;
+      if (CritOrbit <> nil) and (CritLength > 0) then
+        Critical := ReadOrbit(CritOrbit, CritLength);
+      for I := 0 to Count - 1 do
+      begin
+        DCX := DCX0 + I * DDX;
+        Output^ := F.IteratePerturbedCritical(Orbit, RefLength, Critical, CritLength, DCX, DCY);
+        Inc(Output);
+      end;
+    finally
+      F.Free;
+    end;
+  except
+    Result := kInternalError;
+  end;
+end;
+
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
 
@@ -194,6 +251,9 @@ exports
   fk_compute_row_perturbed,
 {$IFNDEF FAKE_ABI2}
   fk_perturbation_supported,
+{$IFNDEF FAKE_ABI3}
+  fk_compute_row_perturbed2,
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
   fk_abi_version,

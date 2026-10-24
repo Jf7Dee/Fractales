@@ -25,7 +25,8 @@ type
       RustKernel: TRustKernel = nil);
     procedure CheckAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
     procedure CheckBurningShipAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
-    procedure CheckExactAcceptanceDepths(F: TFractalFormula; const TextX, TextY, FormulaLabel: string);
+    procedure CheckExactAcceptanceDepths(F: TFractalFormula; const TextX, TextY, FormulaLabel: string;
+      Kernel: TEngineKernelType = ekDelphi; RustKernel: TRustKernel = nil);
   published
     procedure TestRenderCompletesWithExactPixels;
     procedure TestValuesMatchDirectIteration;
@@ -51,13 +52,14 @@ type
     procedure TestReferenceReusedWithinIterHeadroom;
     procedure TestEscapedReferenceReusedForBands;
     procedure TestCriticalOrbitReusedWhenPanning;
-    procedure TestJuliaDeepRenderStaysInDelphi;
+    procedure TestJuliaDeepRenderRunsInRustWithAbi4;
     procedure TestCriticalOrbitCoversReusedReference;
     procedure TestJuliaFarOutsideUsesCriticalOrbit;
     procedure TestCriticalOrbitSharedByBands;
     procedure TestCriticalOrbitReusedWhenZoomingOut;
     procedure TestJuliaDeepRenderAtAcceptanceDepths;
     procedure TestMultibrotDeepRenderAtAcceptanceDepths;
+    procedure TestRustJuliaAndMultibrotAtAcceptanceDepths;
     procedure TestMultibrotPowerChangeAtDepth;
     procedure TestJuliaParamChangeAtDepth;
     procedure TestJuliaDustDeepRender;
@@ -908,9 +910,9 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Jusqu'à l'ABI 4 (fk_compute_row_perturbed2), la DLL ne reçoit pas l'orbite critique : un rendu Julia profond
-// demandé en Rust est calculé par le moteur Delphi, sans erreur ; le palier 1 reste en Rust.
-procedure TTestEngine.TestJuliaDeepRenderStaysInDelphi;
+// ABI 4 (fk_compute_row_perturbed2) : la DLL reçoit l'orbite critique, un rendu Julia profond demandé en Rust est
+// calculé par la DLL, sans erreur ; le palier 1 aussi.
+procedure TTestEngine.TestJuliaDeepRenderRunsInRustWithAbi4;
 var
   Fake: TRustKernel;
   E: TRenderEngine;
@@ -925,12 +927,12 @@ begin
     E.RustKernel := Fake;
     F.MaxIter := kJuliaBorderMaxIter;
     CheckEquals(Ord(ekRust), Ord(E.ResolveKernel(F)), 'palier 1 de Julia en Rust');
-    CheckEquals(Ord(ekDelphi), Ord(E.ResolveKernel(F, True)), 'palier 2 de Julia en Rust');
+    CheckEquals(Ord(ekRust), Ord(E.ResolveKernel(F, True)), 'palier 2 de Julia en Rust');
     E.Render(JuliaDeepViewport, F);
     CheckTrue(E.WaitUntilComplete(kWaitMs));
     CheckTrue(E.Status.IsComplete);
     CheckTrue(E.Status.IsPerturbation);
-    CheckEquals(Ord(ekDelphi), Ord(E.Status.Kernel), 'noyau du rendu Julia profond');
+    CheckEquals(Ord(ekRust), Ord(E.Status.Kernel), 'noyau du rendu Julia profond');
     CheckEquals('', E.TakeErrors);
   finally
     F.Free;
@@ -1066,9 +1068,11 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Rendu profond de F au centre exact (TextX ; TextY) aux profondeurs d'acceptation ; durée notée dans le journal.
+// Rendu profond de F au centre exact (TextX ; TextY) aux profondeurs d'acceptation, par le noyau Kernel ; durée notée
+// dans le journal.
 // F porte déjà son MaxIter et ses paramètres.
-procedure TTestEngine.CheckExactAcceptanceDepths(F: TFractalFormula; const TextX, TextY, FormulaLabel: string);
+procedure TTestEngine.CheckExactAcceptanceDepths(F: TFractalFormula; const TextX, TextY, FormulaLabel: string;
+  Kernel: TEngineKernelType; RustKernel: TRustKernel);
 var
   I: Integer;
   T: Cardinal;
@@ -1077,8 +1081,9 @@ begin
   begin
     T := GetTickCount;
     CheckDeepRender(F, MakeExactViewport(TextX, TextY, kDeepPixelWidth * kAcceptancePixelSizes[I], kDeepPixelWidth,
-      kDeepPixelHeight));
-    Status(Format('%s, Delphi, pixel %g : %d ms', [FormulaLabel, kAcceptancePixelSizes[I], GetTickCount - T]));
+      kDeepPixelHeight), Kernel, RustKernel);
+    Status(Format('%s, %s, pixel %g : %d ms', [FormulaLabel, TRenderEngine.GetDisplayName(Kernel),
+      kAcceptancePixelSizes[I], GetTickCount - T]));
   end;
 end;
 
@@ -1110,6 +1115,32 @@ begin
     CheckExactAcceptanceDepths(F, kMultibrot3DeepX, kMultibrot3DeepY, 'Multibrot 3');
   finally
     F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Julia (c par défaut) et Multibrot p = 3 aux profondeurs d'acceptation, calculés par la DLL factice v4.
+procedure TTestEngine.TestRustJuliaAndMultibrotAtAcceptanceDepths;
+var
+  Fake: TRustKernel;
+  J: TJuliaFormula;
+  M: TMultibrotFormula;
+begin
+  Fake := TRustKernel.Create(FakeKernelFileName);
+  J := TJuliaFormula.Create;
+  M := TMultibrotFormula.Create;
+  try
+    CheckTrue(Fake.IsAvailable, Fake.Status);
+    J.MaxIter := kJuliaDeepFixedMaxIter;
+    CheckExactAcceptanceDepths(J, kJuliaDeepFixedX, kJuliaDeepFixedY, 'Julia', ekRust, Fake);
+    M.SetParam(0, 3);
+    M.MaxIter := kMultibrot3MaxIter;
+    CheckExactAcceptanceDepths(M, kMultibrot3DeepX, kMultibrot3DeepY, 'Multibrot 3', ekRust, Fake);
+  finally
+    M.Free;
+    J.Free;
+    Fake.Free;
   end;
 end;
 

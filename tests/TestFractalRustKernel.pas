@@ -30,6 +30,8 @@ type
       MinRatio: Double);
     procedure CheckMandelbrotDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
     procedure CheckBurningShipDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+    procedure CheckJuliaDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+    procedure CheckMultibrotDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
   protected
     procedure SetUp; override;
     procedure TearDown; override;
@@ -44,10 +46,13 @@ type
     procedure TestRustDeepRenderMatchesDelphiWithFakeKernel;
     procedure TestAbi1FallsBackToDelphiWhenDeep;
     procedure TestAbi2FallsBackToDelphiForBurningShip;
+    procedure TestAbi3FallsBackToDelphiForJuliaAndMultibrot;
     procedure TestRealKernelPerturbedMatchesDelphi;
   end;
 
   TTestRustKernel = class(TTestCase)
+  private
+    function CheckFakeRowsMatchDelphi(K: TRustKernel; F: TFractalFormula; const V: TViewport): Integer;
   published
     procedure TestMissingFileIsUnavailable;
     procedure TestBadFormatFileIsUnavailable;
@@ -60,15 +65,20 @@ type
     procedure TestPerturbedKernelErrorRaises;
     procedure TestPerturbedKernelRejectsOnePointOrbit;
     procedure TestAbi1KernelHasNoPerturbation;
-    procedure TestFakeKernelIsAbi3;
+    procedure TestFakeKernelIsAbi4;
+    procedure TestAbi3KernelRefusesJuliaAndMultibrot;
     procedure TestAbi2KernelSupportsMandelbrotAndTricornOnly;
     procedure TestFakeKernelBurningShipMatchesDelphi;
+    procedure TestFakeKernelJuliaMatchesDelphi;
+    procedure TestFakeKernelMultibrotMatchesDelphi;
+    procedure TestJuliaRowNeedsCriticalOrbit;
   end;
 
 function TestBinFolder: string;
 function FakeKernelFileName: string;
 function FakeKernelAbi1FileName: string;
 function FakeKernelAbi2FileName: string;
+function FakeKernelAbi3FileName: string;
 
 const
   // Pointe de l'axe réel, (-2 ; 0) : sur l'axe le Burning Ship se réduit à x² + c, et ce point du bord est exact
@@ -84,6 +94,7 @@ const
   kFakeKernelFile = 'FakeKernel.dll';
   kFakeKernelAbi1File = 'FakeKernelAbi1.dll';   // DLL factice compilée avec FAKE_ABI1 (build.sh tests)
   kFakeKernelAbi2File = 'FakeKernelAbi2.dll';   // DLL factice compilée avec FAKE_ABI2 (build.sh tests)
+  kFakeKernelAbi3File = 'FakeKernelAbi3.dll';   // DLL factice compilée avec FAKE_ABI3 (build.sh tests)
   kUnknownKernelId = 42;
   kRowCount = 5;
   kRowX0 = -2.5;
@@ -114,6 +125,14 @@ const
   kBurningShipRowCount = 5;
   kBurningShipRowPixelSize = kBurningShipFavouriteWidth / 200;
   kBurningShipDeepFactor = 1e-6;   // vue du favori de JF 10^6 fois plus étroite
+  // rangées comparées bit à bit (DLL v4) : vues au pixel 1e-12 des bords de TestFractalPerturbation
+  kMatchPixelSize = 1e-12;
+  kMatchRowLength = 200;
+  kMatchRowCount = 150;
+  kMatchRowStep = 30;
+  kMultibrotTestPower = 3;
+  kMultibrotFractionalPower = 3.5;   // non entière : fk_compute_row_perturbed répond kUnsupported
+  kCriticalCorruption = 1e-3;        // W faussée (W0 intact) : un pixel qui change dépend de W
   // rendu profond : c = i, point de Misiurewicz, taille de pixel hors de portée du palier 1
   kDeepCenterX = 0;
   kDeepCenterY = 1;
@@ -146,6 +165,13 @@ end;
 function FakeKernelAbi2FileName: string;
 begin
   Result := TestBinFolder + kFakeKernelAbi2File;
+end;
+
+{------------------------------------------------------------------------------}
+
+function FakeKernelAbi3FileName: string;
+begin
+  Result := TestBinFolder + kFakeKernelAbi3File;
 end;
 
 {------------------------------------------------------------------------------}
@@ -458,11 +484,31 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TTestRustKernel.TestFakeKernelIsAbi3;
+procedure TTestRustKernel.TestFakeKernelIsAbi4;
 var
   K: TRustKernel;
 begin
   K := TRustKernel.Create(FakeKernelFileName);
+  try
+    CheckTrue(K.IsAvailable, K.Status);
+    CheckTrue(K.HasPerturbationFor(kKernelMandelbrot));
+    CheckTrue(K.HasPerturbationFor(kKernelTricorn));
+    CheckTrue(K.HasPerturbationFor(kKernelBurningShip));
+    CheckTrue(K.HasPerturbationFor(kKernelJulia));
+    CheckTrue(K.HasPerturbationFor(kKernelMultibrot));
+  finally
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// DLL v3 : sa réponse 0 pour Julia et Multibrot (limite connue de D1), le reste comme avant.
+procedure TTestRustKernel.TestAbi3KernelRefusesJuliaAndMultibrot;
+var
+  K: TRustKernel;
+begin
+  K := TRustKernel.Create(FakeKernelAbi3FileName);
   try
     CheckTrue(K.IsAvailable, K.Status);
     CheckTrue(K.HasPerturbationFor(kKernelMandelbrot));
@@ -560,6 +606,146 @@ end;
 class function TNoKernelFormula.KernelId: Integer;
 begin
   Result := kKernelNone;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Rangées de la vue V (une sur kMatchRowStep) calculées par la DLL v4 (fk_compute_row_perturbed2) puis par la formule
+// sur les mêmes entrées arrondies en Double : identiques au bit près, et mêlant intérieur et extérieur. Pour une
+// formule HasPixelStart, la DLL reçoit aussi l'orbite critique W. Retourne le nombre de pixels qui dépendent de W
+// (valeur changée si W est faussée) : 0 pour les autres formules.
+function TTestRustKernel.CheckFakeRowsMatchDelphi(K: TRustKernel; F: TFractalFormula; const V: TViewport): Integer;
+var
+  Orbit, Critical, RoundedOrbit, RoundedCritical, Corrupted: TOrbit;
+  DoubleOrbit, DoubleCritical: TDoubleOrbit;
+  Values: array[0..kMatchRowLength - 1] of Single;
+  Row, I, OutsideCount, TotalCount: Integer;
+  P: TComplexPoint;
+  DCX0, DDX, DCX, Expected: Double;
+begin
+  CheckTrue(K.HasPerturbationFor(F.KernelId), K.Status);
+  CheckTrue(V.PixelWidth <= kMatchRowLength, 'rangée trop longue');
+  CheckTrue(ComputeReferenceOrbit(F, V.ExactCenterX, V.ExactCenterY, nil, Orbit), 'orbite de référence');
+  DoubleOrbit := MakeDoubleOrbit(Orbit);
+  RoundedOrbit := OrbitFromDoubles(DoubleOrbit);
+  DoubleCritical := nil;
+  RoundedCritical := nil;
+  Corrupted := nil;
+  if F.HasPixelStart then
+  begin
+    CheckTrue(ComputeCriticalOrbit(F, V.ExactCenterX.FracWords, nil, Critical), 'orbite critique');
+    DoubleCritical := MakeDoubleOrbit(Critical);
+    RoundedCritical := OrbitFromDoubles(DoubleCritical);
+    Corrupted := Copy(RoundedCritical);
+    for I := 1 to High(Corrupted) do
+      Corrupted[I].X := Corrupted[I].X * (1 + kCriticalCorruption);
+  end;
+  Result := 0;
+  OutsideCount := 0;
+  TotalCount := 0;
+  DDX := V.PixelSize;
+  Row := 0;
+  while Row < V.PixelHeight do
+  begin
+    P := V.PixelOffset(0, Row);
+    DCX0 := P.X;
+    K.ComputeRowPerturbed2(F, DoubleOrbit, DoubleCritical, DCX0, DDX, P.Y, V.PixelWidth, @Values[0]);
+    for I := 0 to V.PixelWidth - 1 do
+    begin
+      DCX := DCX0 + I * DDX;
+      Expected := F.IteratePerturbedCritical(RoundedOrbit, Length(RoundedOrbit), RoundedCritical,
+        Length(RoundedCritical), DCX, P.Y);
+      CheckEquals(Expected, Values[I], 0, Format('%s, rangée %d, pixel %d', [F.FormulaName, Row, I]));
+      if Values[I] >= 0 then
+        Inc(OutsideCount);
+      Inc(TotalCount);
+      if F.HasPixelStart and (F.IteratePerturbedCritical(RoundedOrbit, Length(RoundedOrbit), Corrupted,
+        Length(Corrupted), DCX, P.Y) <> Expected) then
+        Inc(Result);
+    end;
+    Inc(Row, kMatchRowStep);
+  end;
+  CheckTrue((OutsideCount > 0) and (OutsideCount < TotalCount),
+    Format('%s : %d pixels extérieurs sur %d', [F.FormulaName, OutsideCount, TotalCount]));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestRustKernel.TestFakeKernelJuliaMatchesDelphi;
+var
+  K: TRustKernel;
+  F: TJuliaFormula;
+  RebasedCount: Integer;
+begin
+  K := TRustKernel.Create(FakeKernelFileName);
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaBorderMaxIter;
+    RebasedCount := CheckFakeRowsMatchDelphi(K, F, MakeExactViewport(kJuliaBorderX, kJuliaBorderY,
+      kMatchPixelSize * kMatchRowLength, kMatchRowLength, kMatchRowCount));
+    Status(Format('Julia : %d pixels dépendent de W', [RebasedCount]));
+    CheckTrue(RebasedCount > 0, 'aucun pixel ne rebase sur l''orbite critique');
+  finally
+    F.Free;
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestRustKernel.TestFakeKernelMultibrotMatchesDelphi;
+var
+  K: TRustKernel;
+  F: TMultibrotFormula;
+begin
+  K := TRustKernel.Create(FakeKernelFileName);
+  F := TMultibrotFormula.Create;
+  try
+    F.SetParam(0, kMultibrotTestPower);
+    F.MaxIter := kMultibrot3MaxIter;
+    CheckEquals(0, CheckFakeRowsMatchDelphi(K, F, MakeExactViewport(kMultibrot3X, kMultibrot3Y,
+      kMatchPixelSize * kMatchRowLength, kMatchRowLength, kMatchRowCount)));
+  finally
+    F.Free;
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Julia sans orbite critique : fk_compute_row_perturbed2 répond « argument invalide » (code 3) ; une puissance non
+// entière de Multibrot : fk_compute_row_perturbed répond « sans perturbation » (code 5).
+procedure TTestRustKernel.TestJuliaRowNeedsCriticalOrbit;
+var
+  K: TRustKernel;
+  F: TJuliaFormula;
+  M: TMultibrotFormula;
+  Values: array[0..0] of Single;
+begin
+  K := TRustKernel.Create(FakeKernelFileName);
+  F := TJuliaFormula.Create;
+  M := TMultibrotFormula.Create;
+  try
+    try
+      K.ComputeRowPerturbed2(F, ZeroDoubleOrbit, nil, 0, kRowDX, 0, 1, @Values[0]);
+      Fail('ERustKernelError attendue');
+    except
+      on E: ERustKernelError do
+        CheckTrue(Pos('(code 3)', E.Message) > 0, E.Message);
+    end;
+    M.SetParam(0, kMultibrotFractionalPower);
+    try
+      K.ComputeRowPerturbed(M, ZeroDoubleOrbit, 0, kRowDX, 0, 1, @Values[0]);
+      Fail('ERustKernelError attendue');
+    except
+      on E: ERustKernelError do
+        CheckTrue(Pos('(code 5)', E.Message) > 0, E.Message);
+    end;
+  finally
+    M.Free;
+    F.Free;
+    K.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -862,10 +1048,99 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Julia au bord kJuliaBorder, pixel 1e-30 : la DLL reçoit Z et l'orbite critique W (fk_compute_row_perturbed2).
+procedure TTestRustEngine.CheckJuliaDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+var
+  F: TJuliaFormula;
+begin
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaBorderMaxIter;
+    CheckDeepRenderAgrees(RustKernel, F, MakeExactViewport(kJuliaBorderX, kJuliaBorderY,
+      kDeepPixelSize * kOddWidth, kOddWidth, kOddHeight), MinRatio);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Multibrot p = 3 au bord kMultibrot3, pixel 1e-30 : puissance entière, une seule orbite.
+procedure TTestRustEngine.CheckMultibrotDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+var
+  F: TMultibrotFormula;
+begin
+  F := TMultibrotFormula.Create;
+  try
+    F.SetParam(0, kMultibrotTestPower);
+    F.MaxIter := kMultibrot3MaxIter;
+    CheckDeepRenderAgrees(RustKernel, F, MakeExactViewport(kMultibrot3X, kMultibrot3Y,
+      kDeepPixelSize * kOddWidth, kOddWidth, kOddHeight), MinRatio);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TTestRustEngine.TestRustDeepRenderMatchesDelphiWithFakeKernel;
 begin
   CheckMandelbrotDeepRenderAgrees(FFake, kFakeMinRatio);
   CheckBurningShipDeepRenderAgrees(FFake, kFakeMinRatio);
+  CheckJuliaDeepRenderAgrees(FFake, kFakeMinRatio);
+  CheckMultibrotDeepRenderAgrees(FFake, kFakeMinRatio);
+end;
+
+{------------------------------------------------------------------------------}
+
+// DLL v3 : sa réponse 0 pour Julia et Multibrot ; leurs rendus profonds sont calculés en Delphi, complets et sans
+// erreur. Le Mandelbrot profond reste en Rust.
+procedure TTestRustEngine.TestAbi3FallsBackToDelphiForJuliaAndMultibrot;
+var
+  Abi3: TRustKernel;
+  J: TJuliaFormula;
+  MB: TMultibrotFormula;
+  M: TMandelbrotFormula;
+  E: TRenderEngine;
+begin
+  Abi3 := TRustKernel.Create(FakeKernelAbi3FileName);
+  J := TJuliaFormula.Create;
+  MB := TMultibrotFormula.Create;
+  M := TMandelbrotFormula.Create;
+  E := nil;
+  try
+    CheckTrue(Abi3.IsAvailable, Abi3.Status);
+    J.MaxIter := kJuliaBorderMaxIter;
+    MB.SetParam(0, kMultibrotTestPower);
+    MB.MaxIter := kMultibrot3MaxIter;
+    M.MaxIter := kDeepMaxIter;
+    E := RenderWith(ekRust, Abi3, J, MakeExactViewport(kJuliaBorderX, kJuliaBorderY, kDeepPixelSize * kOddWidth,
+      kOddWidth, kOddHeight), True);
+    CheckTrue(E.Status.IsPerturbation, 'Julia : palier 1 au lieu de la perturbation');
+    CheckEquals(Ord(ekDelphi), Ord(E.Status.Kernel), 'noyau du rendu Julia');
+    CheckEquals(Ord(ekDelphi), Ord(E.ResolveKernel(J, True)));
+    CheckEquals(Ord(ekRust), Ord(E.ResolveKernel(J)), 'palier 1 de Julia');
+    CheckEquals('', E.TakeErrors);
+    FreeAndNil(E);
+    E := RenderWith(ekRust, Abi3, MB, MakeExactViewport(kMultibrot3X, kMultibrot3Y, kDeepPixelSize * kOddWidth,
+      kOddWidth, kOddHeight), True);
+    CheckTrue(E.Status.IsPerturbation, 'Multibrot : palier 1 au lieu de la perturbation');
+    CheckEquals(Ord(ekDelphi), Ord(E.Status.Kernel), 'noyau du rendu Multibrot');
+    CheckEquals(Ord(ekDelphi), Ord(E.ResolveKernel(MB, True)));
+    CheckEquals('', E.TakeErrors);
+    FreeAndNil(E);
+    E := RenderWith(ekRust, Abi3, M, MakeViewport(kDeepCenterX, kDeepCenterY, kDeepPixelSize * kOddWidth, kOddWidth,
+      kOddHeight), True);
+    CheckTrue(E.Status.IsPerturbation, 'Mandelbrot : palier 1 au lieu de la perturbation');
+    CheckEquals(Ord(ekRust), Ord(E.Status.Kernel), 'noyau du rendu Mandelbrot');
+    CheckEquals('', E.TakeErrors);
+  finally
+    E.Free;
+    M.Free;
+    MB.Free;
+    J.Free;
+    Abi3.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -958,6 +1233,15 @@ begin
     end;
     CheckMandelbrotDeepRenderAgrees(RealKernel, kRealMinRatio);
     CheckBurningShipDeepRenderAgrees(RealKernel, kRealMinRatio);
+    // Julia et Multibrot seulement avec une DLL v4 : une DLL v3 les laisse au Delphi (TestAbi3FallsBack...)
+    if RealKernel.HasPerturbationFor(kKernelJulia) then
+      CheckJuliaDeepRenderAgrees(RealKernel, kRealMinRatio)
+    else
+      Status('fractal_kernel.dll sans Julia perturbé (version 3 ou moins) : Julia profond non comparé.');
+    if RealKernel.HasPerturbationFor(kKernelMultibrot) then
+      CheckMultibrotDeepRenderAgrees(RealKernel, kRealMinRatio)
+    else
+      Status('fractal_kernel.dll sans Multibrot perturbé (version 3 ou moins) : Multibrot profond non comparé.');
   finally
     RealKernel.Free;
   end;
