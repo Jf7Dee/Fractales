@@ -159,8 +159,8 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Réponse d'après le registre des formules (instance temporaire aux valeurs par défaut) : 1 si la formule d'identifiant Formula existe
-// et supporte la perturbation, 0 sinon.
+// Réponse d'après le registre des formules (instance temporaire aux valeurs par défaut) : 1 si la
+// formule d'identifiant Formula existe et supporte la perturbation, 0 sinon.
 function fk_perturbation_supported(Formula: Integer): Integer; cdecl;
 var
   I: Integer;

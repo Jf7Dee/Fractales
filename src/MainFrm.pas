@@ -172,6 +172,7 @@ type
     procedure RenderJuliaPreview;
     procedure InitKernelPanel;
     procedure UpdateKernelEpsilon;
+    procedure RefreshPerturbationAllowed;
     procedure NavigatorHistoryChanged(Sender: TObject);
     procedure NavigatorZoomPreview(Sender: TObject; X, Y: Integer; Factor: TFloat);
     procedure NavModeChange(Sender: TObject);
@@ -544,6 +545,15 @@ procedure TMainForm.UpdateKernelEpsilon;
 begin
   // la limite de zoom suit le noyau réellement utilisé (une formule sans équivalent Rust reste en Delphi)
   FNavigator.Epsilon := TRenderEngine.GetEpsilon(FEngine.ResolveKernel(FFormula));
+  RefreshPerturbationAllowed;
+end;
+
+{------------------------------------------------------------------------------}
+
+// La prise en charge de la perturbation dépend de la formule et de ses paramètres (puissance de Multibrot) :
+// à rappeler après tout changement de l'un ou des autres.
+procedure TMainForm.RefreshPerturbationAllowed;
+begin
   FNavigator.IsPerturbationAllowed := FFormula.IsPerturbationSupported;
 end;
 
@@ -578,6 +588,7 @@ end;
 procedure TMainForm.btnResetFormulaClick(Sender: TObject);
 begin
   FFormula.ResetParams;
+  RefreshPerturbationAllowed;
   BuildParamEditors;  // champs et curseurs reconstruits avec les valeurs par défaut
   RenderCurrent;
 end;
@@ -1103,7 +1114,7 @@ begin
     if Value <> FFormula.GetParam(Index) then
     begin
       FFormula.SetParam(Index, Value);
-      FNavigator.IsPerturbationAllowed := FFormula.IsPerturbationSupported;
+      RefreshPerturbationAllowed;
       RenderCurrent;
     end;
     FStatusMessage := '';
@@ -1126,7 +1137,7 @@ begin
   Index := TTrackBar(Sender).Tag;
   FFormula.SetParam(Index, SliderPositionToParam(FFormula.ParamInfo(Index), TTrackBar(Sender).Position));
   FParamEdits[Index].Text := FloatToStr(FFormula.GetParam(Index));
-  FNavigator.IsPerturbationAllowed := FFormula.IsPerturbationSupported;
+  RefreshPerturbationAllowed;
   FStatusMessage := '';
   RenderCurrent;
 end;
