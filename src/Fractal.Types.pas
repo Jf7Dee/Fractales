@@ -16,7 +16,7 @@ type
     X, Y: TFloat;
   end;
 
-  // orbite de référence Z0 = 0, Z1, ... en précision Extended (perturbation)
+  // orbite de référence Z0, Z1, ... en précision Extended (perturbation) : Z0 = 0, ou le point de départ de Julia
   TOrbit = array of TComplexPoint;
 
   TPrecisionState = (psOk, psWarning, psLimit);

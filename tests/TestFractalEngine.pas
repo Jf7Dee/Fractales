@@ -51,6 +51,10 @@ type
     procedure TestEscapedReferenceReusedForBands;
     procedure TestCriticalOrbitReusedWhenPanning;
     procedure TestJuliaDeepRenderStaysInDelphi;
+    procedure TestCriticalOrbitCoversReusedReference;
+    procedure TestJuliaFarOutsideUsesCriticalOrbit;
+    procedure TestCriticalOrbitSharedByBands;
+    procedure TestCriticalOrbitReusedWhenZoomingOut;
   end;
 
 implementation
@@ -79,6 +83,13 @@ const
   kJuliaDeepPixelSize = 1e-30;
   kBeyondReuseWidths = 3;           // au-delà des deux largeurs de réutilisation de Z
   kJuliaParamStep = 1e-3;           // déplacement de c (partie réelle)
+  // c dans l'ensemble de Mandelbrot (lapin de Douady) : W ne s'échappe pas, sa longueur dépend de MaxIter
+  kRabbitCX = -0.12;
+  kRabbitCY = 0.75;
+  kRabbitMaxIters: array[0..2] of Integer = (1000, 1200, 1400);
+  kFarOutsideX = 300;               // |Z0|² > rayon d'échappement : toutes les candidates s'échappent d'emblée
+  kJuliaZoomOutPixelSize = 1e-60;   // plus de mots qu'au pixel kJuliaDeepPixelSize
+  kBeyondJuliaHeadroomMaxIter = 700;   // au-delà de la marge de Z (500 x 1,25)
 
 {------------------------------------------------------------------------------}
 
@@ -800,10 +811,10 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Vue Julia profonde au bord kJuliaBorder (MaxIter kJuliaBorderMaxIter).
-function JuliaDeepViewport: TViewport;
+// Vue Julia profonde au bord kJuliaBorder (MaxIter kJuliaBorderMaxIter), au pixel PixelSize.
+function JuliaDeepViewport(PixelSize: TFloat = kJuliaDeepPixelSize): TViewport;
 begin
-  Result := MakeExactViewport(kJuliaBorderX, kJuliaBorderY, kDeepPixelWidth * kJuliaDeepPixelSize, kDeepPixelWidth,
+  Result := MakeExactViewport(kJuliaBorderX, kJuliaBorderY, kDeepPixelWidth * PixelSize, kDeepPixelWidth,
     kDeepPixelHeight);
 end;
 
@@ -880,6 +891,131 @@ begin
     F.Free;
     E.Free;
     Fake.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Z réutilisée n'emporte W que si W couvre le MaxIter du rendu. c dans l'ensemble de Mandelbrot, vue intérieure
+// autour de 0 : MaxIter 1000 (W et Z jusqu'à 1250) ; déplacement de trois largeurs à MaxIter 1200 (Z refaite jusqu'à
+// 1500, W gardée : 1250 >= 1200) ; MaxIter 1400 sans déplacement : Z suffirait (1500), mais W (1250) non : refaite.
+procedure TTestEngine.TestCriticalOrbitCoversReusedReference;
+var
+  E: TRenderEngine;
+  F: TJuliaFormula;
+  V: TViewport;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    F.SetParam(F.IndexOfParam('cx'), kRabbitCX);
+    F.SetParam(F.IndexOfParam('cy'), kRabbitCY);
+    F.MaxIter := kRabbitMaxIters[0];
+    V := DeepViewport(0, 0, kJuliaDeepPixelSize);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsPerturbation);
+    CheckEquals(1, E.CriticalComputeCount);
+    F.MaxIter := kRabbitMaxIters[1];
+    V := V.Panned(kBeyondReuseWidths * kDeepPixelWidth, 0);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckEquals(2, E.ReferenceComputeCount, 'Z non recalculée après le déplacement');
+    CheckEquals(1, E.CriticalComputeCount, 'W recalculée alors qu''elle couvre MaxIter');
+    F.MaxIter := kRabbitMaxIters[2];
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(2, E.CriticalComputeCount, 'W trop courte gardée avec Z');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue profonde loin de l'ensemble : toutes les candidates Z0 s'échappent d'emblée ; W (point de départ 0) sert de
+// référence, et le rendu, tout extérieur, se termine sans erreur.
+procedure TTestEngine.TestJuliaFarOutsideUsesCriticalOrbit;
+var
+  E: TRenderEngine;
+  F: TJuliaFormula;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaBorderMaxIter;
+    E.Render(DeepViewport(kFarOutsideX, 0, kJuliaDeepPixelSize), F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(0, CountNegativeValues(E), 'pixels intérieurs loin de l''ensemble');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Bandes d'un rendu HD (IsEscapedReferenceReusable) : une seule orbite critique pour toutes.
+procedure TTestEngine.TestCriticalOrbitSharedByBands;
+var
+  E: TRenderEngine;
+  F: TJuliaFormula;
+  V: TViewport;
+  Band: Integer;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaBorderMaxIter;
+    V := JuliaDeepViewport;
+    E.IsEscapedReferenceReusable := True;
+    for Band := 0 to 2 do
+    begin
+      E.Render(V.SubViewport(1, Band * kBandRows, kBandRows), F, False);
+      CheckTrue(E.WaitUntilComplete(kWaitMs));
+      CheckTrue(E.Status.IsComplete);
+      CheckTrue(E.Status.IsPerturbation);
+      CheckEquals('', E.TakeErrors);
+    end;
+    CheckEquals(1, E.CriticalComputeCount, 'W recalculée entre les bandes');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Dézoom : W calculée avec plus de mots que la nouvelle vue n'en demande reste valable ; Z est refaite (MaxIter
+// au-delà de sa marge), W (échappée, c par défaut) gardée.
+procedure TTestEngine.TestCriticalOrbitReusedWhenZoomingOut;
+var
+  E: TRenderEngine;
+  F: TJuliaFormula;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaBorderMaxIter;
+    E.Render(JuliaDeepViewport(kJuliaZoomOutPixelSize), F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckEquals(1, E.CriticalComputeCount);
+    F.MaxIter := kBeyondJuliaHeadroomMaxIter;
+    E.Render(JuliaDeepViewport, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(2, E.ReferenceComputeCount, 'Z non recalculée');
+    CheckEquals(1, E.CriticalComputeCount, 'W plus précise recalculée au dézoom');
+  finally
+    F.Free;
+    E.Free;
   end;
 end;
 

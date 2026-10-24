@@ -122,7 +122,8 @@ type
     function PixelValue(X, Y: Integer): Single;
     function IsReferenceReusable(const V: TViewport; Formula: TFractalFormula): Boolean;
     function HasReferenceParams(Formula: TFractalFormula): Boolean;
-    function IsCriticalReusable(FracWords: Integer): Boolean;
+    function IsCriticalReusable(Formula: TFractalFormula; FracWords: Integer): Boolean;
+    class function ReferenceFracWords(const V: TViewport): Integer;
     function CurrentRustKernel: TRustKernel;
     procedure FinishJob(const Job: TTileJob; IsCompleted: Boolean);
     procedure AddError(const Msg: string);
@@ -354,10 +355,11 @@ begin
   FOrbit := nil;
   FCritical := nil;
   FDoubleOrbit := nil;
-  IsReused := IsNewPerturbation and IsReferenceReusable(V, NewFormula);
+  // Z réutilisable, et W aussi pour une formule HasPixelStart (sinon le travail de référence la reprend ou la refait)
+  IsReused := IsNewPerturbation and IsReferenceReusable(V, NewFormula)
+    and (not NewFormula.HasPixelStart or IsCriticalReusable(NewFormula, ReferenceFracWords(V)));
   if IsReused then
   begin
-    // W a été installée avec Z, pour les mêmes paramètres : elle la suit
     FOrbit := FReference.Orbit;
     FCritical := FReference.Critical;
     if NewKernel = ekRust then
@@ -423,17 +425,26 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Sous FLock. L'orbite critique installée sert encore au rendu courant si elle a été calculée pour la même formule
-// (classe et paramètres : c), au même nombre de mots, et si elle est complète : son MaxIter (marge comprise) couvre
-// celui du rendu, comme pour Z, ou elle s'est échappée (c hors de l'ensemble de Mandelbrot).
-function TRenderEngine.IsCriticalReusable(FracWords: Integer): Boolean;
+// Sous FLock pendant un rendu. L'orbite critique installée sert encore à Formula si elle a été calculée pour la même
+// formule (classe et paramètres : c), avec au moins FracWords mots, et si elle est complète : son MaxIter (marge
+// comprise) couvre celui de Formula, comme pour Z, ou elle s'est échappée (c hors de l'ensemble de Mandelbrot).
+function TRenderEngine.IsCriticalReusable(Formula: TFractalFormula; FracWords: Integer): Boolean;
 var
   IsEscaped: Boolean;
 begin
   IsEscaped := Length(FReference.Critical) <= FReference.CriticalMaxIter;
-  Result := (FReference.Critical <> nil) and HasReferenceParams(FFormula)
-    and (FReference.CriticalFracWords = FracWords)
-    and ((FReference.CriticalMaxIter >= FFormula.MaxIter) or IsEscaped);
+  Result := (FReference.Critical <> nil) and HasReferenceParams(Formula)
+    and (FReference.CriticalFracWords >= FracWords)
+    and ((FReference.CriticalMaxIter >= Formula.MaxIter) or IsEscaped);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Mots des orbites de référence de la vue V : le centre peut en porter moins que la taille de pixel n'en demande
+// (vue redimensionnée).
+class function TRenderEngine.ReferenceFracWords(const V: TViewport): Integer;
+begin
+  Result := Max(Max(V.ExactCenterX.FracWords, V.ExactCenterY.FracWords), FracWordsForPixelSize(V.PixelSize));
 end;
 
 {------------------------------------------------------------------------------}
@@ -711,9 +722,7 @@ begin
     begin
       Result := Generation <> FGeneration;
     end;
-  // le centre peut porter moins de mots que la taille de pixel n'en demande (vue redimensionnée)
-  Words := Max(Max(FViewport.ExactCenterX.FracWords, FViewport.ExactCenterY.FracWords),
-    FracWordsForPixelSize(FViewport.PixelSize));
+  Words := ReferenceFracWords(FViewport);
   StepX := FViewport.Width / kReferenceCandidateGrid;
   StepY := FViewport.Height / kReferenceCandidateGrid;
   Half := kReferenceCandidateGrid div 2;
@@ -729,7 +738,7 @@ begin
     begin
       FLock.Enter;
       try
-        if IsCriticalReusable(Words) then
+        if IsCriticalReusable(FFormula, Words) then
           Critical := FReference.Critical;
       finally
         FLock.Leave;
@@ -757,6 +766,14 @@ begin
       end;
       if Length(Best) > FFormula.MaxIter then
         Break;
+    end;
+    if RefFormula.HasPixelStart and (Length(Best) < kMinOrbitLength) then
+    begin
+      // toutes les candidates s'échappent d'emblée (vue loin de l'ensemble) : W est une orbite de Julia valide, de
+      // point de départ 0, et sert de référence (δ0 = pixel - 0)
+      Best := Critical;
+      BestX := THighFloat.Zero(Words);
+      BestY := BestX;
     end;
     InstallReference(Generation, BestX, BestY, Best, Words, RefFormula.MaxIter, Critical, IsCriticalNew);
   finally
