@@ -125,7 +125,7 @@ begin
     if Result <> kOk then
       Exit;
     try
-      if not F.SupportsPerturbation then
+      if not F.IsPerturbationSupported then
         Exit(kUnsupported);
 {$IFDEF FAKE_ABI2}
       // une DLL v2 ne sait pas encore perturber le Burning Ship
@@ -159,16 +159,27 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Réponse d'après le registre des formules, sans créer de formule : 1 si la formule d'identifiant Formula existe
+// Réponse d'après le registre des formules (instance temporaire aux valeurs par défaut) : 1 si la formule d'identifiant Formula existe
 // et supporte la perturbation, 0 sinon.
 function fk_perturbation_supported(Formula: Integer): Integer; cdecl;
 var
   I: Integer;
+  F: TFractalFormula;
 begin
   Result := 0;
   for I := 0 to FormulaClassCount - 1 do
-    if (FormulaClassAt(I).KernelId = Formula) and FormulaClassAt(I).SupportsPerturbation then
-      Result := 1;
+    if FormulaClassAt(I).KernelId = Formula then
+    begin
+      // la prise en charge dépend désormais de l'instance (puissance de Multibrot) : instance temporaire, valeurs
+      // par défaut, comme le fait la DLL Rust pour un identifiant seul
+      F := FormulaClassAt(I).Create;
+      try
+        if F.IsPerturbationSupported then
+          Result := 1;
+      finally
+        F.Free;
+      end;
+    end;
 end;
 
 {$ENDIF}

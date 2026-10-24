@@ -3,7 +3,7 @@
 interface
 
 uses
-  Math, TestFramework, Fractal.Types, Fractal.Formulas;
+  SysUtils, Math, TestFramework, Fractal.Types, Fractal.Formulas;
 
 type
   TTestFormulas = class(TTestCase)
@@ -21,6 +21,9 @@ type
     procedure TestKernelIds;
     procedure TestParamToSliderPosition;
     procedure TestSliderPositionToParam;
+    procedure TestPowerSliderSnapsToIntegers;
+    procedure TestJuliaSliderNotSnapped;
+    procedure TestIsIntegerPower;
     procedure TestSliderWithEmptyRange;
     procedure TestResetParamsRestoresDefaults;
   end;
@@ -248,6 +251,69 @@ begin
   CheckEquals(kParamSliderSteps, ParamToSliderPosition(Info, 5), 'au-dessus du maximum');
   CheckEquals(0, ParamToSliderPosition(Info, -5), 'en dessous du minimum');
   CheckEquals(0, ParamToSliderPosition(Info, NaN));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestPowerSliderSnapsToIntegers;
+var
+  B: TMultibrotFormula;
+  Info: TFormulaParam;
+  K, Pos: Integer;
+begin
+  B := TMultibrotFormula.Create;
+  try
+    Info := B.ParamInfo(0);
+  finally
+    B.Free;
+  end;
+  Check(Info.IsIntegerSnapped, 'puissance aimantée');
+  for K := 2 to 10 do
+    CheckEquals(K, SliderPositionToParam(Info, ParamToSliderPosition(Info, K)), 0, Format('entier %d', [K]));
+  // position 100 : 1,5 + 0,85 = 2,35, bien à plus d'un demi-cran (0,00425) de tout entier
+  Pos := 100;
+  CheckEquals(Info.MinValue + Pos * (Info.MaxValue - Info.MinValue) / kParamSliderSteps,
+    SliderPositionToParam(Info, Pos), 1e-12, 'hors aimant');
+  CheckEquals(1.5, SliderPositionToParam(Info, 0), 0, 'position 0');
+  CheckEquals(10, SliderPositionToParam(Info, kParamSliderSteps), 0, 'position max');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestJuliaSliderNotSnapped;
+var
+  J: TJuliaFormula;
+  I: Integer;
+  Info: TFormulaParam;
+begin
+  J := TJuliaFormula.Create;
+  try
+    for I := 0 to J.ParamCount - 1 do
+    begin
+      Info := J.ParamInfo(I);
+      Check(not Info.IsIntegerSnapped, Info.Name);
+     
+      CheckEquals(Info.MinValue + 501 * (Info.MaxValue - Info.MinValue) / kParamSliderSteps,
+        SliderPositionToParam(Info, 501), 1e-15, Info.Name);
+    end;
+  finally
+    J.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestFormulas.TestIsIntegerPower;
+begin
+  Check(IsIntegerPower(2), '2');
+  Check(IsIntegerPower(3), '3');
+  Check(IsIntegerPower(10), '10');
+  Check(IsIntegerPower(3 + 1e-12), '3 + 1e-12');
+  Check(not IsIntegerPower(2.5), '2,5');
+  Check(not IsIntegerPower(1.5), '1,5');
+  Check(not IsIntegerPower(1), '1');
+  Check(not IsIntegerPower(11), '11');
+  Check(not IsIntegerPower(3.0001), '3,0001');
 end;
 
 {------------------------------------------------------------------------------}

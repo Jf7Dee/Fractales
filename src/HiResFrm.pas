@@ -233,7 +233,7 @@ begin
     Exit;
   Supersampled := FViewport.Resized(Settings.Width * Settings.Supersample, Settings.Height * Settings.Supersample);
   // même règle que le navigateur : avec la perturbation, seule la limite du palier 2 compte
-  if FFormula.SupportsPerturbation then
+  if FFormula.IsPerturbationSupported then
     IsAtLimit := Supersampled.DeepPrecisionState = psLimit
   else
     IsAtLimit := Supersampled.PrecisionState(TRenderEngine.GetEpsilon(FKernel)) = psLimit;

@@ -544,7 +544,7 @@ procedure TMainForm.UpdateKernelEpsilon;
 begin
   // la limite de zoom suit le noyau réellement utilisé (une formule sans équivalent Rust reste en Delphi)
   FNavigator.Epsilon := TRenderEngine.GetEpsilon(FEngine.ResolveKernel(FFormula));
-  FNavigator.IsPerturbationAllowed := FFormula.SupportsPerturbation;
+  FNavigator.IsPerturbationAllowed := FFormula.IsPerturbationSupported;
 end;
 
 {------------------------------------------------------------------------------}
@@ -819,7 +819,7 @@ begin
       else
         FSmokeLog.Add(RustKernelStatus + ' Étape ignorée.');
       // zoom profond : (0 ; 1) est exactement représentable, taille de pixel 1e-30 hors de portée du palier 1
-      if not FFormula.SupportsPerturbation then
+      if not FFormula.IsPerturbationSupported then
         raise Exception.Create('zoom profond : formule sans perturbation');
       FNavigator.GoToView(MakeViewport(0, 1, kSmokeDeepPixelSize * FNavigator.Viewport.PixelWidth,
         FNavigator.Viewport.PixelWidth, FNavigator.Viewport.PixelHeight));
@@ -836,7 +836,7 @@ begin
       // zoom profond Burning Ship : cx à la pointe de l'axe réel (-2 ; 0), même taille de pixel
       SmokeFormulaClass := TFractalFormulaClass(FFormula.ClassType);
       SetFormula(TBurningShipFormula.Create, False);
-      if not FFormula.SupportsPerturbation then
+      if not FFormula.IsPerturbationSupported then
         raise Exception.Create('zoom profond Burning Ship : formule sans perturbation');
       FNavigator.GoToView(MakeViewport(kSmokeBurningShipCenterX, 0,
         kSmokeDeepPixelSize * FNavigator.Viewport.PixelWidth,
@@ -1103,6 +1103,7 @@ begin
     if Value <> FFormula.GetParam(Index) then
     begin
       FFormula.SetParam(Index, Value);
+      FNavigator.IsPerturbationAllowed := FFormula.IsPerturbationSupported;
       RenderCurrent;
     end;
     FStatusMessage := '';
@@ -1125,6 +1126,7 @@ begin
   Index := TTrackBar(Sender).Tag;
   FFormula.SetParam(Index, SliderPositionToParam(FFormula.ParamInfo(Index), TTrackBar(Sender).Position));
   FParamEdits[Index].Text := FloatToStr(FFormula.GetParam(Index));
+  FNavigator.IsPerturbationAllowed := FFormula.IsPerturbationSupported;
   FStatusMessage := '';
   RenderCurrent;
 end;

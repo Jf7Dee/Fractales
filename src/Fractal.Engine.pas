@@ -319,7 +319,7 @@ begin
   NewFormula := Formula.Clone;
   NewKernel := ResolveKernel(NewFormula);
   // palier 2 dès que le palier 1 n'est plus sûr pour le noyau du rendu (psWarning) : bascule avant la pixelisation
-  IsNewPerturbation := NewFormula.SupportsPerturbation and (V.PrecisionState(GetEpsilon(NewKernel)) <> psOk);
+  IsNewPerturbation := NewFormula.IsPerturbationSupported and (V.PrecisionState(GetEpsilon(NewKernel)) <> psOk);
   if IsNewPerturbation then
     NewKernel := ResolveKernel(NewFormula, True);
   StopCurrent;

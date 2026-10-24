@@ -20,6 +20,9 @@ const
   kParamSliderSteps = 1000;  // crans du curseur d'un paramètre de formule
   // longueur minimale d'une orbite de référence : après le premier pas, la perturbation lit Orbit[1]
   kMinOrbitLength = 2;
+  // puissance entière de Multibrot : seules 2..kMaxPerturbedPower sont perturbables, à kIntegerPowerTolerance près
+  kMaxPerturbedPower = 10;
+  kIntegerPowerTolerance = 1e-9;
 
 type
   TFormulaParam = record
@@ -28,6 +31,7 @@ type
     DefaultValue: Double;
     MinValue: Double;
     MaxValue: Double;
+    IsIntegerSnapped: Boolean;  // le curseur aimante les valeurs proches d'un entier (puissance de Multibrot)
   end;
 
   TFractalFormula = class;
@@ -40,7 +44,8 @@ type
     FMaxIter: Integer;
     procedure SetMaxIter(Value: Integer);
   protected
-    procedure DeclareParam(const AName, ACaption: string; ADefault, AMin, AMax: Double);
+    procedure DeclareParam(const AName, ACaption: string; ADefault, AMin, AMax: Double;
+      AIsIntegerSnapped: Boolean = False);
     procedure ParamsChanged; virtual;
     function SmoothValue(N: Integer; Modulus2, LogPower: TFloat): Single;
   public
@@ -53,7 +58,7 @@ type
     class function KernelId: Integer; virtual;
     function Clone: TFractalFormula;
     function Iterate(const CX, CY: TFloat): Single; virtual; abstract;
-    class function SupportsPerturbation: Boolean; virtual;
+    function IsPerturbationSupported: Boolean; virtual;
     // un pas de l'orbite de référence, en haute précision ; lève une exception si non pris en charge
     procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); virtual;
     // pixel d'écart (DCX, DCY) à la référence ; Orbit[0] = 0 ; même convention de compte et de lissage qu'Iterate
@@ -74,7 +79,7 @@ type
     class function DefaultCenterX: TFloat; override;
     class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
-    class function SupportsPerturbation: Boolean; override;
+    function IsPerturbationSupported: Boolean; override;
     procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
   end;
@@ -117,7 +122,7 @@ type
     class function DefaultCenterY: TFloat; override;
     class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
-    class function SupportsPerturbation: Boolean; override;
+    function IsPerturbationSupported: Boolean; override;
     procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
   end;
@@ -129,7 +134,7 @@ type
     class function DefaultCenterX: TFloat; override;
     class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
-    class function SupportsPerturbation: Boolean; override;
+    function IsPerturbationSupported: Boolean; override;
     procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
   end;
@@ -140,6 +145,8 @@ function FormulaClassAt(Index: Integer): TFractalFormulaClass;
 function FindFormulaClass(const AName: string): TFractalFormulaClass;
 function ParamToSliderPosition(const Info: TFormulaParam; Value: Double): Integer;
 function SliderPositionToParam(const Info: TFormulaParam; Position: Integer): Double;
+// vrai si Power est un entier de 2 à kMaxPerturbedPower (tolérance kIntegerPowerTolerance)
+function IsIntegerPower(Power: TFloat): Boolean;
 // |c + d| - |c| sans perte de précision (Burning Ship perturbé) ; partagé avec la DLL factice des tests
 function DiffAbs(C, D: TFloat): TFloat;
 
@@ -191,7 +198,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-class function TFractalFormula.SupportsPerturbation: Boolean;
+function TFractalFormula.IsPerturbationSupported: Boolean;
 begin
   Result := False;
 end;
@@ -219,7 +226,8 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TFractalFormula.DeclareParam(const AName, ACaption: string; ADefault, AMin, AMax: Double);
+procedure TFractalFormula.DeclareParam(const AName, ACaption: string; ADefault, AMin, AMax: Double;
+  AIsIntegerSnapped: Boolean);
 var
   I: Integer;
 begin
@@ -231,6 +239,7 @@ begin
   FParamInfos[I].DefaultValue := ADefault;
   FParamInfos[I].MinValue := AMin;
   FParamInfos[I].MaxValue := AMax;
+  FParamInfos[I].IsIntegerSnapped := AIsIntegerSnapped;
   FParamValues[I] := ADefault;
 end;
 
@@ -388,7 +397,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-class function TMandelbrotFormula.SupportsPerturbation: Boolean;
+function TMandelbrotFormula.IsPerturbationSupported: Boolean;
 begin
   Result := True;
 end;
@@ -448,7 +457,7 @@ end;
 constructor TMultibrotFormula.Create;
 begin
   inherited Create;
-  DeclareParam('power', 'Puissance n', 3, 1.5, 10);
+  DeclareParam('power', 'Puissance n', 3, 1.5, 10, True);
   ParamsChanged;
 end;
 
@@ -673,7 +682,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-class function TBurningShipFormula.SupportsPerturbation: Boolean;
+function TBurningShipFormula.IsPerturbationSupported: Boolean;
 begin
   Result := True;
 end;
@@ -782,7 +791,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-class function TTricornFormula.SupportsPerturbation: Boolean;
+function TTricornFormula.IsPerturbationSupported: Boolean;
 begin
   Result := True;
 end;
@@ -885,9 +894,31 @@ end;
 {------------------------------------------------------------------------------}
 
 function SliderPositionToParam(const Info: TFormulaParam; Position: Integer): Double;
+var
+  Nearest: Integer;
 begin
   Position := EnsureRange(Position, 0, kParamSliderSteps);
   Result := Info.MinValue + Position * (Info.MaxValue - Info.MinValue) / kParamSliderSteps;
+  if Info.IsIntegerSnapped then
+  begin
+    // aimantation : à moins d'un demi-cran d'un entier, la valeur exacte de cet entier (le cran ne tombe pas dessus)
+    Nearest := Round(Result);
+    if Abs(Result - Nearest) <= 0.5 * (Info.MaxValue - Info.MinValue) / kParamSliderSteps then
+      Result := Nearest;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function IsIntegerPower(Power: TFloat): Boolean;
+var
+  Nearest: Integer;
+begin
+  Result := False;
+  if IsNan(Power) or (Power < 0) or (Power > kMaxPerturbedPower + 1) then
+    Exit;
+  Nearest := Round(Power);
+  Result := (Abs(Power - Nearest) < kIntegerPowerTolerance) and (Nearest >= 2) and (Nearest <= kMaxPerturbedPower);
 end;
 
 initialization

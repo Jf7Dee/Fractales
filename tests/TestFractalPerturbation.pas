@@ -296,12 +296,39 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TTestPerturbation.TestSupportsPerturbation;
+var
+  F: TFractalFormula;
 begin
-  Check(TMandelbrotFormula.SupportsPerturbation, 'Mandelbrot');
-  Check(TTricornFormula.SupportsPerturbation, 'Tricorn');
-  Check(TBurningShipFormula.SupportsPerturbation, 'Burning Ship');
-  Check(not TJuliaFormula.SupportsPerturbation, 'Julia');
-  Check(not TFractalFormula.SupportsPerturbation, 'base');
+  F := TMandelbrotFormula.Create;
+  try
+    Check(F.IsPerturbationSupported, 'Mandelbrot');
+  finally
+    F.Free;
+  end;
+  F := TTricornFormula.Create;
+  try
+    Check(F.IsPerturbationSupported, 'Tricorn');
+  finally
+    F.Free;
+  end;
+  F := TBurningShipFormula.Create;
+  try
+    Check(F.IsPerturbationSupported, 'Burning Ship');
+  finally
+    F.Free;
+  end;
+  F := TJuliaFormula.Create;
+  try
+    Check(not F.IsPerturbationSupported, 'Julia');
+  finally
+    F.Free;
+  end;
+  F := TMultibrotFormula.Create;
+  try
+    Check(not F.IsPerturbationSupported, 'Multibrot');
+  finally
+    F.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
