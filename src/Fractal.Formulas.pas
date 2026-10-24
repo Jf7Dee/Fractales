@@ -61,6 +61,11 @@ type
     function IsPerturbationSupported: Boolean; virtual;
     // un pas de l'orbite de référence, en haute précision ; lève une exception si non pris en charge
     procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); virtual;
+    // vrai si le prochain pas donnerait un Z trop grand pour la partie entière de THighFloat (il échappe alors
+    // forcément) : ce pas se fait en Extended par StepFloat, car seul son module compte (échappement, lissage)
+    function ShouldStepInFloat(ZX, ZY: TFloat): Boolean; virtual;
+    // le pas de la formule en Extended, pour les seuls cas où ShouldStepInFloat est vrai
+    function StepFloat(ZX, ZY, CX, CY: TFloat): TComplexPoint; virtual;
     // pixel d'écart (DCX, DCY) à la référence ; Orbit[0] = 0 ; même convention de compte et de lissage qu'Iterate
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; virtual;
     function ParamCount: Integer;
@@ -97,6 +102,11 @@ type
     class function DefaultWidth: TFloat; override;
     class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
+    function IsPerturbationSupported: Boolean; override;
+    procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
+    function ShouldStepInFloat(ZX, ZY: TFloat): Boolean; override;
+    function StepFloat(ZX, ZY, CX, CY: TFloat): TComplexPoint; override;
+    function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
   end;
 
   TJuliaFormula = class(TFractalFormula)
@@ -155,6 +165,9 @@ implementation
 const
   kLn2 = 0.69314718055994530942;
   kNoPerturbationMessage = '%s : perturbation non prise en charge';
+  kNotIntegerPowerMessage = 'Multibrot : puissance %g non entière, perturbation impossible';
+  // |z|^p au-delà de 2^30 : proche de la limite de la partie entière de THighFloat (2^32), et déjà échappé
+  kFloatStepLogBound = 30 * kLn2;
   kBadOrbitMessage = 'Orbite de référence invalide (longueur %d, tableau de %d points)';
 
 var
@@ -206,6 +219,20 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TFractalFormula.StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat);
+begin
+  raise Exception.CreateFmt(kNoPerturbationMessage, [FormulaName]);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFractalFormula.ShouldStepInFloat(ZX, ZY: TFloat): Boolean;
+begin
+  Result := False;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFractalFormula.StepFloat(ZX, ZY, CX, CY: TFloat): TComplexPoint;
 begin
   raise Exception.CreateFmt(kNoPerturbationMessage, [FormulaName]);
 end;
@@ -525,6 +552,130 @@ begin
       X := R * Cos(T) + CX;
       Y := R * Sin(T) + CY;
     end;
+    Inc(N);
+  end;
+  Result := kInside;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMultibrotFormula.IsPerturbationSupported: Boolean;
+begin
+  Result := IsIntegerPower(FPower);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMultibrotFormula.StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat);
+var
+  PX, PY, NewX, NewY: THighFloat;
+  K: Integer;
+begin
+  if not IsIntegerPower(FPower) then
+    raise EArgumentException.CreateFmt(kNotIntegerPowerMessage, [FPower]);
+  // z := z^p + c, par p - 1 multiplications complexes successives
+  PX := ZX;
+  PY := ZY;
+  for K := 2 to Round(FPower) do
+  begin
+    NewX := PX.Mul(ZX).Sub(PY.Mul(ZY));
+    NewY := PX.Mul(ZY).Add(PY.Mul(ZX));
+    PX := NewX;
+    PY := NewY;
+  end;
+  ZX := PX.Add(CX);
+  ZY := PY.Add(CY);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMultibrotFormula.ShouldStepInFloat(ZX, ZY: TFloat): Boolean;
+var
+  R2: TFloat;
+begin
+  R2 := ZX * ZX + ZY * ZY;
+  Result := IsIntegerPower(FPower) and (R2 > 1) and (0.5 * Ln(R2) * Round(FPower) > kFloatStepLogBound);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMultibrotFormula.StepFloat(ZX, ZY, CX, CY: TFloat): TComplexPoint;
+var
+  PX, PY, T: TFloat;
+  K: Integer;
+begin
+  if not IsIntegerPower(FPower) then
+    raise EArgumentException.CreateFmt(kNotIntegerPowerMessage, [FPower]);
+  PX := ZX;
+  PY := ZY;
+  for K := 2 to Round(FPower) do
+  begin
+    T := PX * ZX - PY * ZY;
+    PY := PX * ZY + PY * ZX;
+    PX := T;
+  end;
+  Result.X := PX + CX;
+  Result.Y := PY + CY;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMultibrotFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
+var
+  Binomial: array[0..kMaxPerturbedPower] of TFloat;   // C(p, k)
+  PowX, PowY: array[0..kMaxPerturbedPower] of TFloat;  // Z^j
+  DX, DY, ZX, ZY, R2, SX, SY, TX, TY: TFloat;
+  N, M, K, P: Integer;
+begin
+  if not IsIntegerPower(FPower) then
+    raise EArgumentException.CreateFmt(kNotIntegerPowerMessage, [FPower]);
+  CheckOrbit(Orbit, OrbitLength);
+  P := Round(FPower);
+  Binomial[0] := 1;
+  for K := 1 to P do
+    Binomial[K] := Binomial[K - 1] * (P - K + 1) / K;
+  PowX[0] := 1;
+  PowY[0] := 0;
+  DX := 0;
+  DY := 0;
+  N := 0;
+  M := 0;
+  while N < FMaxIter do
+  begin
+    ZX := Orbit[M].X + DX;
+    ZY := Orbit[M].Y + DY;
+    R2 := ZX * ZX + ZY * ZY;
+    if R2 > kEscapeRadius2 then
+      Exit(SmoothValue(N, R2, FLogPower));
+    if (R2 < DX * DX + DY * DY) or (M = OrbitLength - 1) then
+    begin
+      // rebasage : la référence redevient Z0 = 0
+      DX := ZX;
+      DY := ZY;
+      M := 0;
+    end;
+    // puissances de Z : Z^j pour j = 0..p-1
+    for K := 1 to P - 1 do
+    begin
+      PowX[K] := PowX[K - 1] * Orbit[M].X - PowY[K - 1] * Orbit[M].Y;
+      PowY[K] := PowX[K - 1] * Orbit[M].Y + PowY[K - 1] * Orbit[M].X;
+    end;
+    // δ' = Σ C(p,k)·Z^(p-k)·δ^k + δc, en Horner : S := C(p,p) ; S := S·δ + C(p,k)·Z^(p-k) pour k = p-1..1 ;
+    // δ' := S·δ + δc
+    SX := 1;
+    SY := 0;
+    for K := P - 1 downto 1 do
+    begin
+      TX := SX * DX - SY * DY;
+      TY := SX * DY + SY * DX;
+      SX := TX + Binomial[K] * PowX[P - K];
+      SY := TY + Binomial[K] * PowY[P - K];
+    end;
+    TX := SX * DX - SY * DY + DCX;
+    TY := SX * DY + SY * DX + DCY;
+    DX := TX;
+    DY := TY;
+    Inc(M);
     Inc(N);
   end;
   Result := kInside;

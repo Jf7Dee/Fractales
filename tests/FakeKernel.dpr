@@ -125,7 +125,8 @@ begin
     if Result <> kOk then
       Exit;
     try
-      if not F.IsPerturbationSupported then
+      // la DLL factice reste en version 3 (Multibrot non perturbé) jusqu'à l'ABI 4
+      if not F.IsPerturbationSupported or (Formula = kKernelMultibrot) then
         Exit(kUnsupported);
 {$IFDEF FAKE_ABI2}
       // une DLL v2 ne sait pas encore perturber le Burning Ship
@@ -167,6 +168,8 @@ var
   F: TFractalFormula;
 begin
   Result := 0;
+  if Formula = kKernelMultibrot then
+    Exit;   // version 3 : Multibrot non perturbé (la version 4 viendra avec l'ABI 4)
   for I := 0 to FormulaClassCount - 1 do
     if FormulaClassAt(I).KernelId = Formula then
     begin

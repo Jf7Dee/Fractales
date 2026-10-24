@@ -33,6 +33,19 @@ const
   kBurningShipBodyY = '0.684283155331532915622121006639149768680049488';
   kBurningShipBodyMaxIter = 150;
   kBurningShipBodyPixelSize = 1e-27;
+  // Bords de Multibrot (puissances 3 et 10), partagés avec les rendus profonds. Bissection exacte (THighFloat, 120
+  // pas) le long d'un rayon issu de l'origine, entre un point intérieur (0) et un point extérieur (module 1 + 1), puis
+  // centre du dernier intervalle.
+  // p = 3 : rayon à 40 degrés, MaxIter 1000 ; 29,6 % de pixels extérieurs au pixel 1e-12, 52,8 % à 1e-25.
+  // p = 10 : rayon à 80 degrés, MaxIter 500 ; 53,7 % aux deux échelles. Pour les deux, un décalage de l'échantillon
+  // d'un millième de pixel ne change le verdict d'aucun des 108 pixels échantillonnés. À MaxIter 3000 (p = 3) la vérité
+  // devient instable (4,6 % de verdicts changés au pixel 1e-12) : d'où ces MaxIter.
+  kMultibrot3X = '0.612676279337135871775948097125933146538811142197819781482089';
+  kMultibrot3Y = '0.514096440022858847683450364173709121573969358175237429647720';
+  kMultibrot3MaxIter = 1000;
+  kMultibrot10X = '0.121005715673480444563141255909409664709949871465915659458729';
+  kMultibrot10Y = '0.686257515368839083109099330561232671954583079989923098731122';
+  kMultibrot10MaxIter = 500;
 
 // Vue de PixelWidth x PixelHeight pixels et de largeur Width, centrée sur les chaînes décimales exactes (lues par
 // THighFloat.TryParse) ; lève une exception si une chaîne est illisible.
@@ -72,6 +85,11 @@ type
     procedure TestBurningShipFavouriteMatchesExact;
     procedure TestBurningShipNearAxisBorderMatchesExact;
     procedure TestBurningShipDeepBodyMatchesExact;
+    procedure TestMultibrotReferenceMatchesIterate;
+    procedure TestMultibrotPower2MatchesMandelbrot;
+    procedure TestMultibrotMatchesExact;
+    procedure TestMultibrotNonIntegerRaises;
+    procedure TestMultibrotHighPowerOrbitDoesNotOverflow;
     procedure TestPerturbedMatchesDirect;
     procedure TestReferenceEscapingEarlyStillMatches;
     procedure TestReferenceOrbitCancels;
@@ -160,8 +178,12 @@ var
   Offset: TComplexPoint;
   CX, CY, ZX, ZY: THighFloat;
   N: Integer;
-  X, Y, R2, Mu: TFloat;
+  X, Y, R2, Mu, LogPower: TFloat;
+  FloatPoint: TComplexPoint;
 begin
+  LogPower := kLn2;
+  if Formula is TMultibrotFormula then
+    LogPower := Ln(Formula.GetParam(0));
   Offset := V.PixelOffset(PX, PY);
   CX := V.ExactCenterX.WithFracWords(kTruthFracWords).AddFloat(Offset.X, kTruthFracWords);
   CY := V.ExactCenterY.WithFracWords(kTruthFracWords).AddFloat(Offset.Y, kTruthFracWords);
@@ -174,8 +196,18 @@ begin
     R2 := X * X + Y * Y;
     if R2 > kEscapeRadius2 then
     begin
-      Mu := Max(0, N + 1 - Ln(0.5 * Ln(R2)) / kLn2);
+      Mu := Max(0, N + 1 - Ln(0.5 * Ln(R2)) / LogPower);
       Exit(Mu);
+    end;
+    if Formula.ShouldStepInFloat(X, Y) then
+    begin
+      // le point suivant n'est testé que s'il reste une itération (même convention qu'Iterate)
+      if N + 1 >= Formula.MaxIter then
+        Exit(kInside);
+      // le pas déborderait THighFloat : il échappe, son module en Extended donne le lissage
+      FloatPoint := Formula.StepFloat(X, Y, CX.ToFloat, CY.ToFloat);
+      R2 := FloatPoint.X * FloatPoint.X + FloatPoint.Y * FloatPoint.Y;
+      Exit(Max(0, N + 2 - Ln(0.5 * Ln(R2)) / LogPower));
     end;
     Formula.StepReference(ZX, ZY, CX, CY);
   end;
@@ -325,7 +357,9 @@ begin
   end;
   F := TMultibrotFormula.Create;
   try
-    Check(not F.IsPerturbationSupported, 'Multibrot');
+    Check(F.IsPerturbationSupported, 'Multibrot, puissance entière');
+    F.SetParam(0, 3.5);
+    Check(not F.IsPerturbationSupported, 'Multibrot, puissance 3,5');
   finally
     F.Free;
   end;
@@ -490,6 +524,181 @@ var
 begin
   V := MakeExactScene(kBurningShipBodyX, kBurningShipBodyY, kBurningShipBodyPixelSize * kViewWidth);
   CheckConcordance(TBurningShipFormula.Create, V, 0, kBurningShipBodyMaxIter, 'corps du navire, pixel 1e-27', True);
+end;
+
+{------------------------------------------------------------------------------}
+
+// p = 3 : point peu profond qui s'échappe vite ; pas direct z^3 + c en Extended.
+procedure TTestPerturbation.TestMultibrotReferenceMatchesIterate;
+const
+  kRefX = 0.8;
+  kRefY = 0.5;
+var
+  F: TFractalFormula;
+begin
+  F := TMultibrotFormula.Create;
+  try
+    CheckReferenceOrbit(F, kRefX, kRefY,
+      procedure(var X, Y: TFloat)
+      var
+        NewX: TFloat;
+      begin
+        NewX := X * X * X - 3 * X * Y * Y + kRefX;
+        Y := 3 * X * X * Y - Y * Y * Y + kRefY;
+        X := NewX;
+      end);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Multibrot p = 2 et Mandelbrot, perturbés sur la même vue (pixel 1e-12) : mêmes verdicts, valeurs lissées proches.
+procedure TTestPerturbation.TestMultibrotPower2MatchesMandelbrot;
+var
+  Multibrot, Mandelbrot: TFractalFormula;
+  V: TViewport;
+  OrbitA, OrbitB: TOrbit;
+  X, Y, Count: Integer;
+  Offset: TComplexPoint;
+  A, B: Single;
+begin
+  Multibrot := TMultibrotFormula.Create;
+  Mandelbrot := TMandelbrotFormula.Create;
+  try
+    Multibrot.SetParam(0, 2);
+    Multibrot.MaxIter := kTestMaxIter;
+    Mandelbrot.MaxIter := kTestMaxIter;
+    V := MakeScene(kMandelbrotX, kMandelbrotY);
+    Check(ComputeReferenceOrbit(Multibrot, V.ExactCenterX, V.ExactCenterY,
+      function: Boolean
+      begin
+        Result := False;
+      end, OrbitA), 'orbite Multibrot');
+    Check(ComputeReferenceOrbit(Mandelbrot, V.ExactCenterX, V.ExactCenterY,
+      function: Boolean
+      begin
+        Result := False;
+      end, OrbitB), 'orbite Mandelbrot');
+    Count := 0;
+    Y := 0;
+    while Y < kViewHeight do
+    begin
+      X := 0;
+      while X < kViewWidth do
+      begin
+        Offset := V.PixelOffset(X, Y);
+        A := Multibrot.IteratePerturbed(OrbitA, Length(OrbitA), Offset.X, Offset.Y);
+        B := Mandelbrot.IteratePerturbed(OrbitB, Length(OrbitB), Offset.X, Offset.Y);
+        Check((A < 0) = (B < 0), Format('verdict différent au pixel %d, %d', [X, Y]));
+        if A >= 0 then
+          Check(Abs(A - B) < kSmoothTolerance, Format('lissage différent au pixel %d, %d : %g / %g', [X, Y, A, B]));
+        Inc(Count);
+        Inc(X, kSampleStep);
+      end;
+      Inc(Y, kSampleStep);
+    end;
+    Check(Count > 0, 'aucun pixel comparé');
+  finally
+    Mandelbrot.Free;
+    Multibrot.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Concordance avec la vérité exacte, p = 3 et p = 10, au pixel 1e-12 puis 1e-25 (bords kMultibrot3 et kMultibrot10).
+procedure TTestPerturbation.TestMultibrotMatchesExact;
+const
+  kPixelSizes: array[0..1] of TFloat = (1e-12, 1e-25);
+  kPowers: array[0..1] of Integer = (3, 10);
+var
+  F: TFractalFormula;
+  V: TViewport;
+  I, J, MaxIter: Integer;
+  TextX, TextY: string;
+begin
+  for I := 0 to High(kPowers) do
+  begin
+    if kPowers[I] = 3 then
+    begin
+      TextX := kMultibrot3X;
+      TextY := kMultibrot3Y;
+      MaxIter := kMultibrot3MaxIter;
+    end
+    else
+    begin
+      TextX := kMultibrot10X;
+      TextY := kMultibrot10Y;
+      MaxIter := kMultibrot10MaxIter;
+    end;
+    for J := 0 to High(kPixelSizes) do
+    begin
+      F := TMultibrotFormula.Create;
+      F.SetParam(0, kPowers[I]);
+      V := MakeExactScene(TextX, TextY, kPixelSizes[J] * kViewWidth);
+      CheckConcordance(F, V, 0, MaxIter, Format('puissance %d, pixel %g', [kPowers[I], kPixelSizes[J]]), True);
+    end;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPerturbation.TestMultibrotNonIntegerRaises;
+const
+  kNonIntegerPower = 3.5;
+var
+  F: TFractalFormula;
+  Orbit: TOrbit;
+  IsRaised: Boolean;
+begin
+  F := TMultibrotFormula.Create;
+  try
+    F.SetParam(0, kNonIntegerPower);
+    SetLength(Orbit, kMinOrbitLength);
+    IsRaised := False;
+    try
+      F.IteratePerturbed(Orbit, kMinOrbitLength, 0, 0);
+    except
+      on EArgumentException do
+        IsRaised := True;
+    end;
+    Check(IsRaised, 'IteratePerturbed doit refuser une puissance non entière');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// p = 10 : le pas qui échappe dépasserait la partie entière de THighFloat ; l'orbite le fait en Extended.
+procedure TTestPerturbation.TestMultibrotHighPowerOrbitDoesNotOverflow;
+const
+  kRefX = 0.9;
+  kRefY = 0.5;   // |Z3| ~ 88 : Z4 ~ 3e19, au-delà de la partie entière de THighFloat (2^32)
+  kIntegerLimit2 = 4294967296.0 * 4294967296.0;
+var
+  F: TFractalFormula;
+  Orbit: TOrbit;
+  Last: TComplexPoint;
+begin
+  F := TMultibrotFormula.Create;
+  try
+    F.SetParam(0, 10);
+    F.MaxIter := kTestMaxIter;
+    Check(ComputeReferenceOrbit(F, THighFloat.FromFloat(kRefX, kOrbitFracWords),
+      THighFloat.FromFloat(kRefY, kOrbitFracWords),
+      function: Boolean
+      begin
+        Result := False;
+      end, Orbit), 'orbite');
+    Last := Orbit[High(Orbit)];
+    Status(Format('longueur %d, dernier |Z|2 = %g', [Length(Orbit), Last.X * Last.X + Last.Y * Last.Y]));
+    Check(Last.X * Last.X + Last.Y * Last.Y > kIntegerLimit2, 'le dernier point échappe, au-delà de THighFloat');
+  finally
+    F.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}

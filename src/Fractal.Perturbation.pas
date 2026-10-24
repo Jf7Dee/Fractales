@@ -30,8 +30,9 @@ function ComputeReferenceOrbit(Formula: TFractalFormula; const CX, CY: THighFloa
   out Orbit: TOrbit): Boolean;
 var
   ZX, ZY: THighFloat;
-  Point: TComplexPoint;
+  Point, FloatPoint: TComplexPoint;
   Count, K: Integer;
+  IsFloatStep: Boolean;
 begin
   if Formula = nil then
     raise EArgumentException.Create(kNilFormulaMessage);
@@ -41,6 +42,7 @@ begin
   ZY := THighFloat.Zero(CX.FracWords);
   Count := 0;
   K := 0;
+  IsFloatStep := False;
   while True do
   begin
     if (K mod kCancelCheckInterval = 0) and Assigned(IsCancelled) and IsCancelled() then
@@ -48,8 +50,13 @@ begin
       Orbit := nil;
       Exit;
     end;
-    Point.X := ZX.ToFloat;
-    Point.Y := ZY.ToFloat;
+    if IsFloatStep then
+      Point := FloatPoint
+    else
+    begin
+      Point.X := ZX.ToFloat;
+      Point.Y := ZY.ToFloat;
+    end;
     if Count >= Length(Orbit) then
       SetLength(Orbit, Count + kOrbitGrowStep);
     Orbit[Count] := Point;
@@ -57,7 +64,14 @@ begin
     // Zk échappe (|Z|² > R²) ou k = MaxIter : le dernier point est stocké puis on s'arrête
     if (Point.X * Point.X + Point.Y * Point.Y > kEscapeRadius2) or (K >= Formula.MaxIter) then
       Break;
-    Formula.StepReference(ZX, ZY, CX, CY);
+    if not IsFloatStep and Formula.ShouldStepInFloat(Point.X, Point.Y) then
+    begin
+      // ce pas déborderait la partie entière de THighFloat : il échappe, son module en Extended suffit
+      FloatPoint := Formula.StepFloat(Point.X, Point.Y, CX.ToFloat, CY.ToFloat);
+      IsFloatStep := True;
+    end
+    else
+      Formula.StepReference(ZX, ZY, CX, CY);
     Inc(K);
   end;
   SetLength(Orbit, Count);
