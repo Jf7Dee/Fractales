@@ -19,6 +19,7 @@ const
   kKeyZoomFactor = 2.0;
   kSmokeTimeoutMs = 30000;
   kSmokeDeepPixelSize = 1e-30;
+  kSmokeBurningShipCenterX = -2;   // pointe de l'antenne du Burning Ship, sur l'axe
   kPerturbationDoneText = '%s · perturbation : terminé en %d ms';
   kPerturbationProgressText = '%s · perturbation : passe %d/%d   %d ms';
   kPerturbationReferenceText = '%s · perturbation : orbite de référence…';
@@ -774,6 +775,7 @@ var
   HiResFile: string;
   Start: Cardinal;
   Width0: TFloat;
+  SmokeFormulaClass: TFractalFormulaClass;
   Help: THelpForm;
   Topic: THelpTopic;
 begin
@@ -831,6 +833,25 @@ begin
       FNavigator.GoBack;
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu après retour du zoom profond non terminé');
+      // zoom profond Burning Ship : cx dans l'antenne (sur l'axe), même taille de pixel
+      SmokeFormulaClass := TFractalFormulaClass(FFormula.ClassType);
+      SetFormula(TBurningShipFormula.Create, False);
+      if not FFormula.SupportsPerturbation then
+        raise Exception.Create('zoom profond Burning Ship : formule sans perturbation');
+      FNavigator.GoToView(MakeViewport(kSmokeBurningShipCenterX, 0,
+        kSmokeDeepPixelSize * FNavigator.Viewport.PixelWidth,
+        FNavigator.Viewport.PixelWidth, FNavigator.Viewport.PixelHeight));
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu du zoom profond Burning Ship non terminé');
+      CheckSmokeStep('zoom profond Burning Ship');
+      if not FEngine.Status.IsPerturbation then
+        raise Exception.Create('le zoom profond Burning Ship n''a pas utilisé la perturbation');
+      FSmokeLog.Add(Format('Zoom profond Burning Ship OK : %d ms', [FEngine.Status.ElapsedMs]));
+      // retour à la formule et à la vue qu'attendent les étapes suivantes
+      SetFormula(SmokeFormulaClass.Create, False);
+      FNavigator.GoBack;
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu après retour du zoom profond Burning Ship non terminé');
       // pincement simulé (les messages tactiles de Windows ne peuvent pas être fabriqués) : aperçu puis zoom x2
       Width0 := FNavigator.Viewport.Width;
       FNavigator.PinchGesture(100, 80, 100, True, False);

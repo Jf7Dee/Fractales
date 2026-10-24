@@ -20,6 +20,7 @@ type
     function HeavyViewport: TViewport;
     function CountNegativeValues(E: TRenderEngine): Integer;
     function DeepViewport(CX, CY, PixelSize: TFloat): TViewport;
+    function FavouriteViewport(Width: TFloat): TViewport;
     procedure CheckDeepRender(F: TFractalFormula; const V: TViewport; Kernel: TEngineKernelType = ekDelphi;
       RustKernel: TRustKernel = nil);
     procedure CheckAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
@@ -36,6 +37,9 @@ type
     procedure TestShallowRenderStaysDirect;
     procedure TestDeepRenderUsesPerturbation;
     procedure TestTricornDeepRender;
+    procedure TestBurningShipDeepRenderAtAcceptanceDepths;
+    procedure TestBurningShipShallowStaysDirect;
+    procedure TestBurningShipFavouriteDeepRender;
     procedure TestReferenceIsReused;
     procedure TestReferenceCandidateWhenCentreEscapes;
     procedure TestNewRenderCancelsReference;
@@ -48,7 +52,7 @@ type
 implementation
 
 uses
-  TestFractalRustKernel;
+  Fractal.HighFloat, TestFractalRustKernel, TestFractalPerturbation;
 
 const
   kWaitMs = 10000;
@@ -62,6 +66,10 @@ const
   // profondeurs d'acceptation de la spec : 1e-200 (§7) et la limite 1e-300 du palier 2 (§2), sans la franchir
   kAcceptancePixelSizes: array[0..1] of TFloat = (1e-200, 2e-300);
   kHeadroomPixelSize = 1e-50;
+  // Pointe de l'antenne, sur l'axe : (-2 ; 0) est un point du bord (orbite 0, -2, 2, 2...) exactement représentable.
+  // Le cx de l'antenne partagé (kBurningShipAntennaX) donne une image uniforme à 1e-200 : le bord y est trop fin.
+  kBurningShipDeepTipX = -2;
+  kFavouriteDeepFactor = 1e-6;   // vue du favori de JF 10^6 fois plus étroite
   kZoomFactor = 2;
   kBeyondHeadroomFactor = 1.3;      // au-delà de kReferenceIterHeadroom
   kEscapingCenterX = 0.5;           // hors de l'ensemble : le centre et les 8 autres candidates s'échappent vite
@@ -467,6 +475,82 @@ begin
 end;
 
 {------------------------------------------------------------------------------}
+
+{------------------------------------------------------------------------------}
+
+// Burning Ship sur la pointe de l'antenne (cx = kBurningShipDeepTipX, cy = 0) aux profondeurs d'acceptation ; durée
+// notée dans le journal.
+procedure TTestEngine.TestBurningShipDeepRenderAtAcceptanceDepths;
+var
+  F: TBurningShipFormula;
+  I: Integer;
+  T: Cardinal;
+begin
+  F := TBurningShipFormula.Create;
+  try
+    F.MaxIter := kDeepMaxIter;
+    for I := Low(kAcceptancePixelSizes) to High(kAcceptancePixelSizes) do
+    begin
+      T := GetTickCount;
+      CheckDeepRender(F, DeepViewport(kBurningShipDeepTipX, 0, kAcceptancePixelSizes[I]));
+      Status(Format('Burning Ship, pixel %g : %d ms', [kAcceptancePixelSizes[I], GetTickCount - T]));
+    end;
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue par défaut du Burning Ship : calcul direct, aucune orbite de référence.
+procedure TTestEngine.TestBurningShipShallowStaysDirect;
+var
+  E: TRenderEngine;
+  F: TBurningShipFormula;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TBurningShipFormula.Create;
+  try
+    E.Render(MakeViewport(F.DefaultCenterX, F.DefaultCenterY, F.DefaultWidth, kDeepPixelWidth, kDeepPixelHeight), F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs), 'délai dépassé');
+    CheckFalse(E.Status.IsPerturbation);
+    CheckEquals(0, E.ReferenceComputeCount);
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue du favori de JF, centre exact (THighFloat) et largeur donnée.
+function TTestEngine.FavouriteViewport(Width: TFloat): TViewport;
+var
+  X, Y: THighFloat;
+  Words: Integer;
+begin
+  Result := MakeViewport(0, 0, Width, kDeepPixelWidth, kDeepPixelHeight);
+  Words := FracWordsForPixelSize(Result.PixelSize);
+  Check(THighFloat.TryParse(kBurningShipFavouriteCenterX, Words, X), 'centre X lisible');
+  Check(THighFloat.TryParse(kBurningShipFavouriteCenterY, Words, Y), 'centre Y lisible');
+  Result.SetCenter(X, Y);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Favori de JF à sa largeur, puis 10^6 fois plus étroit : cette dernière vue est rendue en perturbation.
+procedure TTestEngine.TestBurningShipFavouriteDeepRender;
+var
+  F: TBurningShipFormula;
+begin
+  F := TBurningShipFormula.Create;
+  try
+    F.MaxIter := kBurningShipFavouriteMaxIter;
+    CheckDeepRender(F, FavouriteViewport(kBurningShipFavouriteWidth * kFavouriteDeepFactor));
+  finally
+    F.Free;
+  end;
+end;
 
 procedure TTestEngine.TestReferenceIsReused;
 var

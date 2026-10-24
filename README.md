@@ -43,7 +43,7 @@ La limite commune aux deux moteurs est une taille de pixel de 1e-300. La barre d
 perturbation : terminé en … ms », « … : orbite de référence… » pendant le calcul de la référence, et « Limite de
 précision proche » près de 1e-300.
 
-- Formules en zoom profond : Mandelbrot et Tricorn. Julia, Burning Ship et Multibrot gardent la limite actuelle
+- Formules en zoom profond : Mandelbrot, Tricorn et Burning Ship. Julia et Multibrot gardent la limite actuelle
   (prévu plus tard).
 - Référence : le centre de la vue ou, si son orbite s'échappe tôt, la plus longue de 9 points de la vue (grille
   3 × 3), calculée avec 25 % d'itérations en plus. Si elle ne s'échappe pas, elle est réutilisée par la vue
