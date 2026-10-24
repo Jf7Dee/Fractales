@@ -20,6 +20,10 @@ const
   kSmokeTimeoutMs = 30000;
   kSmokeDeepPixelSize = 1e-30;
   kSmokeBurningShipCenterX = -2;   // pointe de l'axe réel : Burning Ship = x² + c, point du bord exact (voir tests)
+  // bord de l'ensemble de Julia de c par défaut (copie de kJuliaBorderX/Y de tests/TestFractalPerturbation.pas, que
+  // l'application ne peut pas utiliser), arrondi à la précision Extended
+  kSmokeJuliaCenterX = -1.43989885350280045967;
+  kSmokeJuliaCenterY = 0.0599979357857714378993;
   kPerturbationDoneText = '%s · perturbation : terminé en %d ms';
   kPerturbationProgressText = '%s · perturbation : passe %d/%d   %d ms';
   kPerturbationReferenceText = '%s · perturbation : orbite de référence…';
@@ -863,6 +867,24 @@ begin
       FNavigator.GoBack;
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu après retour du zoom profond Burning Ship non terminé');
+      // zoom profond Julia : centre du bord de l'ensemble pour le c par défaut, même taille de pixel
+      SetFormula(TJuliaFormula.Create, False);
+      if not FFormula.IsPerturbationSupported then
+        raise Exception.Create('zoom profond Julia : formule sans perturbation');
+      FNavigator.GoToView(MakeViewport(kSmokeJuliaCenterX, kSmokeJuliaCenterY,
+        kSmokeDeepPixelSize * FNavigator.Viewport.PixelWidth,
+        FNavigator.Viewport.PixelWidth, FNavigator.Viewport.PixelHeight));
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu du zoom profond Julia non terminé');
+      CheckSmokeStep('zoom profond Julia');
+      if not FEngine.Status.IsPerturbation then
+        raise Exception.Create('le zoom profond Julia n''a pas utilisé la perturbation');
+      FSmokeLog.Add(Format('Zoom profond Julia OK : %d ms', [FEngine.Status.ElapsedMs]));
+      // retour à la formule (paramètres par défaut rétablis par sa recréation) et à la vue des étapes suivantes
+      SetFormula(SmokeFormulaClass.Create, False);
+      FNavigator.GoBack;
+      if not WaitForRender(kSmokeTimeoutMs) then
+        raise Exception.Create('rendu après retour du zoom profond Julia non terminé');
       // pincement simulé (les messages tactiles de Windows ne peuvent pas être fabriqués) : aperçu puis zoom x2
       Width0 := FNavigator.Viewport.Width;
       FNavigator.PinchGesture(100, 80, 100, True, False);

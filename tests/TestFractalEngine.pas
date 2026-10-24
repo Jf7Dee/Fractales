@@ -25,6 +25,7 @@ type
       RustKernel: TRustKernel = nil);
     procedure CheckAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
     procedure CheckBurningShipAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
+    procedure CheckExactAcceptanceDepths(F: TFractalFormula; const TextX, TextY, FormulaLabel: string);
   published
     procedure TestRenderCompletesWithExactPixels;
     procedure TestValuesMatchDirectIteration;
@@ -55,6 +56,13 @@ type
     procedure TestJuliaFarOutsideUsesCriticalOrbit;
     procedure TestCriticalOrbitSharedByBands;
     procedure TestCriticalOrbitReusedWhenZoomingOut;
+    procedure TestJuliaDeepRenderAtAcceptanceDepths;
+    procedure TestMultibrotDeepRenderAtAcceptanceDepths;
+    procedure TestMultibrotPowerChangeAtDepth;
+    procedure TestJuliaParamChangeAtDepth;
+    procedure TestJuliaDustDeepRender;
+    procedure TestJuliaShallowStaysDirect;
+    procedure TestMultibrotShallowStaysDirect;
   end;
 
 implementation
@@ -90,6 +98,43 @@ const
   kFarOutsideX = 300;               // |Z0|² > rayon d'échappement : toutes les candidates s'échappent d'emblée
   kJuliaZoomOutPixelSize = 1e-60;   // plus de mots qu'au pixel kJuliaDeepPixelSize
   kBeyondJuliaHeadroomMaxIter = 700;   // au-delà de la marge de Z (500 x 1,25)
+  kPowerChangePixelSize = 1e-30;       // vue profonde (palier 2) des changements de puissance et de c
+  kMultibrotFractionalPower = 3.5;     // non entière : palier 1
+  kMultibrotNextIntegerPower = 4;
+  // c hors de l'ensemble de Mandelbrot (W s'échappe en 14 itérations ; 0,3 + 0,5i y reste borné) : Julia est une
+  // poussière. Centre : le point fixe répulsif z² + c = z, donc un point de l'ensemble de Julia, à la précision Double.
+  kDustCX = 0.3;
+  kDustCY = 0.6;
+  kDustCenterX = -0.0253949604533787;
+  kDustCenterY = 0.5709990056644647;
+  kDustMaxIter = 500;
+  kEscapeRadiusSquared = 4;
+  // Les centres du bord des tâches 2 et 3 (kMultibrot3X/Y, kJuliaBorderX/Y) ne valent que jusqu'à environ 1e-36 (120
+  // bissections) : aux pixels 1e-200 et 2e-300 la vue tient dans un seul intervalle et l'image est uniforme. Centres
+  // exacts à 320 chiffres (calculés en décimal, résidus nuls) dont le voisinage montre de la structure à toute échelle.
+  // Multibrot 3 : point de Misiurewicz c = 3^(1/4) e^(i 7 pi / 12) ; 0 -> c -> w, w point fixe répulsif de z^3 + c
+  // (|3 w^2| = 3 racine de 3).
+  // Julia (c par défaut) : point fixe répulsif z = (1 + racine(1 - 4c)) / 2 de l'ensemble de Julia, multiplicateur ~ 3.
+  // c est celui des paramètres, des Double : -0,8 et 0,156 pris à leur valeur binaire exacte, non décimale
+  // (l'écart de 1e-17 sur c déplacerait le point fixe de 1e-17 et l'image serait uniforme à toute profondeur).
+  // Le temps d'échappement y croît comme -ln(distance) / ln 3 (~620 itérations à 2e-300) : d'où kJuliaDeepFixedMaxIter.
+  kMultibrot3DeepX = '-0.340625019316606640194394244037830888977210102549125303119702632614517377348795234363098' +
+    '894929139975317759460130571319972102258985648516678785020987543232005137724559654474662298' +
+    '990842181784879059644210903965592602443811239238719727078554421131207823193140792225506761' +
+    '14876128181435452752857530367056555141991023326475371';
+  kMultibrot3DeepY = '1.2712298784187062391356129910210649767284143282267776782136791436934807913447441969146767' +
+    '160282631933396985181626638437283262450381644243328982863195606645889473223966573714015302' +
+    '679689506918934527700571712003809231292205368581525859863376676655240443359592661903330133' +
+    '2456881521588968918879500702011143388281769347849655';
+  kJuliaDeepFixedX = '1.5275031186435346322746079313519161694753124175117324939057282566585686365256957860204218' +
+    '797313351184801444002570910951865534481777051308796130172927856717641520997246593777747333' +
+    '554733692653533497725634901756289430561671972800422120905766803724335507079262252218970227' +
+    '8566557803248497561650426605619668972033739355370098';
+  kJuliaDeepFixedY = '-0.075912178352287865376456865868742942799734402525730952654506243139459159550421806597174' +
+    '420588911813206756769732574586094721158660828801112776142780444448191604413522810973643723' +
+    '335613907471955114540964164395977029874058280091167396580640821604934534492290629684390547' +
+    '75447222062943355991678937308701938184779390934026945';
+  kJuliaDeepFixedMaxIter = 1500;
 
 {------------------------------------------------------------------------------}
 
@@ -468,7 +513,7 @@ begin
       for X := 0 to E.Buffer.Width - 1 do
         if E.Buffer.Value(X, Y) <> E.Buffer.Value(0, 0) then
           HasDistinctValues := True;
-    CheckTrue(HasDistinctValues, 'image uniforme');
+    CheckTrue(HasDistinctValues, Format('image uniforme au pixel %g', [V.PixelSize]));
   finally
     E.Free;
   end;
@@ -1018,6 +1063,223 @@ begin
     E.Free;
   end;
 end;
+
+{------------------------------------------------------------------------------}
+
+// Rendu profond de F au centre exact (TextX ; TextY) aux profondeurs d'acceptation ; durée notée dans le journal.
+// F porte déjà son MaxIter et ses paramètres.
+procedure TTestEngine.CheckExactAcceptanceDepths(F: TFractalFormula; const TextX, TextY, FormulaLabel: string);
+var
+  I: Integer;
+  T: Cardinal;
+begin
+  for I := Low(kAcceptancePixelSizes) to High(kAcceptancePixelSizes) do
+  begin
+    T := GetTickCount;
+    CheckDeepRender(F, MakeExactViewport(TextX, TextY, kDeepPixelWidth * kAcceptancePixelSizes[I], kDeepPixelWidth,
+      kDeepPixelHeight));
+    Status(Format('%s, Delphi, pixel %g : %d ms', [FormulaLabel, kAcceptancePixelSizes[I], GetTickCount - T]));
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestJuliaDeepRenderAtAcceptanceDepths;
+var
+  F: TJuliaFormula;
+begin
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaDeepFixedMaxIter;
+    CheckExactAcceptanceDepths(F, kJuliaDeepFixedX, kJuliaDeepFixedY, 'Julia');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestMultibrotDeepRenderAtAcceptanceDepths;
+var
+  F: TMultibrotFormula;
+begin
+  F := TMultibrotFormula.Create;
+  try
+    F.SetParam(0, 3);
+    F.MaxIter := kMultibrot3MaxIter;
+    CheckExactAcceptanceDepths(F, kMultibrot3DeepX, kMultibrot3DeepY, 'Multibrot 3');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Multibrot : vue profonde p = 3 (palier 2) ; p = 3,5 reste sur la même vue, en palier 1, sans erreur ; p = 4
+// retrouve le palier 2 avec une référence recalculée.
+procedure TTestEngine.TestMultibrotPowerChangeAtDepth;
+var
+  E: TRenderEngine;
+  F: TMultibrotFormula;
+  V: TViewport;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TMultibrotFormula.Create;
+  try
+    F.MaxIter := kMultibrot3MaxIter;
+    F.SetParam(0, 3);
+    V := MakeExactViewport(kMultibrot3X, kMultibrot3Y, kDeepPixelWidth * kPowerChangePixelSize, kDeepPixelWidth,
+      kDeepPixelHeight);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation, 'p = 3 : palier 1');
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(1, E.ReferenceComputeCount);
+    F.SetParam(0, kMultibrotFractionalPower);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete, 'rendu p = 3,5 incomplet');
+    CheckFalse(E.Status.IsPerturbation, 'p = 3,5 : perturbation');
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(1, E.ReferenceComputeCount, 'référence calculée pour une puissance non entière');
+    F.SetParam(0, kMultibrotNextIntegerPower);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete, 'rendu p = 4 incomplet');
+    CheckTrue(E.Status.IsPerturbation, 'p = 4 : palier 1');
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(2, E.ReferenceComputeCount, 'référence non recalculée pour p = 4');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Julia : vue profonde, c modifié ; rendu complet en palier 2, Z et W recalculées.
+procedure TTestEngine.TestJuliaParamChangeAtDepth;
+var
+  E: TRenderEngine;
+  F: TJuliaFormula;
+  V: TViewport;
+  Index: Integer;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaBorderMaxIter;
+    V := JuliaDeepViewport(kPowerChangePixelSize);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation);
+    CheckEquals(1, E.ReferenceComputeCount);
+    CheckEquals(1, E.CriticalComputeCount);
+    Index := F.IndexOfParam('cy');
+    F.SetParam(Index, F.GetParam(Index) + kJuliaParamStep);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete, 'rendu incomplet après le changement de c');
+    CheckTrue(E.Status.IsPerturbation, 'palier 1 après le changement de c');
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(2, E.ReferenceComputeCount, 'Z non recalculée');
+    CheckEquals(2, E.CriticalComputeCount, 'W non recalculée');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// c hors de l'ensemble de Mandelbrot : W s'échappe (vérifié ici par itération directe) et l'ensemble de Julia est une
+// poussière ; le rendu profond au point fixe répulsif se termine sans erreur.
+procedure TTestEngine.TestJuliaDustDeepRender;
+var
+  E: TRenderEngine;
+  F: TJuliaFormula;
+  X, Y, T: TFloat;
+  N: Integer;
+begin
+  X := 0;
+  Y := 0;
+  N := 0;
+  while (N < kDustMaxIter) and (X * X + Y * Y <= kEscapeRadiusSquared) do
+  begin
+    T := X * X - Y * Y + kDustCX;
+    Y := 2 * X * Y + kDustCY;
+    X := T;
+    Inc(N);
+  end;
+  Check(N < kDustMaxIter, 'l''orbite critique de c ne s''échappe pas');
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    F.SetParam(F.IndexOfParam('cx'), kDustCX);
+    F.SetParam(F.IndexOfParam('cy'), kDustCY);
+    F.MaxIter := kDustMaxIter;
+    E.Render(DeepViewport(kDustCenterX, kDustCenterY, kJuliaDeepPixelSize), F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation);
+    CheckFalse(E.Status.IsReferencePending);
+    CheckEquals('', E.TakeErrors);
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue par défaut de Julia : calcul direct, ni orbite de référence ni orbite critique.
+procedure TTestEngine.TestJuliaShallowStaysDirect;
+var
+  E: TRenderEngine;
+  F: TJuliaFormula;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    E.Render(MakeViewport(0, 0, F.DefaultWidth, kDeepPixelWidth, kDeepPixelHeight), F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckFalse(E.Status.IsPerturbation);
+    CheckEquals(0, E.ReferenceComputeCount);
+    CheckEquals(0, E.CriticalComputeCount);
+    CheckEquals('', E.TakeErrors);
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue par défaut de Multibrot : calcul direct, aucune orbite de référence.
+procedure TTestEngine.TestMultibrotShallowStaysDirect;
+var
+  E: TRenderEngine;
+  F: TMultibrotFormula;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TMultibrotFormula.Create;
+  try
+    E.Render(MakeViewport(0, 0, F.DefaultWidth, kDeepPixelWidth, kDeepPixelHeight), F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckFalse(E.Status.IsPerturbation);
+    CheckEquals(0, E.ReferenceComputeCount);
+    CheckEquals('', E.TakeErrors);
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 initialization
   RegisterTest(TTestEngine.Suite);
