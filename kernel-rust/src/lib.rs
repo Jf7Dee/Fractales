@@ -9,8 +9,10 @@
 //   fk_compute_row_perturbed(formula, params, param_count, max_iter, ref_orbit, ref_len, dcx0, ddx, dcy, count,
 //                            out) -> i32   (version 2)
 // Zoom profond par perturbation : `count` pixels d'écart (dcx0 + i·ddx, dcy) au point de référence dont l'orbite
-// Z0 = 0, Z1, ... est donnée par ref_orbit = x0, y0, x1, y1, ... (2·ref_len valeurs). Mandelbrot et Tricorn
-// seulement ; même algorithme que IteratePerturbed dans src\Fractal.Formulas.pas.
+// Z0 = 0, Z1, ... est donnée par ref_orbit = x0, y0, x1, y1, ... (2·ref_len valeurs). Mandelbrot, Tricorn et
+// Burning Ship (version 3) ; même algorithme que IteratePerturbed dans src\Fractal.Formulas.pas.
+//   fk_perturbation_supported(formula) -> i32   (version 3)
+// 1 si fk_compute_row_perturbed prend la formule en charge, 0 sinon (identifiant inconnu compris).
 //
 // Compiler la DLL 32 bits :  cargo build --release --target i686-pc-windows-msvc
 
@@ -18,7 +20,7 @@ use std::f64::consts::LN_2;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use wide::*;
 
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 pub const FK_OK: i32 = 0;
 pub const FK_UNKNOWN_FORMULA: i32 = 1;
@@ -26,6 +28,10 @@ pub const FK_BAD_PARAM_COUNT: i32 = 2;
 pub const FK_INVALID_ARGUMENT: i32 = 3;
 pub const FK_INTERNAL_ERROR: i32 = 4;
 pub const FK_UNSUPPORTED: i32 = 5; // formule sans perturbation demandée à fk_compute_row_perturbed
+
+// réponses de fk_perturbation_supported
+pub const FK_PERTURBATION_SUPPORTED: i32 = 1;
+pub const FK_PERTURBATION_UNSUPPORTED: i32 = 0;
 
 const MIN_ORBIT_LENGTH: i32 = 2; // orbite de référence : Z0 et au moins Z1, lu après le premier pas
 
@@ -77,7 +83,16 @@ impl Formula {
 
     // TFractalFormula.SupportsPerturbation côté Delphi.
     fn supports_perturbation(self) -> bool {
-        matches!(self, Formula::Mandelbrot | Formula::Tricorn)
+        matches!(self, Formula::Mandelbrot | Formula::Tricorn | Formula::BurningShip)
+    }
+
+    // fk_perturbation_supported : décidé sur l'identifiant seul, sans paramètres. Une formule à paramètres
+    // (Multibrot, Julia) échoue ici sur leur nombre et répond donc non : à revoir quand elle aura sa perturbation.
+    fn id_supports_perturbation(id: i32) -> bool {
+        match Formula::from_id(id, &[]) {
+            Ok(formula) => formula.supports_perturbation(),
+            Err(_) => false,
+        }
     }
 }
 
@@ -236,13 +251,31 @@ fn iterate4_quadratic(
 
 // ---------------------------------------------------------------------------------------------------------------
 // Perturbation (zoom profond) : calcul scalaire, mêmes opérations dans le même ordre que
-// TMandelbrotFormula.IteratePerturbed et TTricornFormula.IteratePerturbed.
+// TMandelbrotFormula.IteratePerturbed, TTricornFormula.IteratePerturbed et TBurningShipFormula.IteratePerturbed.
+
+// |c + d| - |c| sans soustraire deux grands nombres voisins : d garde toute sa précision quand il est minuscule.
+// Même tableau que DiffAbs dans src\Fractal.Formulas.pas : (c >= 0, c + d >= 0) donne d ; (c >= 0, c + d < 0)
+// donne -(2c + d) ; (c < 0, c + d > 0) donne 2c + d ; (c < 0, c + d <= 0) donne -d.
+fn diff_abs(c: f64, d: f64) -> f64 {
+    if c >= 0.0 {
+        if c + d >= 0.0 {
+            d
+        } else {
+            -(2.0 * c + d)
+        }
+    } else if c + d > 0.0 {
+        2.0 * c + d
+    } else {
+        -d
+    }
+}
 
 // Pixel d'écart (dcx, dcy) à la référence. `orbit` = x0, y0, x1, y1, ... avec Z0 = 0 ; au moins deux points
 // (après le premier pas, la boucle lit Z1).
 fn iterate_perturbed(formula: Formula, max_iter: i32, orbit: &[f64], dcx: f64, dcy: f64) -> f32 {
     let orbit_len = orbit.len() / 2;
     let is_conjugate = matches!(formula, Formula::Tricorn);
+    let is_burning_ship = matches!(formula, Formula::BurningShip);
     let mut dx = 0.0_f64;
     let mut dy = 0.0_f64;
     let mut m: usize = 0;
@@ -262,9 +295,18 @@ fn iterate_perturbed(formula: Formula, max_iter: i32, orbit: &[f64], dcx: f64, d
         }
         let (ox, oy) = (orbit[2 * m], orbit[2 * m + 1]);
         // δ' = 2·Z·δ + δ² + δc ; Tricorn : δ' = conj(2·Z·δ + δ²) + δc
+        // Burning Ship : δx' comme Mandelbrot, δy' = 2·diffabs(X·Y, X·δy + Y·δx + δx·δy) - δcy
         let new_dx = 2.0 * (ox * dx - oy * dy) + dx * dx - dy * dy + dcx;
-        let cross = 2.0 * (ox * dy + oy * dx) + 2.0 * dx * dy;
-        let new_dy = if is_conjugate { -cross + dcy } else { cross + dcy };
+        let new_dy = if is_burning_ship {
+            2.0 * diff_abs(ox * oy, ox * dy + oy * dx + dx * dy) - dcy
+        } else {
+            let cross = 2.0 * (ox * dy + oy * dx) + 2.0 * dx * dy;
+            if is_conjugate {
+                -cross + dcy
+            } else {
+                cross + dcy
+            }
+        };
         dx = new_dx;
         dy = new_dy;
         m += 1;
@@ -392,6 +434,20 @@ pub unsafe extern "C" fn fk_compute_row_perturbed(
     result.unwrap_or(FK_INTERNAL_ERROR)
 }
 
+// 1 si fk_compute_row_perturbed accepte la formule d'identifiant `formula`, 0 sinon (identifiant inconnu compris).
+#[no_mangle]
+pub extern "C" fn fk_perturbation_supported(formula: i32) -> i32 {
+    // aucune panique ne doit traverser la frontière avec Delphi ; en cas de panique, la formule reste en Delphi
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if Formula::id_supports_perturbation(formula) {
+            FK_PERTURBATION_SUPPORTED
+        } else {
+            FK_PERTURBATION_UNSUPPORTED
+        }
+    }));
+    result.unwrap_or(FK_PERTURBATION_UNSUPPORTED)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,8 +486,33 @@ mod tests {
     }
 
     #[test]
-    fn abi_version_is_2() {
-        assert_eq!(fk_abi_version(), 2);
+    fn abi_version_is_3() {
+        assert_eq!(fk_abi_version(), 3);
+    }
+
+    // Mêmes valeurs que TestDiffAbs (tests\TestFractalPerturbation.pas), égalités strictes.
+    #[test]
+    fn diff_abs_cases() {
+        const TINY: f64 = 1e-300;
+        assert_eq!(diff_abs(3.0, 1.0), 1.0, "c >= 0, c + d >= 0 : d");
+        assert_eq!(diff_abs(3.0, -5.0), -1.0, "c >= 0, c + d < 0 : -(2c + d)");
+        assert_eq!(diff_abs(-3.0, 5.0), -1.0, "c < 0, c + d > 0 : 2c + d");
+        assert_eq!(diff_abs(-3.0, 1.0), -1.0, "c < 0, c + d <= 0 : -d");
+        assert_eq!(diff_abs(0.0, -2.0), 2.0, "c = 0, d < 0");
+        assert_eq!(diff_abs(0.0, 2.0), 2.0, "c = 0, d > 0");
+        assert_eq!(diff_abs(2.0, -2.0), -2.0, "c + d = 0, c > 0");
+        assert_eq!(diff_abs(-2.0, 2.0), -2.0, "c + d = 0, c < 0");
+        assert_eq!(diff_abs(1.0, TINY), TINY, "c ~ 1, d ~ 1e-300 : d exactement");
+    }
+
+    #[test]
+    fn perturbation_supported() {
+        for &id in &[MANDELBROT, BURNING_SHIP, TRICORN] {
+            assert_eq!(fk_perturbation_supported(id), FK_PERTURBATION_SUPPORTED, "formule {}", id);
+        }
+        for &id in &[MULTIBROT, JULIA, 99, -1] {
+            assert_eq!(fk_perturbation_supported(id), FK_PERTURBATION_UNSUPPORTED, "formule {}", id);
+        }
     }
 
     #[test]
@@ -513,8 +594,9 @@ mod tests {
         assert!(out.iter().all(|v| *v == NOT_WRITTEN), "aucun pixel ne doit être écrit en cas d'erreur");
     }
 
-    // Points d'intérêt de tests\TestFractalPerturbation.pas ; une ligne de 1 000 pixels de 1e-12 y mêle intérieur
-    // et extérieur (mesuré côté Delphi en précision Double : 38 % et 50 % de pixels extérieurs).
+    // Mandelbrot et Tricorn : points d'intérêt de tests\TestFractalPerturbation.pas ; une ligne de 1 000 pixels de
+    // 1e-12 y mêle intérieur et extérieur (mesuré côté Delphi en précision Double : 38 % et 50 % de pixels
+    // extérieurs). Burning Ship : voir perturbed_matches_direct.
     const PERTURBED_MAX_ITER: i32 = 10000;
     const PERTURBED_PIXEL_SIZE: f64 = 1e-12;
     const MIN_AGREEMENT: f64 = 0.98;
@@ -534,6 +616,7 @@ mod tests {
             }
             let new_y = match formula {
                 Formula::Tricorn => -2.0 * x * y + cy,
+                Formula::BurningShip => 2.0 * (x * y).abs() - cy,
                 _ => 2.0 * x * y + cy,
             };
             x = x * x - y * y + cx;
@@ -578,6 +661,11 @@ mod tests {
         let cases = [
             (MANDELBROT, Formula::Mandelbrot, 0.390797755594254, -0.230650338697738),
             (TRICORN, Formula::Tricorn, -0.104560602519813, 0.228469084632435),
+            // Burning Ship, hors de l'axe : bord trouvé côté Delphi en Double (bissection, 48 pas, MaxIter 10000,
+            // rayon issu de l'origine à 2π/64 radians) ; 49,9 % de pixels extérieurs, échappements jusqu'à 9 999
+            // itérations, 100 % de verdicts communs (perturbation f64 comme ici, et IteratePerturbed Delphi sur
+            // l'orbite en Double comme la DLL factice)
+            (BURNING_SHIP, Formula::BurningShip, 0.250151877253826, 0.024637809443158),
         ];
         let half = (ROW_LENGTH / 2) as f64;
         for &(id, formula, cx, cy) in &cases {
@@ -616,7 +704,7 @@ mod tests {
         assert_eq!(call_perturbed(MANDELBROT, &[1.0], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_BAD_PARAM_COUNT);
         assert_eq!(call_perturbed(JULIA, &[0.0, 0.0], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_UNSUPPORTED);
         assert_eq!(call_perturbed(MULTIBROT, &[3.0], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_UNSUPPORTED);
-        assert_eq!(call_perturbed(BURNING_SHIP, &[], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_UNSUPPORTED);
+        assert_eq!(call_perturbed(BURNING_SHIP, &[], MAX_ITER, &orbit, dcx0, ddx, 0.0, 4).0, FK_OK);
         assert_eq!(call_perturbed(MANDELBROT, &[], MAX_ITER, &[], dcx0, ddx, 0.0, 4).0, FK_INVALID_ARGUMENT);
         let mut out = [NOT_WRITTEN; 4];
         unsafe {
