@@ -104,6 +104,7 @@ type
     procedure TestJuliaMatchesExact;
     procedure TestJuliaUsesCriticalOrbit;
     procedure TestJuliaWithoutCriticalOrbitRaises;
+    procedure TestJuliaCriticalPreimageMatchesExact;
     procedure TestPerturbedMatchesDirect;
     procedure TestReferenceEscapingEarlyStillMatches;
     procedure TestReferenceOrbitCancels;
@@ -160,6 +161,15 @@ const
   kLn2 = 0.69314718055994530942;
   kJuliaPixelSizes: array[0..1] of TFloat = (1e-12, 1e-25);
   kCorruptionFactor = 1e-6;   // écart relatif imposé aux points W1, W2, ... d'une orbite critique faussée
+  // Antécédent du point critique pour c par défaut : z0 = sqrt(-c), donc z1 = 0. Calculé hors ligne en décimal
+  // (90 chiffres) à partir des Double de c (-0,8 ; 0,156) ; z0² + c = 0 à 1e-90 près.
+  kJuliaPreimageX = '0.89862898220420791743243458270837006832176192548785108843497323';
+  kJuliaPreimageY = '-0.0867988920284734138614732485325876095834750986719878603365308';
+  kJuliaPreimagePixelSize = 1e-25;
+  // l'antécédent est dans la vue, à (60 ; 22,2) pixels du centre : la référence (le centre) ne passe pas par 0, les
+  // pixels proches de l'antécédent si, et rebasent sur W dès le premier pas
+  kJuliaPreimageOffsetX = 60;
+  kJuliaPreimageOffsetY = 22.2;
 
 var
   TruthCache: array of TGroundTruth;
@@ -860,6 +870,24 @@ begin
   finally
     F.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue au pixel 1e-25 contenant l'antécédent kJuliaPreimage du point critique (hors du centre) : les pixels voisins
+// passent à ~1e-23 de 0 au premier pas, la référence à ~60 fois plus. Vue toute extérieure (c hors de
+// l'ensemble de Mandelbrot) : les valeurs lissées sont comparées. Un décalage d'un millième de pixel ne change aucun
+// des 108 verdicts, et la vérité à 320 bits coïncide avec celle à 256 bits.
+procedure TTestPerturbation.TestJuliaCriticalPreimageMatchesExact;
+var
+  V: TViewport;
+  Words: Integer;
+begin
+  V := MakeExactScene(kJuliaPreimageX, kJuliaPreimageY, kJuliaPreimagePixelSize * kViewWidth);
+  Words := V.ExactCenterX.FracWords;
+  V.SetCenter(V.ExactCenterX.AddFloat(kJuliaPreimageOffsetX * V.PixelSize, Words),
+    V.ExactCenterY.AddFloat(kJuliaPreimageOffsetY * V.PixelSize, Words));
+  CheckConcordance(TJuliaFormula.Create, V, 0, kJuliaBorderMaxIter, 'antécédent de 0, pixel 1e-25', False);
 end;
 
 {------------------------------------------------------------------------------}
