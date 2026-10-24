@@ -53,6 +53,8 @@ précision proche » près de 1e-300.
 - Les rendus profonds sont plus lents : plus d'itérations, plus l'orbite de référence.
 - Les lieux (`.frac`, PNG) gardent le centre avec tous ses chiffres utiles ; les anciens fichiers se relisent à
   l'identique.
-- Rust : la DLL doit être recompilée (ABI 3, nouvel export `fk_perturbation_supported`, Burning Ship perturbé).
-  Une DLL ABI 2 fonctionne encore : Mandelbrot et Tricorn profonds en Rust, Burning Ship profond repris par Delphi.
-  Une DLL ABI 1 aussi, comme avant : rendus peu profonds en Rust, rendus profonds repris par Delphi.
+- Rust : la DLL doit être recompilée (ABI 4, nouvel export `fk_compute_row_perturbed2` : Julia et Multibrot
+  perturbés). Avec une DLL ABI 4, les rendus profonds de Julia et de Multibrot se font en Rust ; avec une DLL
+  ABI 3, ils sont repris par Delphi (le reste en Rust). Une DLL ABI 2 fonctionne encore : Mandelbrot et Tricorn
+  profonds en Rust, le reste repris par Delphi. Une DLL ABI 1 aussi, comme avant : rendus peu profonds en Rust,
+  rendus profonds repris par Delphi.
