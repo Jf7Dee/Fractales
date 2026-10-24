@@ -13,6 +13,7 @@ type
     procedure TestFromFloatToFloatRoundTrip;
     procedure TestArithmeticMatchesExtended;
     procedure TestSqrAndTwice;
+    procedure TestAbs;
     procedure TestPrecisionBeyondExtended;
     procedure TestToStringAndParse;
     procedure TestParseInvariantFormats;
@@ -94,6 +95,24 @@ begin
   A := LongValue(10);
   Check(A.Sqr.IsEqual(A.Mul(A)), 'Sqr');
   Check(A.Twice.IsEqual(A.Add(A)), 'Twice');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestHighFloat.TestAbs;
+const
+  kNegative = -1.5;
+  kPositive = 2;
+  kFracWords = 4;
+var
+  A, B: THighFloat;
+begin
+  A := THighFloat.FromFloat(kNegative, kFracWords);
+  B := A.Abs;
+  CheckEquals(-kNegative, B.ToFloat, 'valeur négative');
+  CheckEquals(kNegative, A.ToFloat, 'l''opérande n''est pas modifié');
+  CheckEquals(kPositive, THighFloat.FromFloat(kPositive, kFracWords).Abs.ToFloat, 'valeur positive');
+  Check(THighFloat.Zero(kFracWords).Abs.IsEqual(THighFloat.Zero(kFracWords)), 'zéro');
 end;
 
 {------------------------------------------------------------------------------}

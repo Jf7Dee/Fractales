@@ -117,6 +117,9 @@ type
     class function DefaultCenterY: TFloat; override;
     class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
+    class function SupportsPerturbation: Boolean; override;
+    procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
+    function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
   end;
 
   TTricornFormula = class(TFractalFormula)
@@ -137,6 +140,8 @@ function FormulaClassAt(Index: Integer): TFractalFormulaClass;
 function FindFormulaClass(const AName: string): TFractalFormulaClass;
 function ParamToSliderPosition(const Info: TFormulaParam; Value: Double): Integer;
 function SliderPositionToParam(const Info: TFormulaParam; Position: Integer): Double;
+// |c + d| - |c| sans perte de précision (Burning Ship perturbé) ; partagé avec la DLL factice des tests
+function DiffAbs(C, D: TFloat): TFloat;
 
 implementation
 
@@ -639,6 +644,86 @@ begin
     // - CY : le navire apparaît à l'endroit avec un axe imaginaire qui monte
     Y := 2 * Abs(X * Y) - CY;
     X := X2 - Y2 + CX;
+    Inc(N);
+  end;
+  Result := kInside;
+end;
+
+{------------------------------------------------------------------------------}
+
+// |c + d| - |c| sans soustraire deux grands nombres voisins : d garde toute sa précision quand il est minuscule.
+// Bornes de la spec : (c >= 0, c + d >= 0) donne d ; (c < 0, c + d > 0) donne 2c + d.
+function DiffAbs(C, D: TFloat): TFloat;
+begin
+  if C >= 0 then
+  begin
+    if C + D >= 0 then
+      Result := D
+    else
+      Result := -(2 * C + D);
+  end
+  else
+  begin
+    if C + D > 0 then
+      Result := 2 * C + D
+    else
+      Result := -D;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+class function TBurningShipFormula.SupportsPerturbation: Boolean;
+begin
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TBurningShipFormula.StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat);
+var
+  NewX, NewY: THighFloat;
+begin
+  // (x, y) := (x^2 - y^2 + cx, 2·|x·y| - cy), simultané
+  NewX := ZX.Sqr.Sub(ZY.Sqr).Add(CX);
+  NewY := ZX.Mul(ZY).Abs.Twice.Sub(CY);
+  ZX := NewX;
+  ZY := NewY;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TBurningShipFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
+var
+  DX, DY, ZX, ZY, R2, NewDX, NewDY: TFloat;
+  N, M: Integer;
+begin
+  CheckOrbit(Orbit, OrbitLength);
+  DX := 0;
+  DY := 0;
+  N := 0;
+  M := 0;
+  while N < FMaxIter do
+  begin
+    ZX := Orbit[M].X + DX;
+    ZY := Orbit[M].Y + DY;
+    R2 := ZX * ZX + ZY * ZY;
+    if R2 > kEscapeRadius2 then
+      Exit(SmoothValue(N, R2, kLn2));
+    if (R2 < DX * DX + DY * DY) or (M = OrbitLength - 1) then
+    begin
+      // rebasage : la référence redevient Z0 = 0
+      DX := ZX;
+      DY := ZY;
+      M := 0;
+    end;
+    // δx' = 2·(X·δx - Y·δy) + δx^2 - δy^2 + δcx
+    // δy' = 2·diffabs(X·Y, X·δy + Y·δx + δx·δy) - δcy
+    NewDX := 2 * (Orbit[M].X * DX - Orbit[M].Y * DY) + DX * DX - DY * DY + DCX;
+    NewDY := 2 * DiffAbs(Orbit[M].X * Orbit[M].Y, Orbit[M].X * DY + Orbit[M].Y * DX + DX * DY) - DCY;
+    DX := NewDX;
+    DY := NewDY;
+    Inc(M);
     Inc(N);
   end;
   Result := kInside;

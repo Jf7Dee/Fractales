@@ -29,6 +29,7 @@ type
     function Mul(const B: THighFloat): THighFloat;
     function Sqr: THighFloat;
     function Twice: THighFloat;
+    function Abs: THighFloat;
     function AddFloat(Value: TFloat; AFracWords: Integer): THighFloat;
     function ToFloat: TFloat;
     function ToString(Digits: Integer): string;   // décimal, Digits chiffres après le point, point « . »
@@ -193,7 +194,7 @@ begin
   SetLength(W, N);
   if Value <> 0 then
   begin
-    Frexp(Abs(Value), M, E);                  // |Value| = M * 2^E, M dans [0,5 ; 1[
+    Frexp(System.Abs(Value), M, E);           // |Value| = M * 2^E, M dans [0,5 ; 1[
     M := M * kWordBase;
     Hi := Trunc(M);
     Rem := (M - Hi) * kWordBase;
@@ -282,7 +283,7 @@ begin
   end;
   if I <= Len then
     Exit;                                     // caractères en trop
-  if Abs(Exp10) > kMaxExponent10 then
+  if System.Abs(Exp10) > kMaxExponent10 then
     Exit;
 
   AllDigits := IntDigits + FracDigits;
@@ -423,6 +424,13 @@ end;
 function THighFloat.Twice: THighFloat;
 begin
   Result := Add(Self);
+end;
+
+{------------------------------------------------------------------------------}
+
+function THighFloat.Abs: THighFloat;
+begin
+  Result := MakeValue(False, FWords);   // signe et grandeur : il suffit de retirer le signe
 end;
 
 {------------------------------------------------------------------------------}

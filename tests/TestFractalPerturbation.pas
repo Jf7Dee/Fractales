@@ -5,22 +5,50 @@ interface
 uses
   TestFramework, Fractal.HighFloat, Fractal.Types, Fractal.Formulas, Fractal.Perturbation;
 
+const
+  // Lieux partagés avec TestFractalEngine et TestFractalRustKernel (Burning Ship, axe et favori de JF).
+  // Antenne : cx trouvé hors ligne par bissection (60 pas, MaxIter 10000, Extended, vue 200 x 150 au pixel 1e-12,
+  // cy = 0) entre un point 100 % extérieur (-1,8) et un point 0 % extérieur (-1,775) : environ 50 % de pixels
+  // extérieurs sur la sous-grille.
+  kBurningShipAntennaX = -1.78802612188722658;
+  // Favori BurningShip_O_x1.5e14_20261024-1100.frac
+  kBurningShipFavouriteCenterX = '-1.97764332392038208691244765792158434937619029395172813310368221039931841';
+  kBurningShipFavouriteCenterY = '0.00000040943449145950818875937261165274938022740420622961170582366426700';
+  kBurningShipFavouriteWidth = 2.69976921794239817E-14;
+  // Le centre de JF est à 100 % extérieur à sa largeur (test sans valeur) : on prend le point du bord sur la verticale
+  // qui descend de ce centre vers l'axe. Bissection exacte (THighFloat, 100 pas, MaxIter kBurningShipBordMaxIter)
+  // entre un point intérieur (cy du favori x 5/60) et un point extérieur (x 7/60), cx inchangé. Au-delà de quelques
+  // centaines d'itérations, les points du bord sont chaotiques : l'Extended ne suit plus la vérité exacte (écarts dès
+  // 1000 itérations), d'où ce MaxIter bas. Les vues d'essai sont centrées ici : environ 55 % de pixels extérieurs,
+  // à la largeur du favori comme 10^6 fois plus étroit.
+  kBurningShipFavouriteBordY = '0.00000004159599724145695425193358193503';
+  kBurningShipBordMaxIter = 300;
+
 type
   // Valeurs de référence « exactes » (THighFloat) sur une sous-grille régulière de la vue.
   TGroundTruth = record
     FormulaName: string;
+    View: TViewport;
+    MaxIter: Integer;
     Values: array of Single;   // kInside ou valeur lissée, ligne par ligne
   end;
 
   TTestPerturbation = class(TTestCase)
   private
     function MakeScene(CenterX, CenterY: TFloat): TViewport;
+    function MakeExactScene(const TextX, TextY: string; Width: TFloat): TViewport;
     function TruthFor(Formula: TFractalFormula; const V: TViewport): TGroundTruth;
-    function Concordance(Formula: TFractalFormula; CenterX, CenterY, ShiftX: TFloat): Double;
-    procedure CheckConcordance(Formula: TFractalFormula; CenterX, CenterY, ShiftX: TFloat);
+    function Concordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat; AMaxIter: Integer): Double;
+    procedure CheckConcordance(Formula: TFractalFormula; CenterX, CenterY, ShiftX: TFloat); overload;
+    procedure CheckConcordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat;
+      AMaxIter: Integer); overload;
   published
     procedure TestSupportsPerturbation;
+    procedure TestDiffAbs;
     procedure TestReferenceOrbitMatchesIterate;
+    procedure TestBurningShipReferenceMatchesIterate;
+    procedure TestBurningShipAxisMatchesExact;
+    procedure TestBurningShipFavouriteMatchesExact;
     procedure TestPerturbedMatchesDirect;
     procedure TestReferenceEscapingEarlyStillMatches;
     procedure TestReferenceOrbitCancels;
@@ -71,6 +99,20 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Vue 200 x 150 de largeur Width, centrée sur les chaînes décimales exactes (lues par THighFloat.TryParse).
+function TTestPerturbation.MakeExactScene(const TextX, TextY: string; Width: TFloat): TViewport;
+var
+  X, Y: THighFloat;
+  Words: Integer;
+begin
+  Result := MakeViewport(0, 0, Width, kViewWidth, kViewHeight);
+  Words := FracWordsForPixelSize(Result.PixelSize);
+  Check(THighFloat.TryParse(TextX, Words, X), 'centre X lisible');
+  Check(THighFloat.TryParse(TextY, Words, Y), 'centre Y lisible');
+  Result.SetCenter(X, Y);
+end;
+{------------------------------------------------------------------------------}
+
 // Itération en haute précision du pixel (PX, PY), même convention de compte et de lissage qu'Iterate.
 function ExactValue(Formula: TFractalFormula; const V: TViewport; PX, PY: Integer): Single;
 var
@@ -106,9 +148,12 @@ var
   I, X, Y: Integer;
 begin
   for I := 0 to High(TruthCache) do
-    if TruthCache[I].FormulaName = Formula.FormulaName then
+    if (TruthCache[I].FormulaName = Formula.FormulaName) and TruthCache[I].View.IsSameView(V)
+      and (TruthCache[I].MaxIter = Formula.MaxIter) then
       Exit(TruthCache[I]);
   Result.FormulaName := Formula.FormulaName;
+  Result.View := V;
+  Result.MaxIter := Formula.MaxIter;
   SetLength(Result.Values, 0);
   Y := 0;
   while Y < kViewHeight do
@@ -130,9 +175,9 @@ end;
 
 // Part des pixels échantillonnés pour lesquels IteratePerturbed concorde avec la vérité exacte (même verdict ;
 // valeurs lissées proches si les deux sont à l'extérieur). La référence est au centre décalé de ShiftX.
-function TTestPerturbation.Concordance(Formula: TFractalFormula; CenterX, CenterY, ShiftX: TFloat): Double;
+function TTestPerturbation.Concordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat;
+  AMaxIter: Integer): Double;
 var
-  V: TViewport;
   Orbit: TOrbit;
   Truth: TGroundTruth;
   RefX: THighFloat;
@@ -141,8 +186,7 @@ var
   Perturbed: Single;
   IsSame: Boolean;
 begin
-  Formula.MaxIter := kTestMaxIter;
-  V := MakeScene(CenterX, CenterY);
+  Formula.MaxIter := AMaxIter;
   Truth := TruthFor(Formula, V);
   RefX := V.ExactCenterX.AddFloat(ShiftX, V.ExactCenterX.FracWords);
   Check(ComputeReferenceOrbit(Formula, RefX, V.ExactCenterY,
@@ -185,11 +229,19 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TTestPerturbation.CheckConcordance(Formula: TFractalFormula; CenterX, CenterY, ShiftX: TFloat);
+begin
+  CheckConcordance(Formula, MakeScene(CenterX, CenterY), ShiftX, kTestMaxIter);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPerturbation.CheckConcordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat;
+  AMaxIter: Integer);
 var
   Ratio: Double;
 begin
   try
-    Ratio := Concordance(Formula, CenterX, CenterY, ShiftX);
+    Ratio := Concordance(Formula, V, ShiftX, AMaxIter);
     Check(Ratio >= kMinConcordance, Format('%s : concordance %.4f', [Formula.FormulaName, Ratio]));
   finally
     Formula.Free;
@@ -202,8 +254,27 @@ procedure TTestPerturbation.TestSupportsPerturbation;
 begin
   Check(TMandelbrotFormula.SupportsPerturbation, 'Mandelbrot');
   Check(TTricornFormula.SupportsPerturbation, 'Tricorn');
+  Check(TBurningShipFormula.SupportsPerturbation, 'Burning Ship');
   Check(not TJuliaFormula.SupportsPerturbation, 'Julia');
   Check(not TFractalFormula.SupportsPerturbation, 'base');
+end;
+
+{------------------------------------------------------------------------------}
+
+// Les quatre cas du tableau de la spec (valeurs exactes en binaire), les bornes, et c ~ 1 avec d minuscule.
+procedure TTestPerturbation.TestDiffAbs;
+const
+  kTiny = 1e-300;
+begin
+  CheckEquals(1, DiffAbs(3, 1), 'c >= 0, c + d >= 0 : d');
+  CheckEquals(-1, DiffAbs(3, -5), 'c >= 0, c + d < 0 : -(2c + d)');
+  CheckEquals(-1, DiffAbs(-3, 5), 'c < 0, c + d > 0 : 2c + d');
+  CheckEquals(-1, DiffAbs(-3, 1), 'c < 0, c + d <= 0 : -d');
+  CheckEquals(2, DiffAbs(0, -2), 'c = 0, d < 0');
+  CheckEquals(2, DiffAbs(0, 2), 'c = 0, d > 0');
+  CheckEquals(-2, DiffAbs(2, -2), 'c + d = 0, c > 0');
+  CheckEquals(-2, DiffAbs(-2, 2), 'c + d = 0, c < 0');
+  Check(DiffAbs(1, kTiny) = kTiny, 'c ~ 1, d ~ 1e-300 : d exactement');
 end;
 
 {------------------------------------------------------------------------------}
@@ -252,6 +323,79 @@ begin
   finally
     F.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPerturbation.TestBurningShipReferenceMatchesIterate;
+const
+  kRefX = -1.0;
+  kRefY = 0.75;
+var
+  F: TFractalFormula;
+  Orbit: TOrbit;
+  X, Y, X2, Y2, LastR2: TFloat;
+  N: Integer;
+begin
+  F := TBurningShipFormula.Create;
+  try
+    F.MaxIter := kTestMaxIter;
+    Check(ComputeReferenceOrbit(F, THighFloat.FromFloat(kRefX, kOrbitFracWords),
+      THighFloat.FromFloat(kRefY, kOrbitFracWords),
+      function: Boolean
+      begin
+        Result := False;
+      end, Orbit), 'orbite');
+    Check(F.Iterate(kRefX, kRefY) >= 0, 'le point doit échapper');
+    X := 0;
+    Y := 0;
+    N := 0;
+    X2 := 0;
+    Y2 := 0;
+    while N < F.MaxIter do
+    begin
+      X2 := X * X;
+      Y2 := Y * Y;
+      if X2 + Y2 > kEscapeRadius2 then
+        Break;
+      Y := 2 * Abs(X * Y) - kRefY;
+      X := X2 - Y2 + kRefX;
+      Inc(N);
+    end;
+    LastR2 := Sqr(Orbit[High(Orbit)].X) + Sqr(Orbit[High(Orbit)].Y);
+    CheckEquals(N + 1, Length(Orbit), 'longueur');
+    CheckEquals(0, Orbit[0].X, 'Z0.X');
+    CheckEquals(0, Orbit[0].Y, 'Z0.Y');
+    Check(Abs(LastR2 - (X2 + Y2)) <= kRelativeTolerance * LastR2, 'dernier |Z|2');
+    Check(LastR2 > kEscapeRadius2, 'le dernier point échappe');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue centrée exactement sur l'axe (cy = 0) : des pixels de part et d'autre du pli |x·y|.
+// cx = kBurningShipAntennaX ; fraction de pixels extérieurs mesurée au journal (Status).
+procedure TTestPerturbation.TestBurningShipAxisMatchesExact;
+begin
+  CheckConcordance(TBurningShipFormula.Create, MakeScene(kBurningShipAntennaX, 0), 0, kTestMaxIter);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Favori de JF (point du bord sous son centre, voir kBurningShipFavouriteBordY) : à sa largeur, puis 10^6 fois plus
+// étroit.
+procedure TTestPerturbation.TestBurningShipFavouriteMatchesExact;
+const
+  kDeepFactor = 1e-6;
+begin
+  CheckConcordance(TBurningShipFormula.Create,
+    MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteBordY, kBurningShipFavouriteWidth), 0,
+    kBurningShipBordMaxIter);
+  CheckConcordance(TBurningShipFormula.Create,
+    MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteBordY,
+      kBurningShipFavouriteWidth * kDeepFactor), 0, kBurningShipBordMaxIter);
 end;
 
 {------------------------------------------------------------------------------}
