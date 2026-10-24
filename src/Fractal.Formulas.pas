@@ -59,6 +59,8 @@ type
     function Clone: TFractalFormula;
     function Iterate(const CX, CY: TFloat): Single; virtual; abstract;
     function IsPerturbationSupported: Boolean; virtual;
+    // vrai si l'itération part du pixel (Z0 = pixel, c dans les paramètres : Julia) ; faux si Z0 = 0 et c = pixel
+    class function HasPixelStart: Boolean; virtual;
     // un pas de l'orbite de référence, en haute précision ; lève une exception si non pris en charge
     procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); virtual;
     // vrai si le prochain pas donnerait un Z trop grand pour la partie entière de THighFloat (il échappe alors
@@ -68,6 +70,10 @@ type
     function StepFloat(ZX, ZY, CX, CY: TFloat): TComplexPoint; virtual;
     // pixel d'écart (DCX, DCY) à la référence ; Orbit[0] = 0 ; même convention de compte et de lissage qu'Iterate
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; virtual;
+    // comme IteratePerturbed, avec l'orbite critique W (W0 = 0) des formules HasPixelStart, où (DX, DY) est δ0 =
+    // pixel - référence ; par défaut, W est ignorée et l'appel revient à IteratePerturbed(Orbit, OrbitLength, DX, DY)
+    function IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
+      CriticalLength: Integer; DX, DY: TFloat): Single; virtual;
     function ParamCount: Integer;
     function ParamInfo(Index: Integer): TFormulaParam;
     function GetParam(Index: Integer): Double;
@@ -122,6 +128,12 @@ type
     class function DefaultWidth: TFloat; override;
     class function KernelId: Integer; override;
     function Iterate(const CX, CY: TFloat): Single; override;
+    function IsPerturbationSupported: Boolean; override;
+    class function HasPixelStart: Boolean; override;
+    procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
+    function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
+    function IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
+      CriticalLength: Integer; DX, DY: TFloat): Single; override;
   end;
 
   TBurningShipFormula = class(TFractalFormula)
@@ -169,6 +181,7 @@ const
   // |z|^p au-delà de 2^30 : proche de la limite de la partie entière de THighFloat (2^32), et déjà échappé
   kFloatStepLogBound = 30 * kLn2;
   kBadOrbitMessage = 'Orbite de référence invalide (longueur %d, tableau de %d points)';
+  kNoCriticalOrbitMessage = 'Julia : la perturbation exige l''orbite critique (IteratePerturbedCritical)';
 
 var
   FormulaRegistry: array of TFractalFormulaClass;
@@ -218,6 +231,13 @@ end;
 
 {------------------------------------------------------------------------------}
 
+class function TFractalFormula.HasPixelStart: Boolean;
+begin
+  Result := False;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TFractalFormula.StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat);
 begin
   raise Exception.CreateFmt(kNoPerturbationMessage, [FormulaName]);
@@ -242,6 +262,15 @@ end;
 function TFractalFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
 begin
   raise Exception.CreateFmt(kNoPerturbationMessage, [FormulaName]);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFractalFormula.IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
+  CriticalLength: Integer; DX, DY: TFloat): Single;
+begin
+  // Z0 = 0 : le rebasage vers Z0 suffit, l'orbite critique ne sert pas
+  Result := IteratePerturbed(Orbit, OrbitLength, DX, DY);
 end;
 
 {------------------------------------------------------------------------------}
@@ -745,6 +774,84 @@ begin
       Exit(SmoothValue(N, X2 + Y2, kLn2));
     Y := 2 * X * Y + FCY;
     X := X2 - Y2 + FCX;
+    Inc(N);
+  end;
+  Result := kInside;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TJuliaFormula.IsPerturbationSupported: Boolean;
+begin
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+class function TJuliaFormula.HasPixelStart: Boolean;
+begin
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TJuliaFormula.StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat);
+var
+  NewX, NewY: THighFloat;
+begin
+  // z := z^2 + c, c pris dans les paramètres au nombre de mots de Z (CX, CY ignorés : Z0 est le point de départ)
+  NewX := ZX.Sqr.Sub(ZY.Sqr).Add(THighFloat.FromFloat(FCX, ZX.FracWords));
+  NewY := ZX.Mul(ZY).Twice.Add(THighFloat.FromFloat(FCY, ZY.FracWords));
+  ZX := NewX;
+  ZY := NewY;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TJuliaFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
+begin
+  // sans orbite critique, le rebasage n'a pas de point de chute exact (Z0 n'est pas le point critique 0)
+  raise EArgumentException.Create(kNoCriticalOrbitMessage);
+end;
+
+{------------------------------------------------------------------------------}
+
+// δ0 = (DX, DY) = pixel - référence ; δ' = 2·Z·δ + δ² (pas de δc). On itère sur Z ; quand |z|² < |δ|² ou en fin
+// d'orbite, on rebase sur l'orbite critique W (W0 = 0) : δ := z, m := 0 ; sur W, même règle, toujours vers W0.
+function TJuliaFormula.IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
+  CriticalLength: Integer; DX, DY: TFloat): Single;
+var
+  Ref: TOrbit;
+  RefLength, N, M: Integer;
+  ZX, ZY, R2, NewDX, NewDY: TFloat;
+begin
+  CheckOrbit(Orbit, OrbitLength);
+  CheckOrbit(Critical, CriticalLength);
+  Ref := Orbit;
+  RefLength := OrbitLength;
+  N := 0;
+  M := 0;
+  while N < FMaxIter do
+  begin
+    ZX := Ref[M].X + DX;
+    ZY := Ref[M].Y + DY;
+    R2 := ZX * ZX + ZY * ZY;
+    if R2 > kEscapeRadius2 then
+      Exit(SmoothValue(N, R2, kLn2));
+    if (R2 < DX * DX + DY * DY) or (M = RefLength - 1) then
+    begin
+      // rebasage sur W : W0 = 0, donc δ := z
+      DX := ZX;
+      DY := ZY;
+      M := 0;
+      Ref := Critical;
+      RefLength := CriticalLength;
+    end;
+    NewDX := 2 * (Ref[M].X * DX - Ref[M].Y * DY) + DX * DX - DY * DY;
+    NewDY := 2 * (Ref[M].X * DY + Ref[M].Y * DX) + 2 * DX * DY;
+    DX := NewDX;
+    DY := NewDY;
+    Inc(M);
     Inc(N);
   end;
   Result := kInside;

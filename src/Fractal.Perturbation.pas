@@ -13,20 +13,28 @@ const
 type
   TCancelCheck = reference to function: Boolean;
 
-// Orbite Z0 = 0, Z1, ... de la référence (CX, CY), jusqu'à l'échappement inclus ou MaxIter + 1 points.
+// Orbite Z0, Z1, ... de la référence (CX, CY), jusqu'à l'échappement inclus ou MaxIter + 1 points : Z0 = 0 et
+// c = (CX, CY), ou, si Formula.HasPixelStart (Julia), Z0 = (CX, CY) et c pris dans les paramètres.
 // Renvoie False si IsCancelled répond True (vérifié toutes les kCancelCheckInterval = 256 itérations).
 function ComputeReferenceOrbit(Formula: TFractalFormula; const CX, CY: THighFloat; IsCancelled: TCancelCheck;
+  out Orbit: TOrbit): Boolean;
+
+// Orbite critique W0 = 0, W1, ... d'une formule HasPixelStart (c dans les paramètres), en FracWords mots, avec le
+// même pas StepReference et le même arrêt que ComputeReferenceOrbit ; False si annulée.
+function ComputeCriticalOrbit(Formula: TFractalFormula; FracWords: Integer; IsCancelled: TCancelCheck;
   out Orbit: TOrbit): Boolean;
 
 implementation
 
 const
   kOrbitGrowStep = 1024;   // pas d'agrandissement du tableau de l'orbite
-  kNilFormulaMessage = 'ComputeReferenceOrbit : formule absente';
+  kNilFormulaMessage = '%s : formule absente';
+  kNoPixelStartMessage = 'ComputeCriticalOrbit : %s part de 0, sans orbite critique';
 
 {------------------------------------------------------------------------------}
 
-function ComputeReferenceOrbit(Formula: TFractalFormula; const CX, CY: THighFloat; IsCancelled: TCancelCheck;
+// Orbite de Z0 = (StartX, StartY) pour le paramètre (CX, CY), commune à la référence et à l'orbite critique.
+function ComputeOrbit(Formula: TFractalFormula; const StartX, StartY, CX, CY: THighFloat; IsCancelled: TCancelCheck;
   out Orbit: TOrbit): Boolean;
 var
   ZX, ZY: THighFloat;
@@ -34,12 +42,10 @@ var
   Count, K: Integer;
   IsFloatStep: Boolean;
 begin
-  if Formula = nil then
-    raise EArgumentException.Create(kNilFormulaMessage);
   Orbit := nil;
   Result := False;
-  ZX := THighFloat.Zero(CX.FracWords);
-  ZY := THighFloat.Zero(CX.FracWords);
+  ZX := StartX;
+  ZY := StartY;
   Count := 0;
   K := 0;
   IsFloatStep := False;
@@ -76,6 +82,37 @@ begin
   end;
   SetLength(Orbit, Count);
   Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ComputeReferenceOrbit(Formula: TFractalFormula; const CX, CY: THighFloat; IsCancelled: TCancelCheck;
+  out Orbit: TOrbit): Boolean;
+var
+  Zero: THighFloat;
+begin
+  if Formula = nil then
+    raise EArgumentException.CreateFmt(kNilFormulaMessage, ['ComputeReferenceOrbit']);
+  if Formula.HasPixelStart then
+    Exit(ComputeOrbit(Formula, CX, CY.WithFracWords(CX.FracWords), CX, CY, IsCancelled, Orbit));
+  Zero := THighFloat.Zero(CX.FracWords);
+  Result := ComputeOrbit(Formula, Zero, Zero, CX, CY, IsCancelled, Orbit);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ComputeCriticalOrbit(Formula: TFractalFormula; FracWords: Integer; IsCancelled: TCancelCheck;
+  out Orbit: TOrbit): Boolean;
+var
+  Zero: THighFloat;
+begin
+  if Formula = nil then
+    raise EArgumentException.CreateFmt(kNilFormulaMessage, ['ComputeCriticalOrbit']);
+  if not Formula.HasPixelStart then
+    raise EArgumentException.CreateFmt(kNoPixelStartMessage, [Formula.FormulaName]);
+  Zero := THighFloat.Zero(FracWords);
+  // c est dans les paramètres : les arguments CX, CY du pas ne servent pas
+  Result := ComputeOrbit(Formula, Zero, Zero, Zero, Zero, IsCancelled, Orbit);
 end;
 
 end.

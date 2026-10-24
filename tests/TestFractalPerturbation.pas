@@ -46,6 +46,16 @@ const
   kMultibrot10X = '0.121005715673480444563141255909409664709949871465915659458729';
   kMultibrot10Y = '0.686257515368839083109099330561232671954583079989923098731122';
   kMultibrot10MaxIter = 500;
+  // Bord de l'ensemble de Julia de c par défaut (-0,8 ; 0,156), partagé avec les rendus profonds et la fumée. Ce c est
+  // hors de l'ensemble de Mandelbrot (l'orbite critique s'échappe en 255 itérations) : Julia est une poussière, et
+  // « intérieur » veut dire « pas encore échappé à MaxIter ». Bissection exacte (THighFloat, 120 pas, MaxIter
+  // kJuliaBorderMaxIter) du segment (-1,44 ; 0,06), intérieur, vers (1,5 ; 0), extérieur, puis centre du dernier
+  // intervalle. 61,1 % de pixels extérieurs au pixel 1e-12, 44,4 % à 1e-25 ; aux deux échelles, un décalage de
+  // l'échantillon d'un millième de pixel ne change le verdict d'aucun des 108 pixels, et la vérité à 320 bits
+  // coïncide avec celle à 256 bits. À MaxIter 1000, 6 à 7 verdicts sur 108 changent au pixel 1e-12 : d'où ce MaxIter.
+  kJuliaBorderX = '-1.439898853502800459665516393551514188332332103584027070185266';
+  kJuliaBorderY = '0.059997935785771437899255524502211160106664569959920702338551';
+  kJuliaBorderMaxIter = 500;
 
 // Vue de PixelWidth x PixelHeight pixels et de largeur Width, centrée sur les chaînes décimales exactes (lues par
 // THighFloat.TryParse) ; lève une exception si une chaîne est illisible.
@@ -90,6 +100,10 @@ type
     procedure TestMultibrotMatchesExact;
     procedure TestMultibrotNonIntegerRaises;
     procedure TestMultibrotHighPowerOrbitDoesNotOverflow;
+    procedure TestJuliaReferenceMatchesIterate;
+    procedure TestJuliaMatchesExact;
+    procedure TestJuliaUsesCriticalOrbit;
+    procedure TestJuliaWithoutCriticalOrbitRaises;
     procedure TestPerturbedMatchesDirect;
     procedure TestReferenceEscapingEarlyStillMatches;
     procedure TestReferenceOrbitCancels;
@@ -100,7 +114,7 @@ type
 implementation
 
 uses
-  SysUtils, Math;
+  SysUtils, Math, TestFractalEngine;
 
 {------------------------------------------------------------------------------}
 
@@ -144,6 +158,8 @@ const
   kRelativeTolerance = 1e-9;
   kCancelInterval = 256;
   kLn2 = 0.69314718055994530942;
+  kJuliaPixelSizes: array[0..1] of TFloat = (1e-12, 1e-25);
+  kCorruptionFactor = 1e-6;   // écart relatif imposé aux points W1, W2, ... d'une orbite critique faussée
 
 var
   TruthCache: array of TGroundTruth;
@@ -172,7 +188,8 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Itération en haute précision du pixel (PX, PY), même convention de compte et de lissage qu'Iterate.
+// Itération en haute précision du pixel (PX, PY), même convention de compte et de lissage qu'Iterate. Le pixel est c
+// (Z0 = 0), ou Z0 pour une formule HasPixelStart (Julia : c dans les paramètres, CX et CY ignorés par StepReference).
 function ExactValue(Formula: TFractalFormula; const V: TViewport; PX, PY: Integer): Single;
 var
   Offset: TComplexPoint;
@@ -187,8 +204,16 @@ begin
   Offset := V.PixelOffset(PX, PY);
   CX := V.ExactCenterX.WithFracWords(kTruthFracWords).AddFloat(Offset.X, kTruthFracWords);
   CY := V.ExactCenterY.WithFracWords(kTruthFracWords).AddFloat(Offset.Y, kTruthFracWords);
-  ZX := THighFloat.Zero(kTruthFracWords);
-  ZY := ZX;
+  if Formula.HasPixelStart then
+  begin
+    ZX := CX;
+    ZY := CY;
+  end
+  else
+  begin
+    ZX := THighFloat.Zero(kTruthFracWords);
+    ZY := ZX;
+  end;
   for N := 0 to Formula.MaxIter - 1 do
   begin
     X := ZX.ToFloat;
@@ -246,12 +271,13 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Part des pixels échantillonnés pour lesquels IteratePerturbed concorde avec la vérité exacte (même verdict ;
-// valeurs lissées proches si les deux sont à l'extérieur). La référence est au centre décalé de ShiftX.
+// Part des pixels échantillonnés pour lesquels IteratePerturbedCritical concorde avec la vérité exacte (même verdict ;
+// valeurs lissées proches si les deux sont à l'extérieur). La référence est au centre décalé de ShiftX ; l'orbite
+// critique n'est calculée que pour une formule HasPixelStart (vide sinon, et ignorée).
 function TTestPerturbation.Concordance(Formula: TFractalFormula; const V: TViewport; ShiftX: TFloat;
   AMaxIter: Integer; const ViewLabel: string; IsMixRequired: Boolean): Double;
 var
-  Orbit: TOrbit;
+  Orbit, Critical: TOrbit;
   Truth: TGroundTruth;
   RefX: THighFloat;
   X, Y, Index, Agree, EscapeCount: Integer;
@@ -267,6 +293,9 @@ begin
     begin
       Result := False;
     end, Orbit), 'orbite de référence');
+  Critical := nil;
+  if Formula.HasPixelStart then
+    Check(ComputeCriticalOrbit(Formula, V.ExactCenterX.FracWords, nil, Critical), 'orbite critique');
   Agree := 0;
   EscapeCount := 0;
   Index := 0;
@@ -277,7 +306,8 @@ begin
     while X < kViewWidth do
     begin
       Offset := V.PixelOffset(X, Y);
-      Perturbed := Formula.IteratePerturbed(Orbit, Length(Orbit), Offset.X - ShiftX, Offset.Y);
+      Perturbed := Formula.IteratePerturbedCritical(Orbit, Length(Orbit), Critical, Length(Critical),
+        Offset.X - ShiftX, Offset.Y);
       IsSame := (Truth.Values[Index] < 0) = (Perturbed < 0);
       if Truth.Values[Index] >= 0 then
       begin
@@ -351,7 +381,7 @@ begin
   end;
   F := TJuliaFormula.Create;
   try
-    Check(not F.IsPerturbationSupported, 'Julia');
+    Check(F.IsPerturbationSupported, 'Julia');
   finally
     F.Free;
   end;
@@ -385,16 +415,23 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Orbite de référence de (RefX, RefY) comparée à l'itération directe : longueur, Z0 = 0 et dernier point échappé.
-// DirectStep fait un pas de la formule en Extended. Le point doit échapper vite, avant que le chaos de l'orbite ne
-// sépare l'Extended de la haute précision.
+// Orbite de référence de (RefX, RefY) comparée à l'itération directe : longueur, Z0 et dernier point échappé. Z0 = 0,
+// ou (RefX, RefY) pour une formule HasPixelStart. DirectStep fait un pas de la formule en Extended. Le point doit
+// échapper vite, avant que le chaos de l'orbite ne sépare l'Extended de la haute précision.
 procedure TTestPerturbation.CheckReferenceOrbit(Formula: TFractalFormula; RefX, RefY: TFloat; DirectStep: TDirectStep);
 var
   Orbit: TOrbit;
-  X, Y, LastR2: TFloat;
+  X, Y, StartX, StartY, LastR2: TFloat;
   N: Integer;
 begin
   Check(Assigned(DirectStep), 'pas direct absent');
+  StartX := 0;
+  StartY := 0;
+  if Formula.HasPixelStart then
+  begin
+    StartX := RefX;
+    StartY := RefY;
+  end;
   Formula.MaxIter := kTestMaxIter;
   Check(ComputeReferenceOrbit(Formula, THighFloat.FromFloat(RefX, kOrbitFracWords),
     THighFloat.FromFloat(RefY, kOrbitFracWords),
@@ -403,8 +440,8 @@ begin
       Result := False;
     end, Orbit), 'orbite');
   Check(Formula.Iterate(RefX, RefY) >= 0, 'le point doit échapper');
-  X := 0;
-  Y := 0;
+  X := StartX;
+  Y := StartY;
   N := 0;
   while (N < Formula.MaxIter) and (X * X + Y * Y <= kEscapeRadius2) do
   begin
@@ -413,8 +450,8 @@ begin
   end;
   LastR2 := Sqr(Orbit[High(Orbit)].X) + Sqr(Orbit[High(Orbit)].Y);
   CheckEquals(N + 1, Length(Orbit), 'longueur');
-  CheckEquals(0, Orbit[0].X, 'Z0.X');
-  CheckEquals(0, Orbit[0].Y, 'Z0.Y');
+  CheckEquals(StartX, Orbit[0].X, 'Z0.X');
+  CheckEquals(StartY, Orbit[0].Y, 'Z0.Y');
   Check(Abs(LastR2 - (X * X + Y * Y)) <= kRelativeTolerance * LastR2, 'dernier |Z|2');
   Check(LastR2 > kEscapeRadius2, 'le dernier point échappe');
 end;
@@ -703,6 +740,130 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Julia, c par défaut : Z0 = (kRefX, kRefY), qui s'échappe en six pas ; pas direct z^2 + c en Extended.
+procedure TTestPerturbation.TestJuliaReferenceMatchesIterate;
+const
+  kRefX = 1.0;
+  kRefY = 0.5;
+var
+  F: TFractalFormula;
+  CX, CY: TFloat;
+begin
+  F := TJuliaFormula.Create;
+  try
+    CX := F.GetParam(F.IndexOfParam('cx'));
+    CY := F.GetParam(F.IndexOfParam('cy'));
+    CheckReferenceOrbit(F, kRefX, kRefY,
+      procedure(var X, Y: TFloat)
+      var
+        X2, Y2: TFloat;
+      begin
+        X2 := X * X;
+        Y2 := Y * Y;
+        Y := 2 * X * Y + CY;
+        X := X2 - Y2 + CX;
+      end);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Concordance avec la vérité exacte, c par défaut, au bord kJuliaBorder, au pixel 1e-12 puis 1e-25.
+procedure TTestPerturbation.TestJuliaMatchesExact;
+var
+  I: Integer;
+  V: TViewport;
+begin
+  for I := 0 to High(kJuliaPixelSizes) do
+  begin
+    V := MakeExactScene(kJuliaBorderX, kJuliaBorderY, kJuliaPixelSizes[I] * kViewWidth);
+    CheckConcordance(TJuliaFormula.Create, V, 0, kJuliaBorderMaxIter, Format('bord, pixel %g', [kJuliaPixelSizes[I]]),
+      True);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue kJuliaBorder au pixel 1e-12 : au moins un pixel rebase sur l'orbite critique W. Preuve sans compteur dans la
+// routine : avec une W faussée (W0 = 0 intact, W1, W2, ... décalés de kCorruptionFactor), sa valeur change.
+procedure TTestPerturbation.TestJuliaUsesCriticalOrbit;
+var
+  F: TFractalFormula;
+  V: TViewport;
+  Orbit, Critical, Corrupted: TOrbit;
+  X, Y, I, Count, RebasedCount: Integer;
+  Offset: TComplexPoint;
+begin
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaBorderMaxIter;
+    V := MakeExactScene(kJuliaBorderX, kJuliaBorderY, kJuliaPixelSizes[0] * kViewWidth);
+    Check(ComputeReferenceOrbit(F, V.ExactCenterX, V.ExactCenterY, nil, Orbit), 'orbite de référence');
+    Check(ComputeCriticalOrbit(F, V.ExactCenterX.FracWords, nil, Critical), 'orbite critique');
+    Corrupted := Copy(Critical);
+    for I := 1 to High(Corrupted) do
+      Corrupted[I].X := Corrupted[I].X * (1 + kCorruptionFactor);
+    Count := 0;
+    RebasedCount := 0;
+    Y := 0;
+    while Y < kViewHeight do
+    begin
+      X := 0;
+      while X < kViewWidth do
+      begin
+        Offset := V.PixelOffset(X, Y);
+        if F.IteratePerturbedCritical(Orbit, Length(Orbit), Critical, Length(Critical), Offset.X, Offset.Y)
+          <> F.IteratePerturbedCritical(Orbit, Length(Orbit), Corrupted, Length(Corrupted), Offset.X, Offset.Y) then
+          Inc(RebasedCount);
+        Inc(Count);
+        Inc(X, kSampleStep);
+      end;
+      Inc(Y, kSampleStep);
+    end;
+    Status(Format('Julia : %d pixels sur %d dépendent de W', [RebasedCount, Count]));
+    Check(RebasedCount > 0, 'aucun pixel ne rebase sur l''orbite critique');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Julia sans orbite critique : IteratePerturbed refuse ; IteratePerturbedCritical refuse une W d'un seul point.
+procedure TTestPerturbation.TestJuliaWithoutCriticalOrbitRaises;
+var
+  F: TFractalFormula;
+  Orbit: TOrbit;
+  IsRaised: Boolean;
+begin
+  F := TJuliaFormula.Create;
+  try
+    SetLength(Orbit, kMinOrbitLength);
+    IsRaised := False;
+    try
+      F.IteratePerturbed(Orbit, kMinOrbitLength, 0, 0);
+    except
+      on EArgumentException do
+        IsRaised := True;
+    end;
+    Check(IsRaised, 'IteratePerturbed doit exiger l''orbite critique');
+    IsRaised := False;
+    try
+      F.IteratePerturbedCritical(Orbit, kMinOrbitLength, Orbit, kMinOrbitLength - 1, 0, 0);
+    except
+      on EArgumentException do
+        IsRaised := True;
+    end;
+    Check(IsRaised, 'IteratePerturbedCritical doit refuser une orbite critique d''un seul point');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TTestPerturbation.TestPerturbedMatchesDirect;
 begin
   CheckConcordance(TMandelbrotFormula.Create, kMandelbrotX, kMandelbrotY, 0);
@@ -747,13 +908,14 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Formule sans perturbation (TRaisingFormula des tests du moteur) : le StepReference de base lève une exception.
 procedure TTestPerturbation.TestUnsupportedFormulaRaises;
 var
   F: TFractalFormula;
   ZX, ZY, C: THighFloat;
   IsRaised: Boolean;
 begin
-  F := TJuliaFormula.Create;
+  F := TRaisingFormula.Create;
   try
     ZX := THighFloat.Zero(kOrbitFracWords);
     ZY := ZX;

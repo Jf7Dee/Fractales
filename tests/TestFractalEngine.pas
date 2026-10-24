@@ -49,6 +49,8 @@ type
     procedure TestRustBurningShipAtAcceptanceDepths;
     procedure TestReferenceReusedWithinIterHeadroom;
     procedure TestEscapedReferenceReusedForBands;
+    procedure TestCriticalOrbitReusedWhenPanning;
+    procedure TestJuliaDeepRenderStaysInDelphi;
   end;
 
 implementation
@@ -74,6 +76,9 @@ const
   kEscapingCenterX = 0.5;           // hors de l'ensemble : le centre et les 8 autres candidates s'échappent vite
   kEscapingPixelSize = 1e-30;
   kBandRows = 16;
+  kJuliaDeepPixelSize = 1e-30;
+  kBeyondReuseWidths = 3;           // au-delà des deux largeurs de réutilisation de Z
+  kJuliaParamStep = 1e-3;           // déplacement de c (partie réelle)
 
 {------------------------------------------------------------------------------}
 
@@ -790,6 +795,91 @@ begin
   finally
     F.Free;
     E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue Julia profonde au bord kJuliaBorder (MaxIter kJuliaBorderMaxIter).
+function JuliaDeepViewport: TViewport;
+begin
+  Result := MakeExactViewport(kJuliaBorderX, kJuliaBorderY, kDeepPixelWidth * kJuliaDeepPixelSize, kDeepPixelWidth,
+    kDeepPixelHeight);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Julia profond : un déplacement au-delà de deux largeurs recalcule Z mais garde W (même c, même précision) ; un
+// changement de c recalcule les deux.
+procedure TTestEngine.TestCriticalOrbitReusedWhenPanning;
+var
+  E: TRenderEngine;
+  F: TJuliaFormula;
+  V: TViewport;
+  Index: Integer;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    F.MaxIter := kJuliaBorderMaxIter;
+    V := JuliaDeepViewport;
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(1, E.ReferenceComputeCount);
+    CheckEquals(1, E.CriticalComputeCount);
+    E.Render(V.Panned(kBeyondReuseWidths * kDeepPixelWidth, 0), F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(2, E.ReferenceComputeCount, 'Z non recalculée après le déplacement');
+    CheckEquals(1, E.CriticalComputeCount, 'W recalculée alors que c n''a pas changé');
+    Index := F.IndexOfParam('cx');
+    F.SetParam(Index, F.GetParam(Index) + kJuliaParamStep);
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckEquals('', E.TakeErrors);
+    CheckEquals(3, E.ReferenceComputeCount, 'Z non recalculée après le changement de c');
+    CheckEquals(2, E.CriticalComputeCount, 'W non recalculée après le changement de c');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Jusqu'à l'ABI 4 (fk_compute_row_perturbed2), la DLL ne reçoit pas l'orbite critique : un rendu Julia profond
+// demandé en Rust est calculé par le moteur Delphi, sans erreur ; le palier 1 reste en Rust.
+procedure TTestEngine.TestJuliaDeepRenderStaysInDelphi;
+var
+  Fake: TRustKernel;
+  E: TRenderEngine;
+  F: TJuliaFormula;
+begin
+  Fake := TRustKernel.Create(FakeKernelFileName);
+  E := TRenderEngine.Create(CpuCount);
+  F := TJuliaFormula.Create;
+  try
+    CheckTrue(Fake.IsAvailable, Fake.Status);
+    E.Kernel := ekRust;
+    E.RustKernel := Fake;
+    F.MaxIter := kJuliaBorderMaxIter;
+    CheckEquals(Ord(ekRust), Ord(E.ResolveKernel(F)), 'palier 1 de Julia en Rust');
+    CheckEquals(Ord(ekDelphi), Ord(E.ResolveKernel(F, True)), 'palier 2 de Julia en Rust');
+    E.Render(JuliaDeepViewport, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckTrue(E.Status.IsComplete);
+    CheckTrue(E.Status.IsPerturbation);
+    CheckEquals(Ord(ekDelphi), Ord(E.Status.Kernel), 'noyau du rendu Julia profond');
+    CheckEquals('', E.TakeErrors);
+  finally
+    F.Free;
+    E.Free;
+    Fake.Free;
   end;
 end;
 

@@ -70,6 +70,12 @@ type
         FracWords: Integer;
         Width: TFloat;           // largeur de la vue qui l'a calculée
         IsFullLength: Boolean;   // l'orbite ne s'échappe pas avant MaxIter
+        // orbite critique W0 = 0 des formules HasPixelStart (Julia), nil pour les autres ; elle ne dépend que des
+        // paramètres et du nombre de mots, et survit au recalcul de Z
+        Critical: TOrbit;
+        CriticalDouble: TDoubleOrbit;   // la même en Double, pour la DLL Rust
+        CriticalMaxIter: Integer;       // MaxIter de W, marge kReferenceIterHeadroom comprise
+        CriticalFracWords: Integer;
       end;
   private
     FLock: TCriticalSection;
@@ -99,10 +105,12 @@ type
     FIsPerturbation: Boolean;              // palier figé au début du rendu courant
     FIsReferenceReady: Boolean;            // sous FLock : tant qu'il est faux, aucune tuile n'est éligible
     FOrbit: TOrbit;                        // orbite de référence des tuiles du rendu courant
+    FCritical: TOrbit;                     // orbite critique des tuiles du rendu courant (nil sauf Julia)
     FDoubleOrbit: TDoubleOrbit;            // FOrbit en Double, en mode Rust seulement
     FRefDeltaX, FRefDeltaY: TFloat;        // centre exact − référence, partie constante de δc
     FReference: TReferenceOrbit;           // sous FLock pendant un rendu
     FReferenceComputeCount: Integer;
+    FCriticalComputeCount: Integer;
     FIsEscapedReferenceReusable: Boolean;
     function TryTakeJob(out Job: TTileJob): Boolean;
     function ProcessJob(const Job: TTileJob): Boolean;
@@ -110,9 +118,11 @@ type
     function ProcessReferenceJob(const Job: TTileJob): Boolean;
     class function ReferenceMaxIter(MaxIter: Integer): Integer;
     procedure InstallReference(Generation: Integer; const RefX, RefY: THighFloat; const Orbit: TOrbit;
-      FracWords, OrbitMaxIter: Integer);
+      FracWords, OrbitMaxIter: Integer; const Critical: TOrbit; IsCriticalNew: Boolean);
     function PixelValue(X, Y: Integer): Single;
     function IsReferenceReusable(const V: TViewport; Formula: TFractalFormula): Boolean;
+    function HasReferenceParams(Formula: TFractalFormula): Boolean;
+    function IsCriticalReusable(FracWords: Integer): Boolean;
     function CurrentRustKernel: TRustKernel;
     procedure FinishJob(const Job: TTileJob; IsCompleted: Boolean);
     procedure AddError(const Msg: string);
@@ -121,6 +131,7 @@ type
       DX, DY: Integer);
     procedure QueueJobs(IsProgressive, ShouldComputeReference: Boolean);
     function GetReferenceComputeCount: Integer;
+    function GetCriticalComputeCount: Integer;
     function GetReferenceLength: Integer;
   public
     constructor Create(AThreadCount: Integer);
@@ -140,6 +151,7 @@ type
     // rendu HD par bandes : une référence échappée sert aussi aux bandes suivantes de même largeur
     property IsEscapedReferenceReusable: Boolean read FIsEscapedReferenceReusable write FIsEscapedReferenceReusable;
     property ReferenceComputeCount: Integer read GetReferenceComputeCount;   // tâches référence installées
+    property CriticalComputeCount: Integer read GetCriticalComputeCount;     // orbites critiques calculées, installées
     property ReferenceLength: Integer read GetReferenceLength;               // points de la dernière référence
   end;
 
@@ -340,17 +352,22 @@ begin
   // aucune tâche ne tourne plus : l'orbite et la référence gardée se lisent sans verrou
   FIsPerturbation := IsNewPerturbation;
   FOrbit := nil;
+  FCritical := nil;
   FDoubleOrbit := nil;
   IsReused := IsNewPerturbation and IsReferenceReusable(V, NewFormula);
   if IsReused then
   begin
+    // W a été installée avec Z, pour les mêmes paramètres : elle la suit
     FOrbit := FReference.Orbit;
+    FCritical := FReference.Critical;
     if NewKernel = ekRust then
     begin
       // orbite installée en mode Delphi : convertie une seule fois, puis gardée avec elle
       if FReference.DoubleOrbit = nil then
         FReference.DoubleOrbit := MakeDoubleOrbit(FReference.Orbit);
       FDoubleOrbit := FReference.DoubleOrbit;
+      if (FReference.Critical <> nil) and (FReference.CriticalDouble = nil) then
+        FReference.CriticalDouble := MakeDoubleOrbit(FReference.Critical);
     end;
     FRefDeltaX := V.ExactCenterX.Sub(FReference.ExactX).ToFloat;
     FRefDeltaY := V.ExactCenterY.Sub(FReference.ExactY).ToFloat;
@@ -372,7 +389,6 @@ end;
 // IsEscapedReferenceReusable (bandes du rendu HD) et que la largeur de vue n'a pas changé.
 function TRenderEngine.IsReferenceReusable(const V: TViewport; Formula: TFractalFormula): Boolean;
 var
-  I: Integer;
   MaxDistance: TFloat;
 begin
   Result := False;
@@ -380,18 +396,44 @@ begin
     Exit;
   if not FReference.IsFullLength and not (FIsEscapedReferenceReusable and (FReference.Width = V.Width)) then
     Exit;
-  if (FReference.FormulaClass <> Formula.ClassType) or (FReference.MaxIter < Formula.MaxIter) then
+  if not HasReferenceParams(Formula) or (FReference.MaxIter < Formula.MaxIter) then
     Exit;
-  if Length(FReference.Params) <> Formula.ParamCount then
-    Exit;
-  for I := 0 to High(FReference.Params) do
-    if FReference.Params[I] <> Formula.GetParam(I) then
-      Exit;
   if FReference.FracWords < FracWordsForPixelSize(V.PixelSize) then
     Exit;
   MaxDistance := kReferenceReuseWidths * V.Width;
   Result := (Abs(FReference.ExactX.Sub(V.ExactCenterX).ToFloat) <= MaxDistance)
     and (Abs(FReference.ExactY.Sub(V.ExactCenterY).ToFloat) <= MaxDistance);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vrai si la référence installée l'a été pour la même formule : même classe, mêmes paramètres.
+function TRenderEngine.HasReferenceParams(Formula: TFractalFormula): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  if (FReference.FormulaClass <> Formula.ClassType) or (Length(FReference.Params) <> Formula.ParamCount) then
+    Exit;
+  for I := 0 to High(FReference.Params) do
+    if FReference.Params[I] <> Formula.GetParam(I) then
+      Exit;
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Sous FLock. L'orbite critique installée sert encore au rendu courant si elle a été calculée pour la même formule
+// (classe et paramètres : c), au même nombre de mots, et si elle est complète : son MaxIter (marge comprise) couvre
+// celui du rendu, comme pour Z, ou elle s'est échappée (c hors de l'ensemble de Mandelbrot).
+function TRenderEngine.IsCriticalReusable(FracWords: Integer): Boolean;
+var
+  IsEscaped: Boolean;
+begin
+  IsEscaped := Length(FReference.Critical) <= FReference.CriticalMaxIter;
+  Result := (FReference.Critical <> nil) and HasReferenceParams(FFormula)
+    and (FReference.CriticalFracWords = FracWords)
+    and ((FReference.CriticalMaxIter >= FFormula.MaxIter) or IsEscaped);
 end;
 
 {------------------------------------------------------------------------------}
@@ -575,9 +617,11 @@ var
 begin
   if FIsPerturbation then
   begin
-    // δc = (centre exact − référence) + écart du pixel au centre exact
+    // δc (δ0 pour Julia) = (centre exact − référence) + écart du pixel au centre exact ; FCritical est vide sauf
+    // pour Julia, et ignorée par les autres formules
     P := FViewport.PixelOffset(X, Y);
-    Result := FFormula.IteratePerturbed(FOrbit, Length(FOrbit), FRefDeltaX + P.X, FRefDeltaY + P.Y);
+    Result := FFormula.IteratePerturbedCritical(FOrbit, Length(FOrbit), FCritical, Length(FCritical),
+      FRefDeltaX + P.X, FRefDeltaY + P.Y);
   end
   else
   begin
@@ -648,14 +692,17 @@ end;
 // pas. Sinon, on garde l'orbite la plus longue. Chaque calcul d'orbite s'interrompt dès que la génération change.
 // L'orbite va jusqu'à ReferenceMaxIter : la marge la garde réutilisable quand l'auto-itération relève MaxIter.
 // La recherche s'arrête dès qu'une orbite suffit au rendu courant (plus de MaxIter points), marge atteinte ou non.
+// Pour une formule HasPixelStart (Julia), une candidate est un Z0, et l'orbite critique W est calculée une fois,
+// avant les candidates, sauf si celle de la référence installée sert encore (IsCriticalReusable).
 function TRenderEngine.ProcessReferenceJob(const Job: TTileJob): Boolean;
 var
   Generation, Words, CellCount, Candidate, Cell, Half: Integer;
   IsCancelled: TCancelCheck;
   StepX, StepY: TFloat;
   CX, CY, BestX, BestY: THighFloat;
-  Orbit, Best: TOrbit;
+  Orbit, Best, Critical: TOrbit;
   RefFormula: TFractalFormula;
+  IsCriticalNew: Boolean;
 begin
   Result := False;
   Generation := Job.Generation;
@@ -676,6 +723,24 @@ begin
   RefFormula := FFormula.Clone;
   try
     RefFormula.MaxIter := ReferenceMaxIter(FFormula.MaxIter);
+    Critical := nil;
+    IsCriticalNew := False;
+    if RefFormula.HasPixelStart then
+    begin
+      FLock.Enter;
+      try
+        if IsCriticalReusable(Words) then
+          Critical := FReference.Critical;
+      finally
+        FLock.Leave;
+      end;
+      if Critical = nil then
+      begin
+        if not ComputeCriticalOrbit(RefFormula, Words, IsCancelled, Critical) then
+          Exit;
+        IsCriticalNew := True;
+      end;
+    end;
     for Candidate := 0 to CellCount - 1 do
     begin
       // le candidat 0 est la case centrale, puis les autres cases dans l'ordre de la grille
@@ -693,7 +758,7 @@ begin
       if Length(Best) > FFormula.MaxIter then
         Break;
     end;
-    InstallReference(Generation, BestX, BestY, Best, Words, RefFormula.MaxIter);
+    InstallReference(Generation, BestX, BestY, Best, Words, RefFormula.MaxIter, Critical, IsCriticalNew);
   finally
     RefFormula.Free;
   end;
@@ -709,8 +774,10 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Critical : orbite critique du rendu (nil si la formule n'en a pas) ; IsCriticalNew : calculée par ce travail, sinon
+// c'est celle déjà installée, gardée telle quelle.
 procedure TRenderEngine.InstallReference(Generation: Integer; const RefX, RefY: THighFloat; const Orbit: TOrbit;
-  FracWords, OrbitMaxIter: Integer);
+  FracWords, OrbitMaxIter: Integer; const Critical: TOrbit; IsCriticalNew: Boolean);
 var
   I: Integer;
 begin
@@ -727,6 +794,17 @@ begin
       FReference.DoubleOrbit := MakeDoubleOrbit(Orbit)
     else
       FReference.DoubleOrbit := nil;
+    if IsCriticalNew or (Critical = nil) then
+    begin
+      FReference.Critical := Critical;
+      FReference.CriticalDouble := nil;
+      FReference.CriticalMaxIter := OrbitMaxIter;
+      FReference.CriticalFracWords := FracWords;
+      if IsCriticalNew then
+        Inc(FCriticalComputeCount);
+    end;
+    if (FActiveKernel = ekRust) and (FReference.Critical <> nil) and (FReference.CriticalDouble = nil) then
+      FReference.CriticalDouble := MakeDoubleOrbit(FReference.Critical);
     FReference.FormulaClass := FFormula.ClassType;
     SetLength(FReference.Params, FFormula.ParamCount);
     for I := 0 to High(FReference.Params) do
@@ -736,6 +814,7 @@ begin
     FReference.Width := FViewport.Width;
     FReference.IsFullLength := Length(Orbit) > OrbitMaxIter;
     FOrbit := Orbit;
+    FCritical := FReference.Critical;
     FDoubleOrbit := FReference.DoubleOrbit;
     FRefDeltaX := FViewport.ExactCenterX.Sub(RefX).ToFloat;
     FRefDeltaY := FViewport.ExactCenterY.Sub(RefY).ToFloat;
@@ -860,9 +939,11 @@ end;
 function TRenderEngine.ResolveKernel(Formula: TFractalFormula; IsPerturbation: Boolean): TEngineKernelType;
 begin
   // la DLL par défaut n'est chargée que si le noyau Rust est demandé ; une DLL sans perturbation pour cette formule
-  // laisse le palier 2 au moteur Delphi
+  // laisse le palier 2 au moteur Delphi. Une formule HasPixelStart (Julia) aussi : fk_compute_row_perturbed ne reçoit
+  // pas l'orbite critique
   if (FKernel = ekRust) and (Formula.KernelId <> kKernelNone) and CurrentRustKernel.IsAvailable
-    and (not IsPerturbation or CurrentRustKernel.HasPerturbationFor(Formula.KernelId)) then
+    and (not IsPerturbation
+      or (not Formula.HasPixelStart and CurrentRustKernel.HasPerturbationFor(Formula.KernelId))) then
     Result := ekRust
   else
     Result := ekDelphi;
@@ -875,6 +956,18 @@ begin
   FLock.Enter;
   try
     Result := FReferenceComputeCount;
+  finally
+    FLock.Leave;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TRenderEngine.GetCriticalComputeCount: Integer;
+begin
+  FLock.Enter;
+  try
+    Result := FCriticalComputeCount;
   finally
     FLock.Leave;
   end;
