@@ -22,6 +22,7 @@ type
     procedure TestParamToSliderPosition;
     procedure TestSliderPositionToParam;
     procedure TestPowerSliderSnapsToIntegers;
+    procedure TestTypedPowerNotSnapped;
     procedure TestJuliaSliderNotSnapped;
     procedure TestIsIntegerPower;
     procedure TestSliderWithEmptyRange;
@@ -255,6 +256,24 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TTestFormulas.TestTypedPowerNotSnapped;
+var
+  B: TMultibrotFormula;
+  Typed: Double;
+begin
+  Typed := 2.9985;
+  B := TMultibrotFormula.Create;
+  try
+    // saisie directe (hors curseur) : SetParam n'aimante pas
+    B.SetParam(0, Typed);
+    CheckEquals(Typed, B.GetParam(0), 0, 'puissance saisie');
+  finally
+    B.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TTestFormulas.TestPowerSliderSnapsToIntegers;
 var
   B: TMultibrotFormula;
@@ -292,7 +311,6 @@ begin
     begin
       Info := J.ParamInfo(I);
       Check(not Info.IsIntegerSnapped, Info.Name);
-     
       CheckEquals(Info.MinValue + 501 * (Info.MaxValue - Info.MinValue) / kParamSliderSteps,
         SliderPositionToParam(Info, 501), 1e-15, Info.Name);
     end;

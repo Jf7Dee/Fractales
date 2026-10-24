@@ -20,7 +20,9 @@ const
   kRustBadParamCount = 2;
   kRustInvalidArgument = 3;
   kRustInternalError = 4;
-  kRustUnsupported = 5;              // formule sans perturbation (fk_compute_row_perturbed)
+  // code 5 : formule non prise en charge par l'une ou l'autre fonction perturbée ; couvre Julia via la fonction à
+  // orbite unique et les puissances non entières de Multibrot
+  kRustUnsupported = 5;
 
 type
   ERustKernelError = class(Exception);
@@ -169,7 +171,10 @@ begin
     FStatus := Format('Moteur Rust disponible, sans fk_compute_row_perturbed (version %d) : '
       + 'le zoom profond sera calculé en Delphi.', [Version])
   else if Version = kRustAbiVersionAbi2 then
-    FStatus := Format('Moteur Rust disponible (version %d) : le Burning Ship profond sera calculé en Delphi.',
+    FStatus := Format('Moteur Rust disponible (version %d) : le Burning Ship, Julia et Multibrot profonds '
+      + 'seront calculés en Delphi.', [Version])
+  else if Version = kRustAbiVersionAbi3 then
+    FStatus := Format('Moteur Rust disponible (version %d) : Julia et Multibrot profonds seront calculés en Delphi.',
       [Version])
   else
     FStatus := 'Moteur Rust disponible.';

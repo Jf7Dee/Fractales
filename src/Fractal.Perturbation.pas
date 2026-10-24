@@ -67,6 +67,9 @@ begin
       SetLength(Orbit, Count + kOrbitGrowStep);
     Orbit[Count] := Point;
     Inc(Count);
+    // le point issu de StepFloat a échappé par construction : fin de l'orbite
+    if IsFloatStep then
+      Break;
     // Zk échappe (|Z|² > R²) ou k = MaxIter : le dernier point est stocké puis on s'arrête
     if (Point.X * Point.X + Point.Y * Point.Y > kEscapeRadius2) or (K >= Formula.MaxIter) then
       Break;
