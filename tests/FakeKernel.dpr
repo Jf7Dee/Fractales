@@ -127,6 +127,11 @@ begin
     try
       if not F.SupportsPerturbation then
         Exit(kUnsupported);
+{$IFDEF FAKE_ABI2}
+      // une DLL v2 ne sait pas encore perturber le Burning Ship
+      if Formula = kKernelBurningShip then
+        Exit(kUnsupported);
+{$ENDIF}
       SetLength(Orbit, RefLength);
       for I := 0 to RefLength - 1 do
       begin

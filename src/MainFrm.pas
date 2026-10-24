@@ -833,7 +833,7 @@ begin
       FNavigator.GoBack;
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu après retour du zoom profond non terminé');
-      // zoom profond Burning Ship : cx dans l'antenne (sur l'axe), même taille de pixel
+      // zoom profond Burning Ship : cx à la pointe de l'axe réel (-2 ; 0), même taille de pixel
       SmokeFormulaClass := TFractalFormulaClass(FFormula.ClassType);
       SetFormula(TBurningShipFormula.Create, False);
       if not FFormula.SupportsPerturbation then

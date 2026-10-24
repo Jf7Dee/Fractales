@@ -34,6 +34,10 @@ const
   kBurningShipBodyMaxIter = 150;
   kBurningShipBodyPixelSize = 1e-27;
 
+// Vue de PixelWidth x PixelHeight pixels et de largeur Width, centrée sur les chaînes décimales exactes (lues par
+// THighFloat.TryParse) ; lève une exception si une chaîne est illisible.
+function MakeExactViewport(const TextX, TextY: string; Width: TFloat; PixelWidth, PixelHeight: Integer): TViewport;
+
 type
   // Un pas direct (Extended) de l'itération d'une formule, pour comparer l'orbite de référence à Iterate.
   TDirectStep = reference to procedure(var X, Y: TFloat);
@@ -79,6 +83,22 @@ implementation
 
 uses
   SysUtils, Math;
+
+{------------------------------------------------------------------------------}
+
+function MakeExactViewport(const TextX, TextY: string; Width: TFloat; PixelWidth, PixelHeight: Integer): TViewport;
+var
+  X, Y: THighFloat;
+  Words: Integer;
+begin
+  Result := MakeViewport(0, 0, Width, PixelWidth, PixelHeight);
+  Words := FracWordsForPixelSize(Result.PixelSize);
+  if not THighFloat.TryParse(TextX, Words, X) then
+    raise Exception.Create('centre X illisible');
+  if not THighFloat.TryParse(TextY, Words, Y) then
+    raise Exception.Create('centre Y illisible');
+  Result.SetCenter(X, Y);
+end;
 
 const
   // Centres trouvés hors ligne par bissection (48 pas, MaxIter 10000, Extended) le long d'un rayon issu de
@@ -407,13 +427,14 @@ end;
 procedure TTestPerturbation.TestBurningShipFavouriteMatchesExact;
 const
   kDeepFactor = 1e-6;
+var
+  V: TViewport;
 begin
-  CheckConcordance(TBurningShipFormula.Create,
-    MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteCenterY, kBurningShipFavouriteWidth), 0,
-    kBurningShipFavouriteMaxIter, 'favori JF', False);
-  CheckConcordance(TBurningShipFormula.Create,
-    MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteCenterY,
-      kBurningShipFavouriteWidth * kDeepFactor), 0, kBurningShipFavouriteMaxIter, 'favori JF x 1e-6', False);
+  V := MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteCenterY, kBurningShipFavouriteWidth);
+  CheckConcordance(TBurningShipFormula.Create, V, 0, kBurningShipFavouriteMaxIter, 'favori JF', False);
+  V := MakeExactScene(kBurningShipFavouriteCenterX, kBurningShipFavouriteCenterY,
+    kBurningShipFavouriteWidth * kDeepFactor);
+  CheckConcordance(TBurningShipFormula.Create, V, 0, kBurningShipFavouriteMaxIter, 'favori JF x 1e-6', False);
 end;
 
 {------------------------------------------------------------------------------}
@@ -423,13 +444,13 @@ end;
 procedure TTestPerturbation.TestBurningShipNearAxisBorderMatchesExact;
 const
   kDeepFactor = 1e-6;
+var
+  V: TViewport;
 begin
-  CheckConcordance(TBurningShipFormula.Create,
-    MakeExactScene(kBurningShipBorderX, kBurningShipBorderY, kBurningShipFavouriteWidth), 0,
-    kBurningShipBorderMaxIter, 'bord près de l''axe', True);
-  CheckConcordance(TBurningShipFormula.Create,
-    MakeExactScene(kBurningShipBorderX, kBurningShipBorderY, kBurningShipFavouriteWidth * kDeepFactor), 0,
-    kBurningShipBorderMaxIter, 'bord près de l''axe x 1e-6', True);
+  V := MakeExactScene(kBurningShipBorderX, kBurningShipBorderY, kBurningShipFavouriteWidth);
+  CheckConcordance(TBurningShipFormula.Create, V, 0, kBurningShipBorderMaxIter, 'bord près de l''axe', True);
+  V := MakeExactScene(kBurningShipBorderX, kBurningShipBorderY, kBurningShipFavouriteWidth * kDeepFactor);
+  CheckConcordance(TBurningShipFormula.Create, V, 0, kBurningShipBorderMaxIter, 'bord près de l''axe x 1e-6', True);
 end;
 
 {------------------------------------------------------------------------------}
@@ -437,10 +458,11 @@ end;
 // Vue profonde hors de l'axe, où |X·Y| de la référence est grand devant δ : un DiffAbs naïf (|c + d| - |c|) y perd
 // tout δ et la concordance s'effondre ; c'est ce test (et non les vues à 1e-12) qui protège la technique de diffabs.
 procedure TTestPerturbation.TestBurningShipDeepBodyMatchesExact;
+var
+  V: TViewport;
 begin
-  CheckConcordance(TBurningShipFormula.Create,
-    MakeExactScene(kBurningShipBodyX, kBurningShipBodyY, kBurningShipBodyPixelSize * kViewWidth), 0,
-    kBurningShipBodyMaxIter, 'corps du navire, pixel 1e-27', True);
+  V := MakeExactScene(kBurningShipBodyX, kBurningShipBodyY, kBurningShipBodyPixelSize * kViewWidth);
+  CheckConcordance(TBurningShipFormula.Create, V, 0, kBurningShipBodyMaxIter, 'corps du navire, pixel 1e-27', True);
 end;
 
 {------------------------------------------------------------------------------}

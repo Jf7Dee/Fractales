@@ -26,7 +26,10 @@ type
     function RenderWith(Kernel: TEngineKernelType; RustKernel: TRustKernel; Formula: TFractalFormula;
       const V: TViewport; IsProgressive: Boolean): TRenderEngine;
     procedure CheckBuffersAgree(A, B: TIterationBuffer; MinRatio: Double; const Context: string);
-    procedure CheckDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+    procedure CheckDeepRenderAgrees(RustKernel: TRustKernel; Formula: TFractalFormula; const V: TViewport;
+      MinRatio: Double);
+    procedure CheckMandelbrotDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+    procedure CheckBurningShipDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
   protected
     procedure SetUp; override;
     procedure TearDown; override;
@@ -74,6 +77,9 @@ const
 
 implementation
 
+uses
+  TestFractalPerturbation;
+
 const
   kFakeKernelFile = 'FakeKernel.dll';
   kFakeKernelAbi1File = 'FakeKernelAbi1.dll';   // DLL factice compilée avec FAKE_ABI1 (build.sh tests)
@@ -103,6 +109,11 @@ const
   kPerturbedPixelSize = 1e-12;
   kPerturbedRowLength = 1000;
   kPerturbedMaxIter = 10000;
+  // rangée perturbée du Burning Ship : référence hors de l'axe (bord de kBurningShipBorder*, X·Y non nul) et rangées
+  // à δcy non nul, pour que DiffAbs prenne ses branches c <> 0 ; pixel du favori de JF
+  kBurningShipRowCount = 5;
+  kBurningShipRowPixelSize = kBurningShipFavouriteWidth / 200;
+  kBurningShipDeepFactor = 1e-6;   // vue du favori de JF 10^6 fois plus étroite
   // rendu profond : c = i, point de Misiurewicz, taille de pixel hors de portée du palier 1
   kDeepCenterX = 0;
   kDeepCenterY = 1;
@@ -485,8 +496,9 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Comme TestFakeKernelPerturbedMatchesDelphi, pour le Burning Ship : référence sur la pointe de l'axe réel, rangée
-// à cheval sur la pointe (extérieur à gauche, intérieur à droite).
+// Comme TestFakeKernelPerturbedMatchesDelphi, pour le Burning Ship : référence hors de l'axe (bord près de l'axe,
+// X·Y non nul), rangées de part et d'autre du centre (δcy non nul) : DiffAbs prend ses branches c <> 0 et d <> 0.
+// Les valeurs doivent être identiques bit à bit, et l'ensemble mêler intérieur et extérieur.
 procedure TTestRustKernel.TestFakeKernelBurningShipMatchesDelphi;
 var
   K: TRustKernel;
@@ -494,32 +506,48 @@ var
   Orbit, RoundedOrbit: TOrbit;
   DoubleOrbit: TDoubleOrbit;
   Values: array[0..kPerturbedRowLength - 1] of Single;
-  I, OutsideCount: Integer;
-  DCX0, DDX, DCX: Double;
+  V: TViewport;
+  I, Row, OutsideCount, OffAxisCount: Integer;
+  DCX0, DDX, DCX, DCY: Double;
+  HasNonZeroDCY: Boolean;
 begin
   K := TRustKernel.Create(FakeKernelFileName);
   F := TBurningShipFormula.Create;
   try
     CheckTrue(K.HasPerturbationFor(F.KernelId), K.Status);
-    F.MaxIter := kPerturbedMaxIter;
-    DDX := kPerturbedPixelSize;
+    F.MaxIter := kBurningShipBorderMaxIter;
+    DDX := kBurningShipRowPixelSize;
     DCX0 := -(kPerturbedRowLength div 2) * DDX;
-    CheckTrue(ComputeReferenceOrbit(F, THighFloat.FromFloat(kBurningShipDeepTipX,
-      FracWordsForPixelSize(kPerturbedPixelSize)), THighFloat.FromFloat(0, FracWordsForPixelSize(kPerturbedPixelSize)),
-      nil, Orbit));
+    V := MakeExactViewport(kBurningShipBorderX, kBurningShipBorderY, kBurningShipRowPixelSize * kPerturbedRowLength,
+      kPerturbedRowLength, kBurningShipRowCount);
+    CheckTrue(ComputeReferenceOrbit(F, V.ExactCenterX, V.ExactCenterY, nil, Orbit));
     DoubleOrbit := MakeDoubleOrbit(Orbit);
     RoundedOrbit := OrbitFromDoubles(DoubleOrbit);
-    K.ComputeRowPerturbed(F, DoubleOrbit, DCX0, DDX, 0, kPerturbedRowLength, @Values[0]);
+    // couverture : la référence passe hors des axes, sinon DiffAbs ne verrait que c = 0
+    OffAxisCount := 0;
+    for I := 0 to High(RoundedOrbit) do
+      if (RoundedOrbit[I].X <> 0) and (RoundedOrbit[I].Y <> 0) then
+        Inc(OffAxisCount);
+    CheckTrue(OffAxisCount > 0, 'référence : X·Y nul à chaque itération');
     OutsideCount := 0;
-    for I := 0 to kPerturbedRowLength - 1 do
+    HasNonZeroDCY := False;
+    for Row := 0 to kBurningShipRowCount - 1 do
     begin
-      DCX := DCX0 + I * DDX;
-      CheckEquals(F.IteratePerturbed(RoundedOrbit, Length(RoundedOrbit), DCX, 0), Values[I], 0,
-        Format('pixel %d', [I]));
-      if Values[I] >= 0 then
-        Inc(OutsideCount);
+      DCY := (Row - kBurningShipRowCount div 2) * DDX;
+      if DCY <> 0 then
+        HasNonZeroDCY := True;
+      K.ComputeRowPerturbed(F, DoubleOrbit, DCX0, DDX, DCY, kPerturbedRowLength, @Values[0]);
+      for I := 0 to kPerturbedRowLength - 1 do
+      begin
+        DCX := DCX0 + I * DDX;
+        CheckEquals(F.IteratePerturbed(RoundedOrbit, Length(RoundedOrbit), DCX, DCY), Values[I], 0,
+          Format('rangée %d, pixel %d', [Row, I]));
+        if Values[I] >= 0 then
+          Inc(OutsideCount);
+      end;
     end;
-    CheckTrue((OutsideCount > 0) and (OutsideCount < kPerturbedRowLength),
+    CheckTrue(HasNonZeroDCY, 'aucune rangée à δcy non nul');
+    CheckTrue((OutsideCount > 0) and (OutsideCount < kPerturbedRowLength * kBurningShipRowCount),
       Format('%d pixels extérieurs', [OutsideCount]));
   finally
     F.Free;
@@ -772,31 +800,62 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Rendu profond (perturbation) de c = i en mode Rust : la DLL calcule chaque suite par fk_compute_row_perturbed.
-// Le centre n'est pas sur l'axe réel : une erreur de signe sur δc en y retournerait l'image.
-procedure TTestRustEngine.CheckDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+// Rendu profond de la vue V en Delphi puis en mode Rust : mêmes pixels (au seuil MinRatio), perturbation partout.
+procedure TTestRustEngine.CheckDeepRenderAgrees(RustKernel: TRustKernel; Formula: TFractalFormula;
+  const V: TViewport; MinRatio: Double);
 var
-  F: TMandelbrotFormula;
-  V: TViewport;
   ED, ER: TRenderEngine;
 begin
-  F := TMandelbrotFormula.Create;
+  CheckNotNull(Formula, 'formule');
   ED := nil;
   ER := nil;
   try
-    F.MaxIter := kDeepMaxIter;
-    V := MakeViewport(kDeepCenterX, kDeepCenterY, kDeepPixelSize * kOddWidth, kOddWidth, kOddHeight);
-    ED := RenderWith(ekDelphi, nil, F, V, True);
-    ER := RenderWith(ekRust, RustKernel, F, V, True);
-    CheckTrue(ED.Status.IsPerturbation, 'Delphi : palier 1 au lieu de la perturbation');
-    CheckTrue(ER.Status.IsPerturbation, 'Rust : palier 1 au lieu de la perturbation');
+    ED := RenderWith(ekDelphi, nil, Formula, V, True);
+    ER := RenderWith(ekRust, RustKernel, Formula, V, True);
+    CheckTrue(ED.Status.IsPerturbation, Formula.FormulaName + ' Delphi : palier 1 au lieu de la perturbation');
+    CheckTrue(ER.Status.IsPerturbation, Formula.FormulaName + ' Rust : palier 1 au lieu de la perturbation');
     CheckEquals(Ord(ekRust), Ord(ER.Status.Kernel));
-    CheckEquals(Ord(ekRust), Ord(ER.ResolveKernel(F, True)));
+    CheckEquals(Ord(ekRust), Ord(ER.ResolveKernel(Formula, True)));
     CheckEquals('', ER.TakeErrors);
-    CheckBuffersAgree(ED.Buffer, ER.Buffer, MinRatio, 'zoom profond');
+    CheckBuffersAgree(ED.Buffer, ER.Buffer, MinRatio, 'zoom profond ' + Formula.FormulaName);
   finally
     ER.Free;
     ED.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Burning Ship du favori de JF 10^6 fois plus étroit (2-D, X·Y non nul), rendus par la DLL.
+procedure TTestRustEngine.CheckBurningShipDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+var
+  F: TBurningShipFormula;
+begin
+  F := TBurningShipFormula.Create;
+  try
+    F.MaxIter := kBurningShipFavouriteMaxIter;
+    CheckDeepRenderAgrees(RustKernel, F, MakeExactViewport(kBurningShipFavouriteCenterX,
+      kBurningShipFavouriteCenterY, kBurningShipFavouriteWidth * kBurningShipDeepFactor, kOddWidth, kOddHeight),
+      MinRatio);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Rendu profond (perturbation) de c = i en mode Rust : la DLL calcule chaque suite par fk_compute_row_perturbed.
+// Le centre n'est pas sur l'axe réel : une erreur de signe sur δc en y retournerait l'image.
+procedure TTestRustEngine.CheckMandelbrotDeepRenderAgrees(RustKernel: TRustKernel; MinRatio: Double);
+var
+  F: TMandelbrotFormula;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := kDeepMaxIter;
+    CheckDeepRenderAgrees(RustKernel, F, MakeViewport(kDeepCenterX, kDeepCenterY, kDeepPixelSize * kOddWidth,
+      kOddWidth, kOddHeight), MinRatio);
+  finally
     F.Free;
   end;
 end;
@@ -805,7 +864,8 @@ end;
 
 procedure TTestRustEngine.TestRustDeepRenderMatchesDelphiWithFakeKernel;
 begin
-  CheckDeepRenderAgrees(FFake, kFakeMinRatio);
+  CheckMandelbrotDeepRenderAgrees(FFake, kFakeMinRatio);
+  CheckBurningShipDeepRenderAgrees(FFake, kFakeMinRatio);
 end;
 
 {------------------------------------------------------------------------------}
@@ -896,7 +956,8 @@ begin
       Status('fractal_kernel.dll en version 1, sans fk_compute_row_perturbed : zoom profond non comparé.');
       Exit;
     end;
-    CheckDeepRenderAgrees(RealKernel, kRealMinRatio);
+    CheckMandelbrotDeepRenderAgrees(RealKernel, kRealMinRatio);
+    CheckBurningShipDeepRenderAgrees(RealKernel, kRealMinRatio);
   finally
     RealKernel.Free;
   end;

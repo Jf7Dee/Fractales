@@ -530,15 +530,9 @@ end;
 
 // Vue du favori de JF, centre exact (THighFloat) et largeur donnée.
 function TTestEngine.FavouriteViewport(Width: TFloat): TViewport;
-var
-  X, Y: THighFloat;
-  Words: Integer;
 begin
-  Result := MakeViewport(0, 0, Width, kDeepPixelWidth, kDeepPixelHeight);
-  Words := FracWordsForPixelSize(Result.PixelSize);
-  Check(THighFloat.TryParse(kBurningShipFavouriteCenterX, Words, X), 'centre X lisible');
-  Check(THighFloat.TryParse(kBurningShipFavouriteCenterY, Words, Y), 'centre Y lisible');
-  Result.SetCenter(X, Y);
+  Result := MakeExactViewport(kBurningShipFavouriteCenterX, kBurningShipFavouriteCenterY, Width, kDeepPixelWidth,
+    kDeepPixelHeight);
 end;
 
 {------------------------------------------------------------------------------}
@@ -659,7 +653,6 @@ begin
     E.Free;
   end;
 end;
-
 
 {------------------------------------------------------------------------------}
 
