@@ -19,7 +19,7 @@ const
   kKeyZoomFactor = 2.0;
   kSmokeTimeoutMs = 30000;
   kSmokeDeepPixelSize = 1e-30;
-  kSmokeBurningShipCenterX = -2;   // pointe de l'antenne du Burning Ship, sur l'axe
+  kSmokeBurningShipCenterX = -2;   // pointe de l'axe réel : Burning Ship = x² + c, point du bord exact (voir tests)
   kPerturbationDoneText = '%s · perturbation : terminé en %d ms';
   kPerturbationProgressText = '%s · perturbation : passe %d/%d   %d ms';
   kPerturbationReferenceText = '%s · perturbation : orbite de référence…';

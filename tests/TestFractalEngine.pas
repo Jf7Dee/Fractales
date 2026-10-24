@@ -66,8 +66,8 @@ const
   // profondeurs d'acceptation de la spec : 1e-200 (§7) et la limite 1e-300 du palier 2 (§2), sans la franchir
   kAcceptancePixelSizes: array[0..1] of TFloat = (1e-200, 2e-300);
   kHeadroomPixelSize = 1e-50;
-  // Pointe de l'antenne, sur l'axe : (-2 ; 0) est un point du bord (orbite 0, -2, 2, 2...) exactement représentable.
-  // Le cx de l'antenne partagé (kBurningShipAntennaX) donne une image uniforme à 1e-200 : le bord y est trop fin.
+  // Pointe de l'axe réel, (-2 ; 0) : sur l'axe le Burning Ship se réduit à x² + c, et ce point du bord est exact
+  // (orbite 0, -2, 2, 2...). Différent de kBurningShipAntennaX, qui donne une image uniforme à 1e-200.
   kBurningShipDeepTipX = -2;
   kFavouriteDeepFactor = 1e-6;   // vue du favori de JF 10^6 fois plus étroite
   kZoomFactor = 2;
@@ -476,8 +476,6 @@ end;
 
 {------------------------------------------------------------------------------}
 
-{------------------------------------------------------------------------------}
-
 // Burning Ship sur la pointe de l'antenne (cx = kBurningShipDeepTipX, cy = 0) aux profondeurs d'acceptation ; durée
 // notée dans le journal.
 procedure TTestEngine.TestBurningShipDeepRenderAtAcceptanceDepths;
@@ -542,15 +540,28 @@ end;
 procedure TTestEngine.TestBurningShipFavouriteDeepRender;
 var
   F: TBurningShipFormula;
+  E: TRenderEngine;
 begin
   F := TBurningShipFormula.Create;
   try
     F.MaxIter := kBurningShipFavouriteMaxIter;
+    // à sa propre largeur (pixel d'environ 1e-16) le favori reste au palier 1 : seule la vue 10^6 fois plus étroite
+    // passe par CheckDeepRender, qui exige la perturbation
+    E := TRenderEngine.Create(CpuCount);
+    try
+      E.Render(FavouriteViewport(kBurningShipFavouriteWidth), F);
+      CheckTrue(E.WaitUntilComplete(kWaitMs), 'délai dépassé');
+      CheckFalse(E.Status.IsPerturbation, 'le favori à sa largeur doit rester au palier 1');
+    finally
+      E.Free;
+    end;
     CheckDeepRender(F, FavouriteViewport(kBurningShipFavouriteWidth * kFavouriteDeepFactor));
   finally
     F.Free;
   end;
 end;
+
+{------------------------------------------------------------------------------}
 
 procedure TTestEngine.TestReferenceIsReused;
 var
