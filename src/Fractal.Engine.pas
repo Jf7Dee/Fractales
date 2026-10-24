@@ -859,10 +859,10 @@ end;
 
 function TRenderEngine.ResolveKernel(Formula: TFractalFormula; IsPerturbation: Boolean): TEngineKernelType;
 begin
-  // la DLL par défaut n'est chargée que si le noyau Rust est demandé ; une DLL de version 1 laisse le palier 2
-  // au moteur Delphi
+  // la DLL par défaut n'est chargée que si le noyau Rust est demandé ; une DLL sans perturbation pour cette formule
+  // laisse le palier 2 au moteur Delphi
   if (FKernel = ekRust) and (Formula.KernelId <> kKernelNone) and CurrentRustKernel.IsAvailable
-    and (not IsPerturbation or CurrentRustKernel.HasPerturbation) then
+    and (not IsPerturbation or CurrentRustKernel.HasPerturbationFor(Formula.KernelId)) then
     Result := ekRust
   else
     Result := ekDelphi;

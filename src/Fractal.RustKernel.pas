@@ -9,7 +9,8 @@ uses
 
 const
   kRustKernelFileName = 'fractal_kernel.dll';
-  kRustAbiVersion = 2;               // fk_compute_row et fk_compute_row_perturbed
+  kRustAbiVersion = 3;               // fk_compute_row, fk_compute_row_perturbed et fk_perturbation_supported
+  kRustAbiVersionAbi2 = 2;           // perturbation pour Mandelbrot et Tricorn seulement
   kRustAbiVersionNoPerturbation = 1; // fk_compute_row seule : le zoom profond reste en Delphi
   kMaxKernelParams = 8;
   // codes de retour de fk_compute_row et fk_compute_row_perturbed
@@ -32,6 +33,7 @@ type
   TRustComputeRowPerturbedFunc = function(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
     RefOrbit: PDouble; RefLength: Integer; DCX0, DDX, DCY: Double; Count: Integer;
     Output: System.PSingle): Integer; cdecl;
+  TRustPerturbationSupportedFunc = function(Formula: Integer): Integer; cdecl;
   TRustKernelParams = array[0..kMaxKernelParams - 1] of Double;
 
   // Une DLL de calcul chargée. Elle n'a aucun état : plusieurs threads peuvent appeler ComputeRow à la fois.
@@ -40,6 +42,8 @@ type
     FHandle: HMODULE;
     FComputeRow: TRustComputeRowFunc;
     FComputeRowPerturbed: TRustComputeRowPerturbedFunc;   // nil en version 1
+    FPerturbationSupported: TRustPerturbationSupportedFunc;   // nil hors version 3
+    FAbiVersion: Cardinal;
     FStatus: string;
     function FindExport(const Name: AnsiString): Pointer;
     procedure LoadParams(Formula: TFractalFormula; out Params: TRustKernelParams);
@@ -49,6 +53,7 @@ type
     destructor Destroy; override;
     function IsAvailable: Boolean;
     function HasPerturbation: Boolean;
+    function HasPerturbationFor(KernelId: Integer): Boolean;
     procedure ComputeRowPerturbed(Formula: TFractalFormula; const Orbit: TDoubleOrbit; DCX0, DDX, DCY: Double;
       Count: Integer; Output: System.PSingle);
     procedure ComputeRow(Formula: TFractalFormula; X0, DX, Y: Double; Count: Integer; Output: System.PSingle);
@@ -61,6 +66,10 @@ function IsRustKernelAvailable: Boolean;
 function RustKernelStatus: string;
 
 implementation
+
+const
+  // formules que la DLL de version 2 sait calculer en perturbation
+  kAbi2PerturbationKernels: array[0..1] of Integer = (kKernelMandelbrot, kKernelTricorn);
 
 var
   KernelLock: TCriticalSection;
@@ -120,19 +129,34 @@ begin
     Exit;
   end;
   Version := AbiVersion;
-  if (Version <> kRustAbiVersion) and (Version <> kRustAbiVersionNoPerturbation) then
+  if (Version <> kRustAbiVersion) and (Version <> kRustAbiVersionAbi2)
+    and (Version <> kRustAbiVersionNoPerturbation) then
   begin
-    Unload(Format('Moteur Rust : %s est en version %d, version %d ou %d attendue.',
-      [ExtractFileName(AFileName), Version, kRustAbiVersionNoPerturbation, kRustAbiVersion]));
+    Unload(Format('Moteur Rust : %s est en version %d, version %d, %d ou %d attendue.',
+      [ExtractFileName(AFileName), Version, kRustAbiVersionNoPerturbation, kRustAbiVersionAbi2, kRustAbiVersion]));
     Exit;
   end;
-  if Version = kRustAbiVersion then
+  FAbiVersion := Version;
+  if Version >= kRustAbiVersionAbi2 then
     FComputeRowPerturbed := FindExport('fk_compute_row_perturbed');
-  if HasPerturbation then
-    FStatus := 'Moteur Rust disponible.'
-  else
+  if Version = kRustAbiVersion then
+  begin
+    FPerturbationSupported := FindExport('fk_perturbation_supported');
+    if not Assigned(FPerturbationSupported) then
+    begin
+      Unload(Format('Moteur Rust : %s (version %d) ne contient pas fk_perturbation_supported.',
+        [ExtractFileName(AFileName), Version]));
+      Exit;
+    end;
+  end;
+  if not HasPerturbation then
     FStatus := Format('Moteur Rust disponible, sans fk_compute_row_perturbed (version %d) : '
-      + 'le zoom profond sera calculé en Delphi.', [Version]);
+      + 'le zoom profond sera calculé en Delphi.', [Version])
+  else if Version = kRustAbiVersionAbi2 then
+    FStatus := Format('Moteur Rust disponible (version %d) : le Burning Ship profond sera calculé en Delphi.',
+      [Version])
+  else
+    FStatus := 'Moteur Rust disponible.';
 end;
 
 {------------------------------------------------------------------------------}
@@ -162,6 +186,8 @@ begin
   FHandle := 0;
   FComputeRow := nil;
   FComputeRowPerturbed := nil;
+  FPerturbationSupported := nil;
+  FAbiVersion := 0;
   FStatus := Reason;
 end;
 
@@ -178,6 +204,24 @@ end;
 function TRustKernel.HasPerturbation: Boolean;
 begin
   Result := IsAvailable and Assigned(FComputeRowPerturbed);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Version 1 : jamais ; version 2 : Mandelbrot et Tricorn ; version 3 : la DLL répond elle-même, formule par formule.
+function TRustKernel.HasPerturbationFor(KernelId: Integer): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  if not HasPerturbation then
+    Exit;
+  if FAbiVersion = kRustAbiVersion then
+    Result := FPerturbationSupported(KernelId) <> 0
+  else
+    for I := Low(kAbi2PerturbationKernels) to High(kAbi2PerturbationKernels) do
+      if kAbi2PerturbationKernels[I] = KernelId then
+        Result := True;
 end;
 
 {------------------------------------------------------------------------------}

@@ -40,6 +40,7 @@ type
     procedure TestRealKernelMatchesDelphi;
     procedure TestRustDeepRenderMatchesDelphiWithFakeKernel;
     procedure TestAbi1FallsBackToDelphiWhenDeep;
+    procedure TestAbi2FallsBackToDelphiForBurningShip;
     procedure TestRealKernelPerturbedMatchesDelphi;
   end;
 
@@ -56,17 +57,27 @@ type
     procedure TestPerturbedKernelErrorRaises;
     procedure TestPerturbedKernelRejectsOnePointOrbit;
     procedure TestAbi1KernelHasNoPerturbation;
+    procedure TestFakeKernelIsAbi3;
+    procedure TestAbi2KernelSupportsMandelbrotAndTricornOnly;
+    procedure TestFakeKernelBurningShipMatchesDelphi;
   end;
 
 function TestBinFolder: string;
 function FakeKernelFileName: string;
 function FakeKernelAbi1FileName: string;
+function FakeKernelAbi2FileName: string;
+
+const
+  // Pointe de l'axe réel, (-2 ; 0) : sur l'axe le Burning Ship se réduit à x² + c, et ce point du bord est exact
+  // (orbite 0, -2, 2, 2...). Différent de kBurningShipAntennaX, qui donne une image uniforme à 1e-200.
+  kBurningShipDeepTipX = -2;
 
 implementation
 
 const
   kFakeKernelFile = 'FakeKernel.dll';
   kFakeKernelAbi1File = 'FakeKernelAbi1.dll';   // DLL factice compilée avec FAKE_ABI1 (build.sh tests)
+  kFakeKernelAbi2File = 'FakeKernelAbi2.dll';   // DLL factice compilée avec FAKE_ABI2 (build.sh tests)
   kUnknownKernelId = 42;
   kRowCount = 5;
   kRowX0 = -2.5;
@@ -117,6 +128,13 @@ end;
 function FakeKernelAbi1FileName: string;
 begin
   Result := TestBinFolder + kFakeKernelAbi1File;
+end;
+
+{------------------------------------------------------------------------------}
+
+function FakeKernelAbi2FileName: string;
+begin
+  Result := TestBinFolder + kFakeKernelAbi2File;
 end;
 
 {------------------------------------------------------------------------------}
@@ -412,6 +430,7 @@ begin
   try
     CheckTrue(K.IsAvailable, K.Status);
     CheckFalse(K.HasPerturbation);
+    CheckFalse(K.HasPerturbationFor(kKernelMandelbrot));
     CheckTrue(Pos('Delphi', K.Status) > 0, K.Status);
     try
       K.ComputeRowPerturbed(F, ZeroDoubleOrbit, 0, kRowDX, 0, 1, @Values[0]);
@@ -420,6 +439,88 @@ begin
       on E: ERustKernelError do
         CheckTrue(Pos('perturbation', E.Message) > 0, E.Message);
     end;
+  finally
+    F.Free;
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestRustKernel.TestFakeKernelIsAbi3;
+var
+  K: TRustKernel;
+begin
+  K := TRustKernel.Create(FakeKernelFileName);
+  try
+    CheckTrue(K.IsAvailable, K.Status);
+    CheckTrue(K.HasPerturbationFor(kKernelMandelbrot));
+    CheckTrue(K.HasPerturbationFor(kKernelTricorn));
+    CheckTrue(K.HasPerturbationFor(kKernelBurningShip));
+    CheckFalse(K.HasPerturbationFor(kKernelJulia));
+    CheckFalse(K.HasPerturbationFor(kKernelMultibrot));
+  finally
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestRustKernel.TestAbi2KernelSupportsMandelbrotAndTricornOnly;
+var
+  K: TRustKernel;
+begin
+  K := TRustKernel.Create(FakeKernelAbi2FileName);
+  try
+    CheckTrue(K.IsAvailable, K.Status);
+    CheckTrue(K.HasPerturbation);
+    CheckTrue(K.HasPerturbationFor(kKernelMandelbrot));
+    CheckTrue(K.HasPerturbationFor(kKernelTricorn));
+    CheckFalse(K.HasPerturbationFor(kKernelBurningShip));
+    CheckFalse(K.HasPerturbationFor(kKernelJulia));
+  finally
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Comme TestFakeKernelPerturbedMatchesDelphi, pour le Burning Ship : référence sur la pointe de l'axe réel, rangée
+// à cheval sur la pointe (extérieur à gauche, intérieur à droite).
+procedure TTestRustKernel.TestFakeKernelBurningShipMatchesDelphi;
+var
+  K: TRustKernel;
+  F: TBurningShipFormula;
+  Orbit, RoundedOrbit: TOrbit;
+  DoubleOrbit: TDoubleOrbit;
+  Values: array[0..kPerturbedRowLength - 1] of Single;
+  I, OutsideCount: Integer;
+  DCX0, DDX, DCX: Double;
+begin
+  K := TRustKernel.Create(FakeKernelFileName);
+  F := TBurningShipFormula.Create;
+  try
+    CheckTrue(K.HasPerturbationFor(F.KernelId), K.Status);
+    F.MaxIter := kPerturbedMaxIter;
+    DDX := kPerturbedPixelSize;
+    DCX0 := -(kPerturbedRowLength div 2) * DDX;
+    CheckTrue(ComputeReferenceOrbit(F, THighFloat.FromFloat(kBurningShipDeepTipX,
+      FracWordsForPixelSize(kPerturbedPixelSize)), THighFloat.FromFloat(0, FracWordsForPixelSize(kPerturbedPixelSize)),
+      nil, Orbit));
+    DoubleOrbit := MakeDoubleOrbit(Orbit);
+    RoundedOrbit := OrbitFromDoubles(DoubleOrbit);
+    K.ComputeRowPerturbed(F, DoubleOrbit, DCX0, DDX, 0, kPerturbedRowLength, @Values[0]);
+    OutsideCount := 0;
+    for I := 0 to kPerturbedRowLength - 1 do
+    begin
+      DCX := DCX0 + I * DDX;
+      CheckEquals(F.IteratePerturbed(RoundedOrbit, Length(RoundedOrbit), DCX, 0), Values[I], 0,
+        Format('pixel %d', [I]));
+      if Values[I] >= 0 then
+        Inc(OutsideCount);
+    end;
+    CheckTrue((OutsideCount > 0) and (OutsideCount < kPerturbedRowLength),
+      Format('%d pixels extérieurs', [OutsideCount]));
   finally
     F.Free;
     K.Free;
@@ -732,6 +833,47 @@ begin
     E.Free;
     F.Free;
     Abi1.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// DLL v2 : perturbation pour Mandelbrot et Tricorn seulement. Le Burning Ship profond est calculé en Delphi, le
+// Mandelbrot profond reste en Rust.
+procedure TTestRustEngine.TestAbi2FallsBackToDelphiForBurningShip;
+var
+  Abi2: TRustKernel;
+  BS: TBurningShipFormula;
+  M: TMandelbrotFormula;
+  E: TRenderEngine;
+begin
+  Abi2 := TRustKernel.Create(FakeKernelAbi2FileName);
+  BS := TBurningShipFormula.Create;
+  M := TMandelbrotFormula.Create;
+  E := nil;
+  try
+    CheckTrue(Abi2.IsAvailable, Abi2.Status);
+    BS.MaxIter := kDeepMaxIter;
+    M.MaxIter := kDeepMaxIter;
+    E := RenderWith(ekRust, Abi2, BS, MakeViewport(kBurningShipDeepTipX, 0, kDeepPixelSize * kOddWidth, kOddWidth,
+      kOddHeight), True);
+    CheckTrue(E.Status.IsComplete, 'rendu incomplet');
+    CheckTrue(E.Status.IsPerturbation, 'palier 1 au lieu de la perturbation');
+    CheckEquals(Ord(ekDelphi), Ord(E.Status.Kernel));
+    CheckEquals(Ord(ekDelphi), Ord(E.ResolveKernel(BS, True)));
+    CheckEquals('', E.TakeErrors);
+    FreeAndNil(E);
+    E := RenderWith(ekRust, Abi2, M, MakeViewport(kDeepCenterX, kDeepCenterY, kDeepPixelSize * kOddWidth, kOddWidth,
+      kOddHeight), True);
+    CheckTrue(E.Status.IsPerturbation, 'palier 1 au lieu de la perturbation');
+    CheckEquals(Ord(ekRust), Ord(E.Status.Kernel));
+    CheckEquals(Ord(ekRust), Ord(E.ResolveKernel(M, True)));
+    CheckEquals('', E.TakeErrors);
+  finally
+    E.Free;
+    M.Free;
+    BS.Free;
+    Abi2.Free;
   end;
 end;
 

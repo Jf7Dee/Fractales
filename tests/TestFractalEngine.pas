@@ -24,6 +24,7 @@ type
     procedure CheckDeepRender(F: TFractalFormula; const V: TViewport; Kernel: TEngineKernelType = ekDelphi;
       RustKernel: TRustKernel = nil);
     procedure CheckAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
+    procedure CheckBurningShipAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
   published
     procedure TestRenderCompletesWithExactPixels;
     procedure TestValuesMatchDirectIteration;
@@ -45,6 +46,7 @@ type
     procedure TestNewRenderCancelsReference;
     procedure TestDelphiRenderAtAcceptanceDepths;
     procedure TestRustRenderAtAcceptanceDepths;
+    procedure TestRustBurningShipAtAcceptanceDepths;
     procedure TestReferenceReusedWithinIterHeadroom;
     procedure TestEscapedReferenceReusedForBands;
   end;
@@ -66,9 +68,6 @@ const
   // profondeurs d'acceptation de la spec : 1e-200 (§7) et la limite 1e-300 du palier 2 (§2), sans la franchir
   kAcceptancePixelSizes: array[0..1] of TFloat = (1e-200, 2e-300);
   kHeadroomPixelSize = 1e-50;
-  // Pointe de l'axe réel, (-2 ; 0) : sur l'axe le Burning Ship se réduit à x² + c, et ce point du bord est exact
-  // (orbite 0, -2, 2, 2...). Différent de kBurningShipAntennaX, qui donne une image uniforme à 1e-200.
-  kBurningShipDeepTipX = -2;
   kFavouriteDeepFactor = 1e-6;   // vue du favori de JF 10^6 fois plus étroite
   kZoomFactor = 2;
   kBeyondHeadroomFactor = 1.3;      // au-delà de kReferenceIterHeadroom
@@ -476,9 +475,16 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TTestEngine.TestBurningShipDeepRenderAtAcceptanceDepths;
+begin
+  CheckBurningShipAcceptanceDepths(ekDelphi, nil);
+end;
+
+{------------------------------------------------------------------------------}
+
 // Burning Ship sur la pointe de l'antenne (cx = kBurningShipDeepTipX, cy = 0) aux profondeurs d'acceptation ; durée
 // notée dans le journal.
-procedure TTestEngine.TestBurningShipDeepRenderAtAcceptanceDepths;
+procedure TTestEngine.CheckBurningShipAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
 var
   F: TBurningShipFormula;
   I: Integer;
@@ -490,8 +496,9 @@ begin
     for I := Low(kAcceptancePixelSizes) to High(kAcceptancePixelSizes) do
     begin
       T := GetTickCount;
-      CheckDeepRender(F, DeepViewport(kBurningShipDeepTipX, 0, kAcceptancePixelSizes[I]));
-      Status(Format('Burning Ship, pixel %g : %d ms', [kAcceptancePixelSizes[I], GetTickCount - T]));
+      CheckDeepRender(F, DeepViewport(kBurningShipDeepTipX, 0, kAcceptancePixelSizes[I]), Kernel, RustKernel);
+      Status(Format('Burning Ship, %s, pixel %g : %d ms', [TRenderEngine.GetDisplayName(Kernel),
+        kAcceptancePixelSizes[I], GetTickCount - T]));
     end;
   finally
     F.Free;
@@ -696,6 +703,22 @@ begin
   try
     CheckTrue(Fake.IsAvailable, Fake.Status);
     CheckAcceptanceDepths(ekRust, Fake);
+  finally
+    Fake.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Burning Ship : la DLL factice v3 calcule aussi ses rangées perturbées.
+procedure TTestEngine.TestRustBurningShipAtAcceptanceDepths;
+var
+  Fake: TRustKernel;
+begin
+  Fake := TRustKernel.Create(FakeKernelFileName);
+  try
+    CheckTrue(Fake.IsAvailable, Fake.Status);
+    CheckBurningShipAcceptanceDepths(ekRust, Fake);
   finally
     Fake.Free;
   end;

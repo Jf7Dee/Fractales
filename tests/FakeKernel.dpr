@@ -3,7 +3,8 @@
 // DLL de substitution pour les tests : mêmes exports que la DLL Rust (kernel-rust), mais calculée par
 // Fractal.Formulas. Elle permet de vérifier le chargement et le moteur en mode Rust sur une machine sans Rust.
 // Compilée avec FAKE_ABI1 (build.sh tests → FakeKernelAbi1.dll), elle imite une DLL de version 1 : sans
-// fk_compute_row_perturbed.
+// fk_compute_row_perturbed. Compilée avec FAKE_ABI2 (FakeKernelAbi2.dll), elle imite une DLL de version 2 : sans
+// fk_perturbation_supported. Par défaut, version 3.
 
 uses
   SysUtils,
@@ -15,7 +16,11 @@ const
 {$IFDEF FAKE_ABI1}
   kAbiVersion = 1;
 {$ELSE}
+{$IFDEF FAKE_ABI2}
   kAbiVersion = 2;
+{$ELSE}
+  kAbiVersion = 3;
+{$ENDIF}
 {$ENDIF}
   kOk = 0;
   kUnknownFormula = 1;
@@ -145,11 +150,31 @@ begin
   end;
 end;
 
+{$IFNDEF FAKE_ABI2}
+
+{------------------------------------------------------------------------------}
+
+// Réponse d'après le registre des formules, sans créer de formule : 1 si la formule d'identifiant Formula existe
+// et supporte la perturbation, 0 sinon.
+function fk_perturbation_supported(Formula: Integer): Integer; cdecl;
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := 0 to FormulaClassCount - 1 do
+    if (FormulaClassAt(I).KernelId = Formula) and FormulaClassAt(I).SupportsPerturbation then
+      Result := 1;
+end;
+
+{$ENDIF}
 {$ENDIF}
 
 exports
 {$IFNDEF FAKE_ABI1}
   fk_compute_row_perturbed,
+{$IFNDEF FAKE_ABI2}
+  fk_perturbation_supported,
+{$ENDIF}
 {$ENDIF}
   fk_abi_version,
   fk_compute_row;
