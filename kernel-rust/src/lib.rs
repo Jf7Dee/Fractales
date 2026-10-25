@@ -105,8 +105,9 @@ impl Formula {
     }
 
     // fk_perturbation_supported : décidé sur l'identifiant seul, sans paramètres (identifiants de from_id).
+    // Une nouvelle formule n'est pas prise en charge sans décision explicite : l'intervalle s'arrête à 4.
     fn id_supports_perturbation(id: i32) -> bool {
-        matches!(id, 0 | 1 | 2 | 3 | 4)
+        matches!(id, 0..=4)
     }
 }
 
