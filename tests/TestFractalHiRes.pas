@@ -11,6 +11,8 @@ type
   private
     FMapping: TColorMapping;
     function MakeSettings(W, H, SS: Integer; const FileName: string): THiResSettings;
+    procedure RenderPng(Size, SS: Integer; const FileName: string; ABandRows: Integer = kHiResBandRows);
+    function MeanReliefShift(SS: Integer): Double;
     function RunRenderer(const Settings: THiResSettings; const V: TViewport; F: TFractalFormula;
       AKernel: TEngineKernelType = ekDelphi; ABandRows: Integer = kHiResBandRows): THiResRenderer;
   protected
@@ -25,6 +27,7 @@ type
     procedure TestRustKernelRequestRenders;
     procedure TestHiResWithoutEffectsUnchanged;
     procedure TestHiResReliefHasNoSeam;
+    procedure TestHiResReliefStrengthIndependentOfSupersample;
   end;
 
 implementation
@@ -266,6 +269,10 @@ procedure TTestHiRes.TestEstimateRejectsHugeRender;
 begin
   CheckTrue(EstimateHiResBytes(MakeSettings(7680, 4320, 3, '')) < kMaxHiResBytes);
   CheckTrue(EstimateHiResBytes(MakeSettings(1000000, 100, 3, '')) > kMaxHiResBytes);
+  // le relief ajoute deux lignes de recouvrement à la bande ; sans relief, l'estimation est inchangée
+  CheckEquals(Int64(100) * 2 * kHiResBandRows * 2 * 5 + 300, EstimateHiResBytes(MakeSettings(100, 10, 2, '')));
+  CheckEquals(Int64(100) * 2 * (kHiResBandRows + 2) * 2 * 5 + 300,
+    EstimateHiResBytes(MakeSettings(100, 10, 2, ''), True));
 end;
 
 {------------------------------------------------------------------------------}
@@ -343,13 +350,17 @@ const
 var
   F: TMandelbrotFormula;
   R: THiResRenderer;
-  Whole, Banded: TPngImage;
+  Whole, Banded, Plain: TPngImage;
   X, Y: Integer;
+  IsDifferent: Boolean;
 begin
+  // référence sans relief, pour vérifier que le relief agit réellement
+  RenderPng(kSize, kSS, TestTempFolder + 'hires-relief-plain.png');
   FMapping.HasRelief := True;
   F := TMandelbrotFormula.Create;
   Whole := TPngImage.Create;
   Banded := TPngImage.Create;
+  Plain := TPngImage.Create;
   try
     F.MaxIter := 200;
     R := RunRenderer(MakeSettings(kSize, kSize, kSS, TestTempFolder + 'hires-relief-whole.png'),
@@ -370,15 +381,101 @@ begin
     end;
     Whole.LoadFromFile(TestTempFolder + 'hires-relief-whole.png');
     Banded.LoadFromFile(TestTempFolder + 'hires-relief-bands.png');
+    Plain.LoadFromFile(TestTempFolder + 'hires-relief-plain.png');
+    IsDifferent := False;
     for Y := 0 to kSize - 1 do
       for X := 0 to kSize - 1 do
+      begin
         CheckEquals(Integer(Whole.Pixels[X, Y]), Integer(Banded.Pixels[X, Y]),
           Format('pixel (%d, %d)', [X, Y]));
+        if Whole.Pixels[X, Y] <> Plain.Pixels[X, Y] then
+          IsDifferent := True;
+      end;
+    CheckTrue(IsDifferent, 'le relief ne change aucun pixel');
   finally
+    Plain.Free;
     Banded.Free;
     Whole.Free;
     F.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestHiRes.RenderPng(Size, SS: Integer; const FileName: string; ABandRows: Integer);
+var
+  F: TMandelbrotFormula;
+  R: THiResRenderer;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 200;
+    R := RunRenderer(MakeSettings(Size, Size, SS, FileName), MakeViewport(-0.5, 0, 3, Size, Size), F,
+      ekDelphi, ABandRows);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestHiRes.MeanReliefShift(SS: Integer): Double;
+const
+  kSize = 40;
+var
+  Plain, Shaded: TPngImage;
+  X, Y: Integer;
+  C1, C2: Integer;
+  Total: Int64;
+  PlainName, ShadedName: string;
+begin
+  PlainName := TestTempFolder + Format('hires-strength-plain-%d.png', [SS]);
+  ShadedName := TestTempFolder + Format('hires-strength-relief-%d.png', [SS]);
+  FMapping.HasRelief := False;
+  RenderPng(kSize, SS, PlainName);
+  FMapping.HasRelief := True;
+  RenderPng(kSize, SS, ShadedName);
+  Plain := TPngImage.Create;
+  Shaded := TPngImage.Create;
+  try
+    Plain.LoadFromFile(PlainName);
+    Shaded.LoadFromFile(ShadedName);
+    Total := 0;
+    for Y := 0 to kSize - 1 do
+      for X := 0 to kSize - 1 do
+      begin
+        C1 := Plain.Pixels[X, Y];
+        C2 := Shaded.Pixels[X, Y];
+        Inc(Total, Abs((C1 and $FF) - (C2 and $FF)) + Abs(((C1 shr 8) and $FF) - ((C2 shr 8) and $FF)) +
+          Abs(((C1 shr 16) and $FF) - ((C2 shr 16) and $FF)));
+      end;
+    Result := Total / (kSize * kSize);
+  finally
+    Shaded.Free;
+    Plain.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestHiRes.TestHiResReliefStrengthIndependentOfSupersample;
+const
+  kMinRatio = 0.7;  // le HD doit rendre le relief de l'écran ; avant correction (pente SS fois trop plate) : 0,64
+  kMaxRatio = 1.3;  // l'anticrénelage lisse un peu les écarts : on tolère 30 % de part et d'autre
+var
+  Screen, Doubled: Double;
+begin
+  Screen := MeanReliefShift(1);
+  Doubled := MeanReliefShift(2);
+  CheckTrue(Screen > 0, 'le relief ne change aucun pixel');
+  CheckTrue((Doubled >= kMinRatio * Screen) and (Doubled <= kMaxRatio * Screen),
+    Format('force du relief : SS=1 %.3f, SS=2 %.3f', [Screen, Doubled]));
 end;
 
 {------------------------------------------------------------------------------}

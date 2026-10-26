@@ -52,7 +52,7 @@ type
     property IsDone: Boolean read FIsDone;
   end;
 
-function EstimateHiResBytes(const Settings: THiResSettings): Int64;
+function EstimateHiResBytes(const Settings: THiResSettings; IsRelief: Boolean = False): Int64;
 
 implementation
 
@@ -61,6 +61,8 @@ const
   kBytesPerSample = 5;  // Single + niveau
   kMinSupersample = 1;
   kMaxSupersample = 3;
+  kReliefOverlapRows = 2;  // une ligne affichée de recouvrement de chaque côté de la bande
+  kShadeDistance = 1;      // les voisins du relief sont toujours à un pixel affiché
 
 {------------------------------------------------------------------------------}
 
@@ -71,12 +73,15 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function EstimateHiResBytes(const Settings: THiResSettings): Int64;
+function EstimateHiResBytes(const Settings: THiResSettings; IsRelief: Boolean): Int64;
 var
-  SS: Integer;
+  SS, Rows: Integer;
 begin
   SS := ClampSupersample(Settings.Supersample);
-  Result := Int64(Settings.Width) * SS * kHiResBandRows * SS * kBytesPerSample + Int64(Settings.Width) * 3;
+  Rows := kHiResBandRows;
+  if IsRelief then
+    Inc(Rows, kReliefOverlapRows);
+  Result := Int64(Settings.Width) * SS * Rows * SS * kBytesPerSample + Int64(Settings.Width) * 3;
 end;
 
 {------------------------------------------------------------------------------}
@@ -117,7 +122,7 @@ begin
     try
       if (FSettings.Width <= 0) or (FSettings.Height <= 0) then
         raise Exception.Create('Dimensions de rendu invalides.');
-      if EstimateHiResBytes(FSettings) > kMaxHiResBytes then
+      if EstimateHiResBytes(FSettings, FMapper.HasRelief) > kMaxHiResBytes then
         raise Exception.Create('Mémoire insuffisante pour ce rendu : réduisez la taille ou le suréchantillonnage.');
       Stream := TFileStream.Create(FSettings.FileName, fmCreate);
       IsFileCreated := True;
@@ -152,7 +157,8 @@ begin
   if Buffer = nil then
     raise Exception.Create('ShadedSubPixel : tampon absent.');
   Mu := Buffer.Value(X, Y);
-  // voisins à Distance sous-pixels (un pixel affiché) ; hors du tampon (bord de l'image) : le sous-pixel lui-même
+  // voisins à Distance sous-pixels (un pixel affiché, d'où kShadeDistance pour la pente) ;
+  // hors du tampon (bord de l'image) : le sous-pixel lui-même
   Left := Mu;
   Right := Mu;
   Up := Mu;
@@ -165,7 +171,7 @@ begin
     Up := Buffer.Value(X, Y - Distance);
   if Y + Distance < Buffer.Height then
     Down := Buffer.Value(X, Y + Distance);
-  Result := FMapper.ShadeValue(Mu, Left, Right, Up, Down, Distance);
+  Result := FMapper.ShadeValue(Mu, Left, Right, Up, Down, kShadeDistance);
 end;
 
 {------------------------------------------------------------------------------}

@@ -57,7 +57,8 @@ const
   kOldFileCenterX = '-0.743643887037158704';
   kWhenSuffix = '_20261016-0912';  // date de NameAt
   // section [Colors] d'un lieu sans effets, telle qu'écrite par master (référence figée)
-  kFrozenColorsSection = '[Colors]'#13#10'Offset=0.299999999999999989'#13#10'Repeats=40'#13#10'Stretch=0.800000000000000044'#13#10'Invert=1'#13#10;
+  kFrozenColorsSection = '[Colors]'#13#10'Offset=0.299999999999999989'#13#10'Repeats=40'#13#10
+    + 'Stretch=0.800000000000000044'#13#10'Invert=1'#13#10;
 
 {------------------------------------------------------------------------------}
 
@@ -584,7 +585,7 @@ begin
   if Start > 0 then
   begin
     Stop := Start;
-    while (Stop < Length(AText)) and not ((AText[Stop] = #10) and (AText[Stop + 1] in [#13, #10])) do
+    while (Stop < Length(AText)) and not ((AText[Stop] = #10) and CharInSet(AText[Stop + 1], [#13, #10])) do
       Inc(Stop);
     Result := Copy(AText, Start, Stop - Start + 1);
   end;
