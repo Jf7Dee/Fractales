@@ -6,7 +6,7 @@ uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, StdCtrls, ComCtrls;
 
 type
-  THelpTopic = (htKeyboard, htMouse, htTouch);
+  THelpTopic = (htKeyboard, htMouse, htTouch, htEffects);
 
   THelpEntry = record
     Action: string;
@@ -32,7 +32,8 @@ implementation
 {$R *.dfm}
 
 const
-  kHelpTitles: array[THelpTopic] of string = ('Raccourcis clavier', 'Actions de la souris', 'Gestes tactiles');
+  kHelpTitles: array[THelpTopic] of string = ('Raccourcis clavier', 'Actions de la souris', 'Gestes tactiles',
+    'Effets de couleur');
 
   kKeyboardHelp: array[0..6] of THelpEntry = (
     (Action: 'Zoom avant x2, au centre'; Command: '+'),
@@ -56,13 +57,24 @@ const
     (Action: 'Zoomer sur une zone'; Command: 'Appui long, puis glisser'),
     (Action: 'Choisir le point de l''aperçu Julia'; Command: 'Toucher ou glisser à un doigt'));
 
+  kEffectsHelp: array[0..3] of THelpEntry = (
+    (Action: 'Colorer par bandes'; Command: 'Effets : mode Bandes (Largeur, Modelé)'),
+    (Action: 'Souligner le bord des bandes'; Command: 'Effets : Contours (Épaisseur)'),
+    (Action: 'Donner du relief'; Command: 'Effets : Relief (Lumière, Intensité, Hauteur)'),
+    (Action: 'Revenir au rendu lisse'; Command: 'Effets : mode Lisse, ou bouton de remise à zéro des couleurs'));
+
   kHelpNotes: array[THelpTopic] of string = (
     'Les touches de navigation sont ignorées quand le focus est dans un champ, une liste ou un curseur ' +
       'du panneau latéral.',
     'Le glisser gauche et la molette agissent en mode Libre ; en mode Aperçu Julia, le survol choisit ' +
       'le point. Le glisser droit fonctionne dans les deux modes.',
     'Un doigt seul agit comme la souris (voir Souris) ; les gestes à deux doigts fonctionnent dans les deux ' +
-      'modes de navigation (écran tactile, Windows 7 ou plus récent).');
+      'modes de navigation (écran tactile, Windows 7 ou plus récent).',
+    'Les réglages du panneau Effets recolorent l''image tout de suite, sans recalcul, et sont enregistrés avec ' +
+      'les lieux. En mode Bandes, la couleur est constante dans chaque bande (la largeur est une fraction du ' +
+      'cycle de la palette) ; le modelé éclaire la bande de son début à son bord. Le relief éclaire l''image ' +
+      'comme un paysage dont l''altitude est la position dans la palette : la lumière vient de l''angle ' +
+      'choisi, la hauteur amplifie la pente.');
 
 {------------------------------------------------------------------------------}
 
@@ -94,6 +106,8 @@ begin
         AddEntries(kMouseHelp);
       htTouch:
         AddEntries(kTouchHelp);
+      htEffects:
+        AddEntries(kEffectsHelp);
     end;
   finally
     lvHelp.Items.EndUpdate;
@@ -109,6 +123,8 @@ begin
       Result := Length(kKeyboardHelp);
     htMouse:
       Result := Length(kMouseHelp);
+    htEffects:
+      Result := Length(kEffectsHelp);
   else
     Result := Length(kTouchHelp);
   end;

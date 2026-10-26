@@ -3,7 +3,7 @@
 interface
 
 uses
-  SysUtils, Classes, Math, Fractal.Types;
+  SysUtils, Classes, Math, Fractal.Types, Fractal.Buffer;
 
 const
   kLutSize = 4096;
@@ -33,6 +33,12 @@ const
   kMinReliefHeight = 0.0;  // multiplicateur de la pente (altitude = position dans la palette)
   kMaxReliefHeight = 100.0;
   kDefaultReliefHeight = 8.0;
+  // curseurs du panneau Effets
+  kEffectSliderMax = 100;
+  kMinBandCount = 4;  // une bande vaut 1/N du cycle de la palette, avec N entier : les bandes divisent le cycle
+  kMaxBandCount = 64;
+  kBandSliderMax = kMaxBandCount - kMinBandCount;  // à droite : N petit, donc bandes larges
+  kLightAngleSliderMax = 359;  // pas de 1 degré ; 360 degrés = 0
   kInsideColor = $000000;
   kMaxStops = 1024;
   kMaxMapColors = 256;
@@ -103,14 +109,29 @@ type
     constructor Create(APalette: TGradientPalette; const AMapping: TColorMapping);
     function PalettePosition(Mu: Single): Double;
     function MapValue(Mu: Single): Cardinal;
-    function ShadeValue(Mu, Left, Right, Up, Down: Single): Cardinal;
+    function ShadeValue(Mu, Left, Right, Up, Down: Single): Cardinal; overload;
+    function ShadeValue(Mu, Left, Right, Up, Down: Single; Distance: Integer): Cardinal; overload;
     procedure MapRow(Src: PSingle; Dest: PCardinal; Count: Integer);
+    procedure MapBufferRow(Buffer: TIterationBuffer; Y: Integer; Dest: PCardinal);
   end;
 
 function DefaultColorMapping: TColorMapping;
 function ClampColorMapping(const M: TColorMapping): TColorMapping;
 function MappingFromSliders(Offset, Repeats, Stretch: Integer; IsInverted: Boolean): TColorMapping;
 procedure MappingToSliders(const M: TColorMapping; out Offset, Repeats, Stretch: Integer);
+procedure CopyEffects(const Source: TColorMapping; var Dest: TColorMapping);
+function BandWidthFromSlider(Position: Integer): Double;
+function BandWidthToSlider(Width: Double): Integer;
+function ShadingFromSlider(Position: Integer): Double;
+function ShadingToSlider(Shading: Double): Integer;
+function ContourWidthFromSlider(Position: Integer): Double;
+function ContourWidthToSlider(Width: Double): Integer;
+function LightAngleFromSlider(Position: Integer): Double;
+function LightAngleToSlider(Angle: Double): Integer;
+function ReliefIntensityFromSlider(Position: Integer): Double;
+function ReliefIntensityToSlider(Intensity: Double): Integer;
+function ReliefHeightFromSlider(Position: Integer): Double;
+function ReliefHeightToSlider(Height: Double): Integer;
 function SwapRedBlue(C: Cardinal): Cardinal;
 function BuiltInPaletteCount: Integer;
 function CreateBuiltInPalette(Index: Integer): TGradientPalette;
@@ -467,8 +488,15 @@ end;
 {------------------------------------------------------------------------------}
 
 function TColorMapper.ShadeValue(Mu, Left, Right, Up, Down: Single): Cardinal;
+begin
+  Result := ShadeValue(Mu, Left, Right, Up, Down, 1);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TColorMapper.ShadeValue(Mu, Left, Right, Up, Down: Single; Distance: Integer): Cardinal;
 var
-  Z, SlopeX, SlopeY, Lit: Double;
+  Z, SlopeX, SlopeY, Lit, Scale: Double;
 begin
   Result := MapValue(Mu);
   if not FMapping.HasRelief then
@@ -476,8 +504,10 @@ begin
   Z := PalettePosition(Mu);
   if IsNan(Z) then
     Exit(kInsideColor);
-  SlopeX := FMapping.ReliefHeight * (NeighbourPosition(Right, Z) - NeighbourPosition(Left, Z)) / 2;
-  SlopeY := FMapping.ReliefHeight * (NeighbourPosition(Down, Z) - NeighbourPosition(Up, Z)) / 2;
+  // pente par pixel affiché : les voisins sont à Distance pixels de chaque côté
+  Scale := FMapping.ReliefHeight / (2 * Max(1, Distance));
+  SlopeX := Scale * (NeighbourPosition(Right, Z) - NeighbourPosition(Left, Z));
+  SlopeY := Scale * (NeighbourPosition(Down, Z) - NeighbourPosition(Up, Z));
   // normale (-SlopeX, -SlopeY, 1) normalisée, produit scalaire avec la lumière, rapporté à celui du plan plat
   Lit := (FLightZ - SlopeX * FLightX - SlopeY * FLightY) / Sqrt(SlopeX * SlopeX + SlopeY * SlopeY + 1) / FLightZ;
   Result := ScaleColor(Result, Max(0.0, 1 + FMapping.ReliefIntensity * (Lit - 1)));
@@ -493,6 +523,50 @@ begin
   begin
     Dest^ := MapValue(Src^);
     Inc(Src);
+    Inc(Dest);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ValueOrSelf(Buffer: TIterationBuffer; X, Y: Integer; Fallback: Single): Single;
+begin
+  if (X < 0) or (X >= Buffer.Width) or (Y < 0) or (Y >= Buffer.Height) then
+    Result := Fallback  // voisin hors de l'image : le pixel lui-même, pour une pente d'un seul côté
+  else
+    Result := Buffer.Value(X, Y);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TColorMapper.MapBufferRow(Buffer: TIterationBuffer; Y: Integer; Dest: PCardinal);
+var
+  X, Step, Width, Height, XLeft, XRight, YUp, YDown: Integer;
+  Mu: Single;
+begin
+  if Buffer = nil then
+    raise EPaletteError.Create('MapBufferRow : tampon absent.');
+  Width := Buffer.Width;
+  Height := Buffer.Height;
+  if (Y < 0) or (Y >= Height) then
+    Exit;
+  if not FMapping.HasRelief then
+  begin
+    MapRow(Buffer.RowPtr(Y), Dest, Width);
+    Exit;
+  end;
+  for X := 0 to Width - 1 do
+  begin
+    Mu := Buffer.Value(X, Y);
+    // pendant les passes grossières, les voisins sont à la distance du bloc du pixel ; 1 quand il est exact
+    Step := Max(1, Buffer.Level(X, Y));
+    XLeft := X - Step;
+    XRight := X + Step;
+    YUp := Y - Step;
+    YDown := Y + Step;
+    Dest^ := ShadeValue(Mu,
+      ValueOrSelf(Buffer, XLeft, Y, Mu), ValueOrSelf(Buffer, XRight, Y, Mu),
+      ValueOrSelf(Buffer, X, YUp, Mu), ValueOrSelf(Buffer, X, YDown, Mu), Step);
     Inc(Dest);
   end;
 end;
@@ -581,6 +655,137 @@ begin
     Stretch := kStretchSliderMid
       + Round((C.Stretch - 1) / (kMaxStretch - 1) * (kSliderMax - kStretchSliderMid));
   Stretch := EnsureRange(Stretch, 0, kSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure CopyEffects(const Source: TColorMapping; var Dest: TColorMapping);
+begin
+  Dest.Mode := Source.Mode;
+  Dest.BandWidth := Source.BandWidth;
+  Dest.Shading := Source.Shading;
+  Dest.HasContours := Source.HasContours;
+  Dest.ContourWidth := Source.ContourWidth;
+  Dest.HasRelief := Source.HasRelief;
+  Dest.LightAngle := Source.LightAngle;
+  Dest.ReliefIntensity := Source.ReliefIntensity;
+  Dest.ReliefHeight := Source.ReliefHeight;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ToSliderRange(Value, Lowest, Highest: Double; Steps: Integer): Integer;
+begin
+  Result := EnsureRange(Round((Value - Lowest) / (Highest - Lowest) * Steps), 0, Steps);
+end;
+
+{------------------------------------------------------------------------------}
+
+function FromSliderRange(Position: Integer; Lowest, Highest: Double; Steps: Integer): Double;
+begin
+  Result := Lowest + (Highest - Lowest) * EnsureRange(Position, 0, Steps) / Steps;
+end;
+
+{------------------------------------------------------------------------------}
+
+function BandWidthFromSlider(Position: Integer): Double;
+begin
+  // la largeur est 1/N avec N entier : les bandes divisent exactement le cycle de la palette
+  Result := 1 / (kMaxBandCount - EnsureRange(Position, 0, kBandSliderMax));
+end;
+
+{------------------------------------------------------------------------------}
+
+function BandWidthToSlider(Width: Double): Integer;
+var
+  Count: Integer;
+begin
+  if IsNan(Width) or (Width <= 0) then
+    Exit(0);
+  Count := EnsureRange(Round(1 / Width), kMinBandCount, kMaxBandCount);
+  Result := kMaxBandCount - Count;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ShadingFromSlider(Position: Integer): Double;
+begin
+  Result := FromSliderRange(Position, kMinShading, kMaxShading, kEffectSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ShadingToSlider(Shading: Double): Integer;
+begin
+  Result := ToSliderRange(Shading, kMinShading, kMaxShading, kEffectSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ContourWidthFromSlider(Position: Integer): Double;
+begin
+  Result := FromSliderRange(Position, kMinContourWidth, kMaxContourWidth, kEffectSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ContourWidthToSlider(Width: Double): Integer;
+begin
+  Result := ToSliderRange(Width, kMinContourWidth, kMaxContourWidth, kEffectSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+function LightAngleFromSlider(Position: Integer): Double;
+begin
+  Result := EnsureRange(Position, 0, kLightAngleSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+function LightAngleToSlider(Angle: Double): Integer;
+begin
+  if IsNan(Angle) or IsInfinite(Angle) then
+    Exit(Round(kDefaultLightAngle));
+  Angle := Angle - kFullTurnDegrees * Floor(Angle / kFullTurnDegrees);
+  Result := Round(Angle) mod Round(kFullTurnDegrees);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ReliefIntensityFromSlider(Position: Integer): Double;
+begin
+  Result := FromSliderRange(Position, kMinReliefIntensity, kMaxReliefIntensity, kEffectSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ReliefIntensityToSlider(Intensity: Double): Integer;
+begin
+  Result := ToSliderRange(Intensity, kMinReliefIntensity, kMaxReliefIntensity, kEffectSliderMax);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ReliefHeightFromSlider(Position: Integer): Double;
+var
+  F: Double;
+begin
+  // échelle quadratique : de la finesse près de zéro, où se trouve la valeur par défaut
+  F := EnsureRange(Position, 0, kEffectSliderMax) / kEffectSliderMax;
+  Result := kMinReliefHeight + (kMaxReliefHeight - kMinReliefHeight) * F * F;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ReliefHeightToSlider(Height: Double): Integer;
+var
+  F: Double;
+begin
+  if IsNan(Height) then
+    Height := kDefaultReliefHeight;
+  F := EnsureRange((Height - kMinReliefHeight) / (kMaxReliefHeight - kMinReliefHeight), 0.0, 1.0);
+  Result := EnsureRange(Round(Sqrt(F) * kEffectSliderMax), 0, kEffectSliderMax);
 end;
 
 {------------------------------------------------------------------------------}

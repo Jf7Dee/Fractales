@@ -75,7 +75,7 @@ object MainForm: TMainForm
       HeaderFont.Style = []
       TabOrder = 0
       object CategoryPanelNavigation: TCategoryPanel
-        Top = 293
+        Top = 323
         Height = 140
         Caption = 'Navigation'
         ParentShowHint = False
@@ -184,7 +184,7 @@ object MainForm: TMainForm
         end
       end
       object CategoryPanelFavorites: TCategoryPanel
-        Top = 263
+        Top = 293
         Height = 30
         Caption = 'Favoris'
         Collapsed = True
@@ -379,6 +379,155 @@ object MainForm: TMainForm
           ParentDoubleBuffered = False
           TabOrder = 6
           OnClick = btnResetColorsClick
+        end
+      end
+      object CategoryPanelEffects: TCategoryPanel
+        Top = 263
+        Height = 30
+        Caption = 'Effets'
+        Collapsed = True
+        TabOrder = 4
+        ExpandedHeight = 300
+        object lblEffectMode: TLabel
+          Left = 8
+          Top = 12
+          Width = 31
+          Height = 15
+          Caption = 'Mode'
+        end
+        object lblBandWidth: TLabel
+          Left = 8
+          Top = 44
+          Width = 44
+          Height = 15
+          Caption = 'Largeur'
+        end
+        object lblShading: TLabel
+          Left = 8
+          Top = 76
+          Width = 41
+          Height = 15
+          Caption = 'Model'#233
+        end
+        object lblContourWidth: TLabel
+          Left = 8
+          Top = 130
+          Width = 49
+          Height = 15
+          Caption = #201'paisseur'
+        end
+        object lblLightAngle: TLabel
+          Left = 8
+          Top = 186
+          Width = 44
+          Height = 15
+          Caption = 'Lumi'#232're'
+        end
+        object lblReliefIntensity: TLabel
+          Left = 8
+          Top = 218
+          Width = 49
+          Height = 15
+          Caption = 'Intensit'#233
+        end
+        object lblReliefHeight: TLabel
+          Left = 8
+          Top = 250
+          Width = 43
+          Height = 15
+          Caption = 'Hauteur'
+        end
+        object cbColoringMode: TComboBox
+          Left = 80
+          Top = 8
+          Width = 190
+          Height = 23
+          Style = csDropDownList
+          ItemIndex = 0
+          TabOrder = 0
+          Text = 'Lisse'
+          OnChange = EffectChange
+          Items.Strings = (
+            'Lisse'
+            'Bandes')
+        end
+        object tbBandWidth: TTrackBar
+          Left = 80
+          Top = 38
+          Width = 190
+          Height = 26
+          Max = 60
+          TabOrder = 1
+          TickStyle = tsNone
+          OnChange = EffectChange
+        end
+        object tbShading: TTrackBar
+          Left = 80
+          Top = 70
+          Width = 190
+          Height = 26
+          Max = 100
+          TabOrder = 2
+          TickStyle = tsNone
+          OnChange = EffectChange
+        end
+        object chkContours: TCheckBox
+          Left = 8
+          Top = 104
+          Width = 120
+          Height = 17
+          Caption = 'Contours'
+          TabOrder = 3
+          OnClick = EffectChange
+        end
+        object tbContourWidth: TTrackBar
+          Left = 80
+          Top = 124
+          Width = 190
+          Height = 26
+          Max = 100
+          TabOrder = 4
+          TickStyle = tsNone
+          OnChange = EffectChange
+        end
+        object chkRelief: TCheckBox
+          Left = 8
+          Top = 162
+          Width = 120
+          Height = 17
+          Caption = 'Relief'
+          TabOrder = 5
+          OnClick = EffectChange
+        end
+        object tbLightAngle: TTrackBar
+          Left = 80
+          Top = 180
+          Width = 190
+          Height = 26
+          Max = 359
+          TabOrder = 6
+          TickStyle = tsNone
+          OnChange = EffectChange
+        end
+        object tbReliefIntensity: TTrackBar
+          Left = 80
+          Top = 212
+          Width = 190
+          Height = 26
+          Max = 100
+          TabOrder = 7
+          TickStyle = tsNone
+          OnChange = EffectChange
+        end
+        object tbReliefHeight: TTrackBar
+          Left = 80
+          Top = 244
+          Width = 190
+          Height = 26
+          Max = 100
+          TabOrder = 8
+          TickStyle = tsNone
+          OnChange = EffectChange
         end
       end
       object CategoryPanelFormulas: TCategoryPanel
@@ -649,6 +798,10 @@ object MainForm: TMainForm
       object MenuAideGestes: TMenuItem
         Caption = '&Gestes tactiles...'
         OnClick = MenuAideGestesClick
+      end
+      object MenuAideEffets: TMenuItem
+        Caption = '&Effets de couleur...'
+        OnClick = MenuAideEffetsClick
       end
     end
   end

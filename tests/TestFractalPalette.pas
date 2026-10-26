@@ -3,7 +3,7 @@
 interface
 
 uses
-  Classes, SysUtils, Math, TestFramework, Fractal.Types, Fractal.Palette;
+  Classes, SysUtils, Math, TestFramework, Fractal.Types, Fractal.Buffer, Fractal.Palette;
 
 type
   TTestPalette = class(TTestCase)
@@ -43,6 +43,10 @@ type
     procedure TestReliefIgnoresPaletteWrap;
     procedure TestInsideUnaffected;
     procedure TestClampEffectSettings;
+    procedure TestEffectSliderRoundTrip;
+    procedure TestBandWidthSliderIsIntegerFraction;
+    procedure TestMapBufferRowWithoutReliefMatchesMapRow;
+    procedure TestReliefUsesBlockLevel;
   end;
 
 implementation
@@ -829,6 +833,142 @@ begin
   R := ClampColorMapping(M);
   CheckEquals(kDefaultBandWidth, R.BandWidth, 1e-12);
   CheckEquals(kDefaultLightAngle, R.LightAngle, 1e-12);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestEffectSliderRoundTrip;
+var
+  Pos: Integer;
+begin
+  for Pos := 0 to kEffectSliderMax do
+  begin
+    CheckEquals(Pos, ShadingToSlider(ShadingFromSlider(Pos)), 'modelé');
+    CheckEquals(Pos, ContourWidthToSlider(ContourWidthFromSlider(Pos)), 'contour');
+    CheckEquals(Pos, ReliefIntensityToSlider(ReliefIntensityFromSlider(Pos)), 'intensité');
+    CheckEquals(Pos, ReliefHeightToSlider(ReliefHeightFromSlider(Pos)), 'hauteur');
+  end;
+  for Pos := 0 to kLightAngleSliderMax do
+    CheckEquals(Pos, LightAngleToSlider(LightAngleFromSlider(Pos)), 'lumière');
+  CheckEquals(kMinShading, ShadingFromSlider(0), 1e-12);
+  CheckEquals(kMaxShading, ShadingFromSlider(kEffectSliderMax), 1e-12);
+  CheckEquals(kMaxReliefHeight, ReliefHeightFromSlider(kEffectSliderMax), 1e-9);
+  CheckEquals(kDefaultReliefHeight, ReliefHeightFromSlider(ReliefHeightToSlider(kDefaultReliefHeight)), 0.5);
+  CheckEquals(kDefaultLightAngle, LightAngleFromSlider(LightAngleToSlider(kDefaultLightAngle)), 1e-9);
+  // hors bornes : ramené dans la plage du curseur
+  CheckEquals(0, ShadingToSlider(-5));
+  CheckEquals(kEffectSliderMax, ContourWidthToSlider(99));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestBandWidthSliderIsIntegerFraction;
+var
+  Pos, N: Integer;
+  W: Double;
+begin
+  for Pos := 0 to kBandSliderMax do
+  begin
+    W := BandWidthFromSlider(Pos);
+    N := Round(1 / W);
+    CheckEquals(N, 1 / W, 1e-9, 'la bande divise exactement le cycle');
+    CheckTrue((N >= kMinBandCount) and (N <= kMaxBandCount));
+    CheckEquals(Pos, BandWidthToSlider(W), 'aller-retour');
+  end;
+  // curseur à droite = bandes larges
+  CheckEquals(kMaxBandWidth, BandWidthFromSlider(kBandSliderMax), 1e-12);
+  CheckEquals(kMinBandWidth, BandWidthFromSlider(0), 1e-12);
+  // une largeur qui n'est pas 1/N (ancien fichier) se range sur le N le plus proche
+  CheckEquals(BandWidthToSlider(1 / 16), BandWidthToSlider(0.0627));
+  CheckEquals(kBandSliderMax, BandWidthToSlider(0.9));
+  CheckEquals(0, BandWidthToSlider(0.0001));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestMapBufferRowWithoutReliefMatchesMapRow;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+  Buf: TIterationBuffer;
+  X, Y: Integer;
+  Expected, Actual: array of Cardinal;
+begin
+  P := CreateBuiltInPalette(0);
+  Map := DefaultColorMapping;
+  Map.Mode := cmBands;
+  Map.HasContours := True;
+  M := TColorMapper.Create(P, Map);
+  Buf := TIterationBuffer.Create(9, 3);
+  try
+    for Y := 0 to 2 do
+      for X := 0 to 8 do
+        Buf.WriteAnchor(X, Y, 1, 17.5 * (X + 3 * Y));
+    Buf.WriteAnchor(4, 1, 1, kInside);
+    SetLength(Expected, 9);
+    SetLength(Actual, 9);
+    for Y := 0 to 2 do
+    begin
+      M.MapRow(Buf.RowPtr(Y), @Expected[0], 9);
+      M.MapBufferRow(Buf, Y, @Actual[0]);
+      for X := 0 to 8 do
+        CheckEquals(Integer(Expected[X]), Integer(Actual[X]), Format('pixel %d,%d', [X, Y]));
+    end;
+  finally
+    Buf.Free;
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestReliefUsesBlockLevel;
+const
+  kStep = 4;
+  kWidth = 16;
+  kHeight = 8;
+  kFlat = $808080;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+  Buf: TIterationBuffer;
+  X, Y, BX: Integer;
+  Row: array of Cardinal;
+  Expected: Cardinal;
+begin
+  P := CreateFlatPalette(kFlat);
+  Map := DefaultColorMapping;
+  Map.HasRelief := True;
+  Map.ReliefIntensity := 1;
+  Map.ReliefHeight := 1;
+  M := TColorMapper.Create(P, Map);
+  Buf := TIterationBuffer.Create(kWidth, kHeight);
+  try
+    // passe grossière : une ancre tous les 4 pixels, valeur linéaire en X
+    for Y := 0 to kHeight div kStep - 1 do
+      for X := 0 to kWidth div kStep - 1 do
+        Buf.WriteAnchor(X * kStep, Y * kStep, kStep, 200 + 8 * X * kStep);
+    SetLength(Row, kWidth);
+    M.MapBufferRow(Buf, 1, @Row[0]);
+    // bloc du milieu (colonnes 4 à 7) : voisins pris à 4 pixels, donc pente non nulle
+    Expected := M.ShadeValue(Buf.Value(5, 1), Buf.Value(1, 1), Buf.Value(9, 1), Buf.Value(5, 1), Buf.Value(5, 1),
+      kStep);
+    CheckEquals(Integer(Expected), Integer(Row[5]));
+    CheckTrue(Row[5] <> kFlat, 'relief au milieu d''un bloc non plat');
+    // aucun pixel ne sature, et un bloc reste d'une seule teinte
+    for X := 0 to kWidth - 1 do
+      CheckTrue(((Row[X] shr 16) and $FF) < 255, 'pas de saturation en colonne ' + IntToStr(X));
+    for BX := 1 to 2 do
+      for X := BX * kStep to BX * kStep + kStep - 1 do
+        CheckEquals(Integer(Row[BX * kStep]), Integer(Row[X]), 'bloc uniforme');
+  finally
+    Buf.Free;
+    M.Free;
+    P.Free;
+  end;
 end;
 
 initialization

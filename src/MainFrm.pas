@@ -38,6 +38,8 @@ const
   kExportWaitMs = 60000;
   kFracFilter = 'Lieu fractal (*.frac)|*.frac';
   kPngFilter = 'Image PNG (*.png)|*.png';
+  kModeSmoothIndex = 0;  // ordre des éléments de cbColoringMode
+  kModeBandsIndex = 1;
 
 type
   TMainForm = class(TForm)
@@ -61,6 +63,23 @@ type
     tbRepeats: TTrackBar;
     tbStretch: TTrackBar;
     chkInvert: TCheckBox;
+    CategoryPanelEffects: TCategoryPanel;
+    lblEffectMode: TLabel;
+    cbColoringMode: TComboBox;
+    lblBandWidth: TLabel;
+    tbBandWidth: TTrackBar;
+    lblShading: TLabel;
+    tbShading: TTrackBar;
+    chkContours: TCheckBox;
+    lblContourWidth: TLabel;
+    tbContourWidth: TTrackBar;
+    chkRelief: TCheckBox;
+    lblLightAngle: TLabel;
+    tbLightAngle: TTrackBar;
+    lblReliefIntensity: TLabel;
+    tbReliefIntensity: TTrackBar;
+    lblReliefHeight: TLabel;
+    tbReliefHeight: TTrackBar;
     lbFavorites: TListBox;
     splSide: TSplitter;
     pnlCollapse: TPanel;
@@ -98,6 +117,7 @@ type
     MenuAideClavier: TMenuItem;
     MenuAideSouris: TMenuItem;
     MenuAideGestes: TMenuItem;
+    MenuAideEffets: TMenuItem;
     N2: TMenuItem;
     ActionList1: TActionList;
     Action_DelphiEngine: TAction;
@@ -121,6 +141,7 @@ type
     procedure TogglePanelClick(Sender: TObject);
     procedure EditPaletteClick(Sender: TObject);
     procedure ColorSliderChange(Sender: TObject);
+    procedure EffectChange(Sender: TObject);
     procedure MaxIterEditExit(Sender: TObject);
     procedure MaxIterEditKeyPress(Sender: TObject; var Key: Char);
     procedure AutoIterClick(Sender: TObject);
@@ -132,6 +153,7 @@ type
     procedure MenuAideClavierClick(Sender: TObject);
     procedure MenuAideSourisClick(Sender: TObject);
     procedure MenuAideGestesClick(Sender: TObject);
+    procedure MenuAideEffetsClick(Sender: TObject);
     procedure Fin1Click(Sender: TObject);
     procedure Action_RustEngineExecute(Sender: TObject);
   private
@@ -210,6 +232,8 @@ type
     procedure PaletteComboChange(Sender: TObject);
 
     procedure UpdateColorControls;
+    procedure UpdateEffectControls;
+    procedure UpdateEffectEnabling;
     procedure PaletteEditorChange(Sender: TObject);
     procedure InitFilePanel;
     function CaptureLocation: TFractalLocation;
@@ -223,6 +247,7 @@ type
     procedure ShowHelp(Topic: THelpTopic);
 
     procedure CheckSmokeStep(const StepName: string);
+    procedure CheckEffectsSmoke;
     procedure SmokeException(Sender: TObject; E: Exception);
   public
     function RunSmokeTest(const OutputFile: string): Integer;
@@ -651,7 +676,7 @@ begin
   end;
 
   for Y := 0 to Engine.Buffer.Height - 1 do
-    FMapper.MapRow(Engine.Buffer.RowPtr(Y), Bitmap.ScanLine[Y], Engine.Buffer.Width);
+    FMapper.MapBufferRow(Engine.Buffer, Y, Bitmap.ScanLine[Y]);  // sans relief : le chemin rapide de MapRow
 end;
 
 {------------------------------------------------------------------------------}
@@ -769,6 +794,64 @@ begin
   DisplayTimer(nil);
   if CountLitPixels(FView.Bitmap) = 0 then
     raise Exception.Create(StepName + ' : image entièrement noire');
+end;
+
+{------------------------------------------------------------------------------}
+
+function BitmapChecksum(Bitmap: TBitmap): Cardinal;
+var
+  X, Y: Integer;
+  P: PCardinal;
+begin
+  Result := 0;
+  for Y := 0 to Bitmap.Height - 1 do
+  begin
+    P := Bitmap.ScanLine[Y];
+    for X := 0 to Bitmap.Width - 1 do
+    begin
+      Result := (Result shl 5) xor (Result shr 27) xor (P^ and $FFFFFF);
+      Inc(P);
+    end;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.CheckEffectsSmoke;
+const
+  kSmokeLightAngle = 45;
+var
+  Smooth, Effects: Cardinal;
+begin
+  if not WaitForRender(kSmokeTimeoutMs) then
+    raise Exception.Create('rendu avant les effets non terminé');
+  DisplayTimer(nil);
+  Smooth := BitmapChecksum(FView.Bitmap);
+  cbColoringMode.ItemIndex := kModeBandsIndex;
+  EffectChange(cbColoringMode);
+  chkContours.Checked := True;
+  chkRelief.Checked := True;
+  tbLightAngle.Position := kSmokeLightAngle;
+  if (FMapping.Mode <> cmBands) or not FMapping.HasContours or not FMapping.HasRelief
+    or (Abs(FMapping.LightAngle - kSmokeLightAngle) > 1e-9) then
+    raise Exception.Create('effets de couleur non appliqués');
+  if not tbBandWidth.Enabled or not tbReliefHeight.Enabled then
+    raise Exception.Create('curseurs d''effets grisés alors qu''actifs');
+  DisplayTimer(nil);
+  Effects := BitmapChecksum(FView.Bitmap);
+  if Effects = Smooth then
+    raise Exception.Create('bandes et relief sans effet sur l''image');
+  cbColoringMode.ItemIndex := kModeSmoothIndex;
+  EffectChange(cbColoringMode);
+  chkContours.Checked := False;
+  chkRelief.Checked := False;
+  tbLightAngle.Position := Round(kDefaultLightAngle);
+  DisplayTimer(nil);
+  if tbBandWidth.Enabled or tbReliefHeight.Enabled then
+    raise Exception.Create('curseurs d''effets non grisés');
+  if BitmapChecksum(FView.Bitmap) <> Smooth then
+    raise Exception.Create('retour au rendu lisse différent de l''original');
+  FSmokeLog.Add('Bandes et relief OK');
 end;
 
 {------------------------------------------------------------------------------}
@@ -925,6 +1008,7 @@ begin
       PaletteComboChange(nil);
       DisplayTimer(nil);
       FSmokeLog.Add('Couleurs OK');
+      CheckEffectsSmoke;
 
       Dlg := TPaletteEditorForm.Create(Self);
       try
@@ -1385,11 +1469,96 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TMainForm.ColorSliderChange(Sender: TObject);
+var
+  Mapping: TColorMapping;
 begin
   if FIsUpdating then
     Exit;
-  FMapping := MappingFromSliders(tbOffset.Position, tbRepeats.Position, tbStretch.Position, chkInvert.Checked);
+  Mapping := MappingFromSliders(tbOffset.Position, tbRepeats.Position, tbStretch.Position, chkInvert.Checked);
+  CopyEffects(FMapping, Mapping);  // les curseurs de couleur ne touchent pas aux effets
+  FMapping := Mapping;
   ColorsChanged;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.EffectChange(Sender: TObject);
+begin
+  if FIsUpdating then
+    Exit;
+  // seul le réglage touché est relu : les autres gardent leur valeur exacte (un ancien fichier peut avoir une
+  // largeur de bande qui n'est pas 1/N)
+  if Sender = cbColoringMode then
+  begin
+    if cbColoringMode.ItemIndex = kModeBandsIndex then
+      FMapping.Mode := cmBands
+    else
+      FMapping.Mode := cmSmooth;
+  end
+  else if Sender = tbBandWidth then
+    FMapping.BandWidth := BandWidthFromSlider(tbBandWidth.Position)
+  else if Sender = tbShading then
+    FMapping.Shading := ShadingFromSlider(tbShading.Position)
+  else if Sender = chkContours then
+    FMapping.HasContours := chkContours.Checked
+  else if Sender = tbContourWidth then
+    FMapping.ContourWidth := ContourWidthFromSlider(tbContourWidth.Position)
+  else if Sender = chkRelief then
+    FMapping.HasRelief := chkRelief.Checked
+  else if Sender = tbLightAngle then
+    FMapping.LightAngle := LightAngleFromSlider(tbLightAngle.Position)
+  else if Sender = tbReliefIntensity then
+    FMapping.ReliefIntensity := ReliefIntensityFromSlider(tbReliefIntensity.Position)
+  else if Sender = tbReliefHeight then
+    FMapping.ReliefHeight := ReliefHeightFromSlider(tbReliefHeight.Position);
+  UpdateEffectEnabling;
+  ColorsChanged;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.UpdateEffectEnabling;
+var
+  IsBands: Boolean;
+begin
+  IsBands := FMapping.Mode = cmBands;
+  lblBandWidth.Enabled := IsBands;
+  tbBandWidth.Enabled := IsBands;
+  lblShading.Enabled := IsBands;
+  tbShading.Enabled := IsBands;
+  chkContours.Enabled := IsBands;
+  lblContourWidth.Enabled := IsBands and FMapping.HasContours;
+  tbContourWidth.Enabled := IsBands and FMapping.HasContours;
+  lblLightAngle.Enabled := FMapping.HasRelief;
+  tbLightAngle.Enabled := FMapping.HasRelief;
+  lblReliefIntensity.Enabled := FMapping.HasRelief;
+  tbReliefIntensity.Enabled := FMapping.HasRelief;
+  lblReliefHeight.Enabled := FMapping.HasRelief;
+  tbReliefHeight.Enabled := FMapping.HasRelief;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.UpdateEffectControls;
+begin
+  FIsUpdating := True;
+  try
+    if FMapping.Mode = cmBands then
+      cbColoringMode.ItemIndex := kModeBandsIndex
+    else
+      cbColoringMode.ItemIndex := kModeSmoothIndex;
+    tbBandWidth.Position := BandWidthToSlider(FMapping.BandWidth);
+    tbShading.Position := ShadingToSlider(FMapping.Shading);
+    chkContours.Checked := FMapping.HasContours;
+    tbContourWidth.Position := ContourWidthToSlider(FMapping.ContourWidth);
+    chkRelief.Checked := FMapping.HasRelief;
+    tbLightAngle.Position := LightAngleToSlider(FMapping.LightAngle);
+    tbReliefIntensity.Position := ReliefIntensityToSlider(FMapping.ReliefIntensity);
+    tbReliefHeight.Position := ReliefHeightToSlider(FMapping.ReliefHeight);
+  finally
+    FIsUpdating := False;
+  end;
+  UpdateEffectEnabling;
 end;
 
 {------------------------------------------------------------------------------}
@@ -1408,6 +1577,7 @@ begin
   finally
     FIsUpdating := False;
   end;
+  UpdateEffectControls;
 end;
 
 {------------------------------------------------------------------------------}
@@ -1866,6 +2036,13 @@ end;
 procedure TMainForm.MenuAideGestesClick(Sender: TObject);
 begin
   ShowHelp(htTouch);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.MenuAideEffetsClick(Sender: TObject);
+begin
+  ShowHelp(htEffects);
 end;
 
 {------------------------------------------------------------------------------}
