@@ -9,9 +9,12 @@ uses
 type
   TTestHiRes = class(TTestCase)
   private
+    FMapping: TColorMapping;
     function MakeSettings(W, H, SS: Integer; const FileName: string): THiResSettings;
     function RunRenderer(const Settings: THiResSettings; const V: TViewport; F: TFractalFormula;
-      AKernel: TEngineKernelType = ekDelphi): THiResRenderer;
+      AKernel: TEngineKernelType = ekDelphi; ABandRows: Integer = kHiResBandRows): THiResRenderer;
+  protected
+    procedure SetUp; override;
   published
     procedure TestSmallRenderMatchesDirectColors;
     procedure TestSupersampledRenderHasRequestedSize;
@@ -20,9 +23,19 @@ type
     procedure TestInvalidPathReportsError;
     procedure TestEstimateRejectsHugeRender;
     procedure TestRustKernelRequestRenders;
+    procedure TestHiResWithoutEffectsUnchanged;
+    procedure TestHiResReliefHasNoSeam;
   end;
 
 implementation
+
+{------------------------------------------------------------------------------}
+
+procedure TTestHiRes.SetUp;
+begin
+  inherited SetUp;
+  FMapping := DefaultColorMapping;
+end;
 
 {------------------------------------------------------------------------------}
 
@@ -37,13 +50,13 @@ end;
 {------------------------------------------------------------------------------}
 
 function TTestHiRes.RunRenderer(const Settings: THiResSettings; const V: TViewport;
-  F: TFractalFormula; AKernel: TEngineKernelType): THiResRenderer;
+  F: TFractalFormula; AKernel: TEngineKernelType; ABandRows: Integer): THiResRenderer;
 var
   P: TGradientPalette;
 begin
   P := CreateBuiltInPalette(0);
   try
-    Result := THiResRenderer.Create(Settings, V, F, TColorMapper.Create(P, DefaultColorMapping), 'abc', AKernel);
+    Result := THiResRenderer.Create(Settings, V, F, TColorMapper.Create(P, FMapping), 'abc', AKernel, ABandRows);
   finally
     P.Free;
   end;
@@ -285,6 +298,90 @@ begin
     F.Free;
   end;
 end;
+
+procedure TTestHiRes.TestHiResWithoutEffectsUnchanged;
+const
+  kExpectedCrc = $95E81BBF;  // PNG produit avant l'ajout du relief en HD (commit d4abc22)
+var
+  FileName: string;
+  F: TMandelbrotFormula;
+  R: THiResRenderer;
+  Stream: TFileStream;
+  Bytes: array of Byte;
+begin
+  FileName := TestTempFolder + 'hires-frozen.png';
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 200;
+    R := RunRenderer(MakeSettings(40, 40, 2, FileName), MakeViewport(-0.5, 0, 3, 40, 40), F);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    Stream := TFileStream.Create(FileName, fmOpenRead);
+    try
+      SetLength(Bytes, Stream.Size);
+      Stream.ReadBuffer(Bytes[0], Stream.Size);
+    finally
+      Stream.Free;
+    end;
+    CheckEquals(IntToHex(kExpectedCrc, 8), IntToHex(PngCrc32(@Bytes[0], Length(Bytes)), 8));
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestHiRes.TestHiResReliefHasNoSeam;
+const
+  kSize = 40;
+  kSS = 2;
+  kManyBandRows = 7;  // ne divise pas 40 : bandes de 7 lignes puis une dernière de 5
+var
+  F: TMandelbrotFormula;
+  R: THiResRenderer;
+  Whole, Banded: TPngImage;
+  X, Y: Integer;
+begin
+  FMapping.HasRelief := True;
+  F := TMandelbrotFormula.Create;
+  Whole := TPngImage.Create;
+  Banded := TPngImage.Create;
+  try
+    F.MaxIter := 200;
+    R := RunRenderer(MakeSettings(kSize, kSize, kSS, TestTempFolder + 'hires-relief-whole.png'),
+      MakeViewport(-0.5, 0, 3, kSize, kSize), F, ekDelphi, kSize);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    R := RunRenderer(MakeSettings(kSize, kSize, kSS, TestTempFolder + 'hires-relief-bands.png'),
+      MakeViewport(-0.5, 0, 3, kSize, kSize), F, ekDelphi, kManyBandRows);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    Whole.LoadFromFile(TestTempFolder + 'hires-relief-whole.png');
+    Banded.LoadFromFile(TestTempFolder + 'hires-relief-bands.png');
+    for Y := 0 to kSize - 1 do
+      for X := 0 to kSize - 1 do
+        CheckEquals(Integer(Whole.Pixels[X, Y]), Integer(Banded.Pixels[X, Y]),
+          Format('pixel (%d, %d)', [X, Y]));
+  finally
+    Banded.Free;
+    Whole.Free;
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 initialization
   RegisterTest(TTestHiRes.Suite);

@@ -4,7 +4,7 @@ interface
 
 uses
   Windows, SysUtils, Classes, Math, Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine,
-  Fractal.Png;
+  Fractal.Buffer, Fractal.Png;
 
 const
   kHiResBandRows = 16;
@@ -28,10 +28,12 @@ type
     FMapper: TColorMapper;
     FLocationText: RawByteString;
     FKernel: TEngineKernelType;
+    FBandRows: Integer;
     FProgress: Integer;
     FErrorMessage: string;
     FIsSucceeded: Boolean;
     FIsDone: Boolean;
+    function ShadedSubPixel(Buffer: TIterationBuffer; X, Y, Distance: Integer): Cardinal;
     function RenderToStream(Stream: TStream): Boolean;
   protected
     procedure Execute; override;
@@ -41,7 +43,8 @@ type
                        AFormula: TFractalFormula;
                        AMapper: TColorMapper; 
                        const ALocationText: RawByteString; 
-                       AKernel: TEngineKernelType = ekDelphi);
+                       AKernel: TEngineKernelType = ekDelphi;
+                       ABandRows: Integer = kHiResBandRows);
     destructor Destroy; override;
     property Progress: Integer read FProgress;
     property ErrorMessage: string read FErrorMessage;
@@ -79,7 +82,8 @@ end;
 {------------------------------------------------------------------------------}
 
 constructor THiResRenderer.Create(const ASettings: THiResSettings; const AViewport: TViewport;
-  AFormula: TFractalFormula; AMapper: TColorMapper; const ALocationText: RawByteString; AKernel: TEngineKernelType);
+  AFormula: TFractalFormula; AMapper: TColorMapper; const ALocationText: RawByteString; AKernel: TEngineKernelType;
+  ABandRows: Integer);
 begin
   FMapper := AMapper;  // en premier : possession toujours transférée, libérée par Destroy même si Clone échoue
   FSettings := ASettings;
@@ -88,6 +92,7 @@ begin
   FFormula := AFormula.Clone;
   FLocationText := ALocationText;
   FKernel := AKernel;
+  FBandRows := Max(1, ABandRows);
   inherited Create(False);
 end;
 
@@ -140,18 +145,45 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function THiResRenderer.ShadedSubPixel(Buffer: TIterationBuffer; X, Y, Distance: Integer): Cardinal;
+var
+  Mu, Left, Right, Up, Down: Single;
+begin
+  if Buffer = nil then
+    raise Exception.Create('ShadedSubPixel : tampon absent.');
+  Mu := Buffer.Value(X, Y);
+  // voisins à Distance sous-pixels (un pixel affiché) ; hors du tampon (bord de l'image) : le sous-pixel lui-même
+  Left := Mu;
+  Right := Mu;
+  Up := Mu;
+  Down := Mu;
+  if X - Distance >= 0 then
+    Left := Buffer.Value(X - Distance, Y);
+  if X + Distance < Buffer.Width then
+    Right := Buffer.Value(X + Distance, Y);
+  if Y - Distance >= 0 then
+    Up := Buffer.Value(X, Y - Distance);
+  if Y + Distance < Buffer.Height then
+    Down := Buffer.Value(X, Y + Distance);
+  Result := FMapper.ShadeValue(Mu, Left, Right, Up, Down, Distance);
+end;
+
+{------------------------------------------------------------------------------}
+
 function THiResRenderer.RenderToStream(Stream: TStream): Boolean;
 var
   Engine: TRenderEngine;
   Writer: TPngWriter;
   Row: array of Byte;
-  Row0, Rows, R, X, SX, SY, SS, Count, SumR, SumG, SumB: Integer;
+  Row0, Rows, R, X, SX, SY, SS, Count, SumR, SumG, SumB, Margin, Bottom: Integer;
+  IsRelief: Boolean;
   C: Cardinal;
   Errors: string;
 begin
   Result := False;
   SS := FSettings.Supersample;
   Count := SS * SS;
+  IsRelief := FMapper.HasRelief;
   SetLength(Row, FSettings.Width * 3);
   Engine := TRenderEngine.Create(CpuCount);
   try
@@ -165,8 +197,20 @@ begin
       Row0 := 0;
       while Row0 < FSettings.Height do
       begin
-        Rows := Min(kHiResBandRows, FSettings.Height - Row0);
-        Engine.Render(FViewport.SubViewport(SS, Row0, Rows), FFormula, False);
+        Rows := Min(FBandRows, FSettings.Height - Row0);
+        // le relief lit ses voisins à SS sous-pixels : la bande déborde d'une ligne affichée de chaque côté, bornée
+        // aux bords de l'image ; sans relief, aucun recouvrement
+        if IsRelief then
+        begin
+          Margin := Min(1, Row0);
+          Bottom := Min(1, FSettings.Height - Row0 - Rows);
+        end
+        else
+        begin
+          Margin := 0;
+          Bottom := 0;
+        end;
+        Engine.Render(FViewport.SubViewport(SS, Row0 - Margin, Rows + Margin + Bottom), FFormula, False);
         while not Engine.WaitUntilComplete(kWaitSliceMs) do
           if Terminated then
             Exit;
@@ -186,7 +230,10 @@ begin
             for SY := 0 to SS - 1 do
               for SX := 0 to SS - 1 do
               begin
-                C := FMapper.MapValue(Engine.Buffer.Value(X * SS + SX, R * SS + SY));
+                if IsRelief then
+                  C := ShadedSubPixel(Engine.Buffer, X * SS + SX, (R + Margin) * SS + SY, SS)
+                else
+                  C := FMapper.MapValue(Engine.Buffer.Value(X * SS + SX, R * SS + SY));
                 Inc(SumR, (C shr 16) and $FF);
                 Inc(SumG, (C shr 8) and $FF);
                 Inc(SumB, C and $FF);

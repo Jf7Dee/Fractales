@@ -108,6 +108,7 @@ type
   public
     constructor Create(APalette: TGradientPalette; const AMapping: TColorMapping);
     function PalettePosition(Mu: Single): Double;
+    function HasRelief: Boolean;
     function MapValue(Mu: Single): Cardinal;
     function ShadeValue(Mu, Left, Right, Up, Down: Single): Cardinal; overload;
     function ShadeValue(Mu, Left, Right, Up, Down: Single; Distance: Integer): Cardinal; overload;
@@ -483,6 +484,13 @@ begin
   Result := PalettePosition(Mu);
   if IsNan(Result) then
     Result := Fallback;  // voisin absent : le pixel lui-même, pour une pente d'un seul côté
+end;
+
+{------------------------------------------------------------------------------}
+
+function TColorMapper.HasRelief: Boolean;
+begin
+  Result := FMapping.HasRelief;
 end;
 
 {------------------------------------------------------------------------------}
