@@ -539,6 +539,23 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function BlockStep(Buffer: TIterationBuffer; X, Y: Integer): Integer;
+begin
+  // WriteAnchor marque l'ancre du bloc au niveau 1 et le reste du bloc à la taille du bloc : l'ancre prend donc le
+  // niveau de ses voisins de droite et du dessous (de gauche et du dessus au bord), sinon elle se teinterait à part
+  Result := Max(1, Buffer.Level(X, Y));
+  if X + 1 < Buffer.Width then
+    Result := Max(Result, Buffer.Level(X + 1, Y))
+  else if X > 0 then
+    Result := Max(Result, Buffer.Level(X - 1, Y));
+  if Y + 1 < Buffer.Height then
+    Result := Max(Result, Buffer.Level(X, Y + 1))
+  else if Y > 0 then
+    Result := Max(Result, Buffer.Level(X, Y - 1));
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TColorMapper.MapBufferRow(Buffer: TIterationBuffer; Y: Integer; Dest: PCardinal);
 var
   X, Step, Width, Height, XLeft, XRight, YUp, YDown: Integer;
@@ -559,7 +576,7 @@ begin
   begin
     Mu := Buffer.Value(X, Y);
     // pendant les passes grossières, les voisins sont à la distance du bloc du pixel ; 1 quand il est exact
-    Step := Max(1, Buffer.Level(X, Y));
+    Step := BlockStep(Buffer, X, Y);
     XLeft := X - Step;
     XRight := X + Step;
     YUp := Y - Step;
@@ -717,6 +734,8 @@ end;
 
 function ShadingToSlider(Shading: Double): Integer;
 begin
+  if IsNan(Shading) then
+    Shading := kDefaultShading;
   Result := ToSliderRange(Shading, kMinShading, kMaxShading, kEffectSliderMax);
 end;
 
@@ -731,6 +750,8 @@ end;
 
 function ContourWidthToSlider(Width: Double): Integer;
 begin
+  if IsNan(Width) then
+    Width := kDefaultContourWidth;
   Result := ToSliderRange(Width, kMinContourWidth, kMaxContourWidth, kEffectSliderMax);
 end;
 
@@ -762,6 +783,8 @@ end;
 
 function ReliefIntensityToSlider(Intensity: Double): Integer;
 begin
+  if IsNan(Intensity) then
+    Intensity := kDefaultReliefIntensity;
   Result := ToSliderRange(Intensity, kMinReliefIntensity, kMaxReliefIntensity, kEffectSliderMax);
 end;
 

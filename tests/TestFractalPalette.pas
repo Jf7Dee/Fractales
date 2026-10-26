@@ -47,6 +47,7 @@ type
     procedure TestBandWidthSliderIsIntegerFraction;
     procedure TestMapBufferRowWithoutReliefMatchesMapRow;
     procedure TestReliefUsesBlockLevel;
+    procedure TestCopyEffects;
   end;
 
 implementation
@@ -855,6 +856,12 @@ begin
   CheckEquals(kMaxReliefHeight, ReliefHeightFromSlider(kEffectSliderMax), 1e-9);
   CheckEquals(kDefaultReliefHeight, ReliefHeightFromSlider(ReliefHeightToSlider(kDefaultReliefHeight)), 0.5);
   CheckEquals(kDefaultLightAngle, LightAngleFromSlider(LightAngleToSlider(kDefaultLightAngle)), 1e-9);
+  // NaN : ni exception ni position hors plage
+  CheckEquals(ShadingToSlider(kDefaultShading), ShadingToSlider(NaN));
+  CheckEquals(ContourWidthToSlider(kDefaultContourWidth), ContourWidthToSlider(NaN));
+  CheckEquals(ReliefIntensityToSlider(kDefaultReliefIntensity), ReliefIntensityToSlider(NaN));
+  CheckEquals(ReliefHeightToSlider(kDefaultReliefHeight), ReliefHeightToSlider(NaN));
+  CheckEquals(LightAngleToSlider(kDefaultLightAngle), LightAngleToSlider(NaN));
   // hors bornes : ramené dans la plage du curseur
   CheckEquals(0, ShadingToSlider(-5));
   CheckEquals(kEffectSliderMax, ContourWidthToSlider(99));
@@ -937,6 +944,7 @@ var
   Buf: TIterationBuffer;
   X, Y, BX: Integer;
   Row: array of Cardinal;
+  BlockRows: array[0..kStep - 1] of array of Cardinal;
   Expected: Cardinal;
 begin
   P := CreateFlatPalette(kFlat);
@@ -964,11 +972,61 @@ begin
     for BX := 1 to 2 do
       for X := BX * kStep to BX * kStep + kStep - 1 do
         CheckEquals(Integer(Row[BX * kStep]), Integer(Row[X]), 'bloc uniforme');
+    // le pixel ancre (premier pixel du bloc, niveau 1) doit se teinter comme le reste de son bloc : lignes 0 à 3
+    for Y := 0 to kStep - 1 do
+    begin
+      SetLength(BlockRows[Y], kWidth);
+      M.MapBufferRow(Buf, Y, @BlockRows[Y][0]);
+    end;
+    for BX := 1 to 2 do
+      for Y := 0 to kStep - 1 do
+        for X := BX * kStep to BX * kStep + kStep - 1 do
+        begin
+          CheckEquals(Integer(BlockRows[0][BX * kStep]), Integer(BlockRows[Y][X]),
+            Format('bloc uniforme, pixel %d,%d', [X, Y]));
+          CheckTrue(((BlockRows[Y][X] shr 16) and $FF) < 255, 'pas de saturation sur le bloc');
+        end;
   finally
     Buf.Free;
     M.Free;
     P.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestCopyEffects;
+var
+  Src, Dest: TColorMapping;
+begin
+  Src := DefaultColorMapping;
+  Src.Offset := 0.3;
+  Src.Mode := cmBands;
+  Src.BandWidth := 0.125;
+  Src.Shading := 0.9;
+  Src.HasContours := True;
+  Src.ContourWidth := 0.3;
+  Src.HasRelief := True;
+  Src.LightAngle := 77;
+  Src.ReliefIntensity := 0.2;
+  Src.ReliefHeight := 33;
+  Dest := DefaultColorMapping;
+  Dest.Repeats := 7;
+  Dest.IsInverted := True;
+  CopyEffects(Src, Dest);
+  CheckTrue(Dest.Mode = cmBands);
+  CheckEquals(0.125, Dest.BandWidth, 1e-12);
+  CheckEquals(0.9, Dest.Shading, 1e-12);
+  CheckTrue(Dest.HasContours);
+  CheckEquals(0.3, Dest.ContourWidth, 1e-12);
+  CheckTrue(Dest.HasRelief);
+  CheckEquals(77, Dest.LightAngle, 1e-12);
+  CheckEquals(0.2, Dest.ReliefIntensity, 1e-12);
+  CheckEquals(33, Dest.ReliefHeight, 1e-12);
+  // les champs de couleur ne bougent pas
+  CheckEquals(0, Dest.Offset, 1e-12);
+  CheckEquals(7, Dest.Repeats, 1e-12);
+  CheckTrue(Dest.IsInverted);
 end;
 
 initialization
