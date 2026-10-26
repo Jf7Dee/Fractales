@@ -9,6 +9,9 @@ type
   TTestPalette = class(TTestCase)
   private
     function CreateTwoStops(P1: Double; C1: Cardinal; P2: Double; C2: Cardinal): TGradientPalette;
+    function CreateFlatPalette(C: Cardinal): TGradientPalette;
+    function EffectMapping(AMode: TColoringMode; ABandWidth: Double): TColorMapping;
+    function Red(C: Cardinal): Integer;
   published
     procedure TestColorAtStopsAndMidpoint;
     procedure TestColorAtWrapsAround;
@@ -28,6 +31,18 @@ type
     procedure TestMapperStretch;
     procedure TestClampColorMapping;
     procedure TestColorAtWrapsPastLastStop;
+    procedure TestDefaultsUnchanged;
+    procedure TestBandsAreFlat;
+    procedure TestBandsDiffer;
+    procedure TestBandWidth;
+    procedure TestShadingRisesInBand;
+    procedure TestContoursDarkenEdge;
+    procedure TestReliefLitSideBrighter;
+    procedure TestReliefFlatUnchanged;
+    procedure TestReliefMissingNeighbourHasNoSpike;
+    procedure TestReliefIgnoresPaletteWrap;
+    procedure TestInsideUnaffected;
+    procedure TestClampEffectSettings;
   end;
 
 implementation
@@ -442,6 +457,378 @@ begin
   finally
     P.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestPalette.CreateFlatPalette(C: Cardinal): TGradientPalette;
+begin
+  Result := CreateTwoStops(0, C, 0.5, C);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestPalette.EffectMapping(AMode: TColoringMode; ABandWidth: Double): TColorMapping;
+begin
+  Result := DefaultColorMapping;
+  Result.Repeats := 1;
+  Result.Mode := AMode;
+  Result.BandWidth := ABandWidth;
+  Result.Shading := 0;
+  Result.HasContours := False;
+  Result.HasRelief := False;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestPalette.Red(C: Cardinal): Integer;
+begin
+  Result := (C shr 16) and $FF;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestDefaultsUnchanged;
+const
+  kSamples = 1000;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+  Pass, I: Integer;
+  Mu: Single;
+  U, T: Double;
+  Expected: Cardinal;
+begin
+  P := CreateBuiltInPalette(0);
+  try
+    CheckTrue(DefaultColorMapping.Mode = cmSmooth);
+    CheckFalse(DefaultColorMapping.HasContours);
+    CheckFalse(DefaultColorMapping.HasRelief);
+    for Pass := 0 to 2 do
+    begin
+      Map := DefaultColorMapping;
+      if Pass = 1 then
+      begin
+        Map.Offset := 0.3;
+        Map.Stretch := 0.6;
+        Map.IsInverted := True;
+      end;
+      if Pass = 2 then
+        Map.Repeats := 333;
+      M := TColorMapper.Create(P, Map);
+      try
+        for I := -20 to kSamples do
+        begin
+          Mu := I * 1.37;
+          // implémentation d'origine recopiée
+          if Mu < 0 then
+            Expected := kInsideColor
+          else
+          begin
+            U := Mu / kRefIter;
+            if Map.Stretch <> 1 then
+              U := Power(U, Map.Stretch);
+            T := Frac(Map.Offset + Map.Repeats * U);
+            if Map.IsInverted then
+              T := 1 - T;
+            Expected := P.ColorAt(EnsureRange(Trunc(T * kLutSize), 0, kLutSize - 1) / kLutSize);
+          end;
+          CheckEquals(Integer(Expected), Integer(M.MapValue(Mu)), Format('pass %d mu %g', [Pass, Mu]));
+        end;
+      finally
+        M.Free;
+      end;
+    end;
+  finally
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestBandsAreFlat;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+begin
+  P := CreateBuiltInPalette(4);
+  M := TColorMapper.Create(P, EffectMapping(cmBands, 0.125));
+  try
+    // la bande 0 couvre mu de 0 à 125
+    CheckEquals(Integer(M.MapValue(5)), Integer(M.MapValue(60)));
+    CheckEquals(Integer(M.MapValue(5)), Integer(M.MapValue(120)));
+  finally
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestBandsDiffer;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+begin
+  P := CreateBuiltInPalette(4);
+  M := TColorMapper.Create(P, EffectMapping(cmBands, 0.125));
+  try
+    CheckTrue(M.MapValue(60) <> M.MapValue(190));
+    CheckTrue(M.MapValue(190) <> M.MapValue(310));
+  finally
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestBandWidth;
+var
+  P: TGradientPalette;
+  Narrow, Wide: TColorMapper;
+begin
+  P := CreateBuiltInPalette(4);
+  Narrow := TColorMapper.Create(P, EffectMapping(cmBands, 0.0625));
+  Wide := TColorMapper.Create(P, EffectMapping(cmBands, 0.25));
+  try
+    // bandes étroites : 30 et 90 sont dans deux bandes (0-62,5 et 62,5-125) ; bandes larges : dans la même (0-250)
+    CheckTrue(Narrow.MapValue(30) <> Narrow.MapValue(90));
+    CheckEquals(Integer(Wide.MapValue(30)), Integer(Wide.MapValue(90)));
+    CheckTrue(Wide.MapValue(30) <> Wide.MapValue(290));
+  finally
+    Wide.Free;
+    Narrow.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestShadingRisesInBand;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+begin
+  P := CreateFlatPalette($808080);
+  Map := EffectMapping(cmBands, 0.125);
+  Map.Shading := 0.6;
+  M := TColorMapper.Create(P, Map);
+  try
+    CheckTrue(Red(M.MapValue(10)) < Red(M.MapValue(60)));
+    CheckTrue(Red(M.MapValue(60)) < Red(M.MapValue(120)));
+    // la bande suivante recommence au même niveau sombre
+    CheckEquals(Red(M.MapValue(10)), Red(M.MapValue(135)));
+  finally
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestContoursDarkenEdge;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+begin
+  P := CreateFlatPalette($808080);
+  try
+    Map := EffectMapping(cmBands, 0.125);
+    Map.HasContours := True;
+    Map.ContourWidth := 0.2;
+    M := TColorMapper.Create(P, Map);
+    try
+      // bande 0 : 0-125 ; le contour occupe les 20 % du bord haut (mu 100 à 125)
+      CheckEquals(Red(M.MapValue(10)), Red(M.MapValue(90)));
+      CheckTrue(Red(M.MapValue(110)) < Red(M.MapValue(90)));
+      CheckTrue(Red(M.MapValue(124)) < Red(M.MapValue(90)));
+      // la bande suivante repart sans contour
+      CheckEquals(Red(M.MapValue(10)), Red(M.MapValue(135)));
+    finally
+      M.Free;
+    end;
+    Map.HasContours := False;
+    M := TColorMapper.Create(P, Map);
+    try
+      CheckEquals(Red(M.MapValue(10)), Red(M.MapValue(124)));
+    finally
+      M.Free;
+    end;
+  finally
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestReliefLitSideBrighter;
+var
+  P: TGradientPalette;
+  Lit, Shadow: TColorMapper;
+  Map: TColorMapping;
+  LitColor, ShadowColor: Cardinal;
+begin
+  P := CreateFlatPalette($808080);
+  Map := EffectMapping(cmSmooth, 0.125);
+  Map.HasRelief := True;
+  Map.ReliefIntensity := 1;
+  Map.ReliefHeight := 20;
+  Map.LightAngle := 180;
+  Lit := TColorMapper.Create(P, Map);
+  Map.LightAngle := 0;
+  Shadow := TColorMapper.Create(P, Map);
+  try
+    // plan montant vers la droite : éclairé par la gauche (180 degrés) il est clair, par la droite il est sombre
+    LitColor := Lit.ShadeValue(500, 400, 600, 500, 500);
+    ShadowColor := Shadow.ShadeValue(500, 400, 600, 500, 500);
+    CheckTrue(Red(LitColor) > Red(ShadowColor), Format('%x %x', [LitColor, ShadowColor]));
+    CheckTrue(Red(LitColor) > $80);
+    CheckTrue(Red(ShadowColor) < $80);
+    // même chose dans l'axe vertical : lumière du haut (90) sur un plan montant vers le bas
+    Map.LightAngle := 90;
+    Lit.Free;
+    Lit := TColorMapper.Create(P, Map);
+    Map.LightAngle := 270;
+    Shadow.Free;
+    Shadow := TColorMapper.Create(P, Map);
+    CheckTrue(Red(Lit.ShadeValue(500, 500, 500, 400, 600)) > Red(Shadow.ShadeValue(500, 500, 500, 400, 600)));
+  finally
+    Shadow.Free;
+    Lit.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestReliefFlatUnchanged;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+begin
+  P := CreateBuiltInPalette(0);
+  Map := DefaultColorMapping;
+  Map.HasRelief := True;
+  M := TColorMapper.Create(P, Map);
+  try
+    CheckEquals(Integer(M.MapValue(321)), Integer(M.ShadeValue(321, 321, 321, 321, 321)));
+    CheckEquals(Integer(M.MapValue(7)), Integer(M.ShadeValue(7, 7, 7, 7, 7)));
+  finally
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestReliefMissingNeighbourHasNoSpike;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+begin
+  P := CreateFlatPalette($808080);
+  Map := EffectMapping(cmSmooth, 0.125);
+  Map.HasRelief := True;
+  Map.ReliefIntensity := 1;
+  Map.ReliefHeight := 20;
+  M := TColorMapper.Create(P, Map);
+  try
+    // voisin absent (non calculé, intérieur, NaN) = le pixel lui-même
+    CheckEquals(Integer(M.ShadeValue(500, 500, 510, 500, 500)),
+      Integer(M.ShadeValue(500, kNotComputed, 510, 500, 500)));
+    CheckEquals(Integer(M.ShadeValue(500, 500, 510, 500, 500)),
+      Integer(M.ShadeValue(500, kInside, 510, 500, 500)));
+    CheckEquals(Integer(M.ShadeValue(500, 500, 500, 500, 505)),
+      Integer(M.ShadeValue(500, NaN, 500, NaN, 505)));
+    CheckEquals(Integer(M.MapValue(500)), Integer(M.ShadeValue(500, kInside, kInside, kNotComputed, NaN)));
+  finally
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestReliefIgnoresPaletteWrap;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+begin
+  P := CreateFlatPalette($808080);
+  Map := DefaultColorMapping;
+  Map.Repeats := 100;
+  Map.HasRelief := True;
+  Map.ReliefIntensity := 1;
+  Map.ReliefHeight := 1;
+  M := TColorMapper.Create(P, Map);
+  try
+    // mu 9,9 et 10,1 : positions 0,99 et 1,01 de part et d'autre du repli ; la pente reste de 0,01 par pixel
+    CheckTrue(Abs(Red(M.ShadeValue(10, 9.9, 10.1, 10, 10)) - Red(M.MapValue(10))) <= 2);
+  finally
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestInsideUnaffected;
+var
+  P: TGradientPalette;
+  M: TColorMapper;
+  Map: TColorMapping;
+begin
+  P := CreateBuiltInPalette(0);
+  Map := DefaultColorMapping;
+  Map.Mode := cmBands;
+  Map.HasContours := True;
+  Map.HasRelief := True;
+  Map.Shading := 1;
+  M := TColorMapper.Create(P, Map);
+  try
+    CheckEquals(Integer(kInsideColor), Integer(M.MapValue(kInside)));
+    CheckEquals(Integer(kInsideColor), Integer(M.MapValue(NaN)));
+    CheckEquals(Integer(kInsideColor), Integer(M.ShadeValue(kInside, 100, 200, 300, 400)));
+    CheckTrue(IsNan(M.PalettePosition(kInside)));
+    CheckTrue(IsNan(M.PalettePosition(kNotComputed)));
+  finally
+    M.Free;
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestClampEffectSettings;
+var
+  M, R: TColorMapping;
+begin
+  M := DefaultColorMapping;
+  M.BandWidth := 0;
+  M.Shading := 9;
+  M.ContourWidth := -1;
+  M.ReliefIntensity := 9;
+  M.ReliefHeight := 1e9;
+  M.LightAngle := 725;
+  R := ClampColorMapping(M);
+  CheckEquals(kMinBandWidth, R.BandWidth, 1e-12);
+  CheckEquals(kMaxShading, R.Shading, 1e-12);
+  CheckEquals(kMinContourWidth, R.ContourWidth, 1e-12);
+  CheckEquals(kMaxReliefIntensity, R.ReliefIntensity, 1e-12);
+  CheckEquals(kMaxReliefHeight, R.ReliefHeight, 1e-12);
+  CheckEquals(5, R.LightAngle, 1e-9);
+  M.BandWidth := NaN;
+  M.LightAngle := NaN;
+  R := ClampColorMapping(M);
+  CheckEquals(kDefaultBandWidth, R.BandWidth, 1e-12);
+  CheckEquals(kDefaultLightAngle, R.LightAngle, 1e-12);
 end;
 
 initialization

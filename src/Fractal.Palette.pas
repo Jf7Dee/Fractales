@@ -15,6 +15,24 @@ const
   kRepeatsDecades = 3;  // 10^0 .. 10^3
   kMinStretch = 0.2;
   kMaxStretch = 2.0;
+  // effets : bandes, contours et relief (valeurs par défaut = premier essai agréable)
+  kMinBandWidth = 1 / 64;  // largeur d'une bande, en fraction du cycle de la palette
+  kMaxBandWidth = 0.25;
+  kDefaultBandWidth = 1 / 16;
+  kMinShading = 0.0;  // amplitude du modelé : 0 = bande plate, 1 = du noir à la couleur pleine
+  kMaxShading = 1.0;
+  kDefaultShading = 0.5;
+  kMinContourWidth = 0.02;  // épaisseur du contour, en fraction de la bande
+  kMaxContourWidth = 0.5;
+  kDefaultContourWidth = 0.1;
+  kFullTurnDegrees = 360.0;
+  kDefaultLightAngle = 135.0;  // lumière venant du haut à gauche (0 = droite, 90 = haut)
+  kMinReliefIntensity = 0.0;
+  kMaxReliefIntensity = 1.0;
+  kDefaultReliefIntensity = 0.6;
+  kMinReliefHeight = 0.0;  // multiplicateur de la pente (altitude = position dans la palette)
+  kMaxReliefHeight = 100.0;
+  kDefaultReliefHeight = 8.0;
   kInsideColor = $000000;
   kMaxStops = 1024;
   kMaxMapColors = 256;
@@ -54,20 +72,38 @@ type
     property Name: string read FName write FName;
   end;
 
+  TColoringMode = (cmSmooth, cmBands);
+
   TColorMapping = record
     Offset: Double;
     Repeats: Double;
     Stretch: Double;
     IsInverted: Boolean;
+    Mode: TColoringMode;
+    BandWidth: Double;  // cmBands : largeur d'une bande, en fraction du cycle de la palette
+    Shading: Double;  // cmBands : amplitude du modelé dans la bande (0 à 1)
+    HasContours: Boolean;  // cmBands : assombrit le bord haut de chaque bande
+    ContourWidth: Double;  // fraction de la bande
+    HasRelief: Boolean;
+    LightAngle: Double;  // degrés, 0 = lumière venant de la droite, sens trigonométrique
+    ReliefIntensity: Double;
+    ReliefHeight: Double;
   end;
 
   TColorMapper = class
   private
     FLut: array[0..kLutSize - 1] of Cardinal;
     FMapping: TColorMapping;
+    FLightX: Double;  // vecteur vers la lumière, précalculé au Create
+    FLightY: Double;
+    FLightZ: Double;
+    function BandColor(T: Double): Cardinal;
+    function NeighbourPosition(Mu: Single; Fallback: Double): Double;
   public
     constructor Create(APalette: TGradientPalette; const AMapping: TColorMapping);
+    function PalettePosition(Mu: Single): Double;
     function MapValue(Mu: Single): Cardinal;
+    function ShadeValue(Mu, Left, Right, Up, Down: Single): Cardinal;
     procedure MapRow(Src: PSingle; Dest: PCardinal; Count: Integer);
   end;
 
@@ -84,6 +120,10 @@ implementation
 const
   kDefaultRepeats = 25.0;
   kBuiltInCount = 5;
+  kContourDarkness = 0.35;  // facteur de luminosité appliqué sur le contour
+  kLightElevationDegrees = 45.0;  // hauteur de la lumière au-dessus du plan de l'image
+  kDegreesToRadians = Pi / 180;
+  kMaxChannel = 255;
 
 {------------------------------------------------------------------------------}
 
@@ -332,12 +372,32 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function ScaleColor(C: Cardinal; F: Double): Cardinal;
+var
+  R, G, B: Integer;
+begin
+  if F = 1 then
+    Exit(C);
+  R := Min(kMaxChannel, Round(((C shr 16) and $FF) * F));
+  G := Min(kMaxChannel, Round(((C shr 8) and $FF) * F));
+  B := Min(kMaxChannel, Round((C and $FF) * F));
+  Result := (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(B);
+end;
+
+{------------------------------------------------------------------------------}
+
 constructor TColorMapper.Create(APalette: TGradientPalette; const AMapping: TColorMapping);
 var
   I: Integer;
+  Azimuth, Elevation: Double;
 begin
   inherited Create;
   FMapping := ClampColorMapping(AMapping);
+  Azimuth := FMapping.LightAngle * kDegreesToRadians;
+  Elevation := kLightElevationDegrees * kDegreesToRadians;
+  FLightX := Cos(Azimuth) * Cos(Elevation);
+  FLightY := -Sin(Azimuth) * Cos(Elevation);  // l'axe vertical de l'image descend
+  FLightZ := Sin(Elevation);
   for I := 0 to kLutSize - 1 do
     FLut[I] := APalette.ColorAt(I / kLutSize);
 end;
@@ -358,8 +418,69 @@ begin
   T := Frac(FMapping.Offset + FMapping.Repeats * U);
   if FMapping.IsInverted then
     T := 1 - T;
+  if FMapping.Mode = cmBands then
+    Exit(BandColor(T));
   I := EnsureRange(Trunc(T * kLutSize), 0, kLutSize - 1);
   Result := FLut[I];
+end;
+
+{------------------------------------------------------------------------------}
+
+function TColorMapper.BandColor(T: Double): Cardinal;
+var
+  Scaled, Rel, Factor: Double;
+  BandIndex, I: Integer;
+begin
+  Scaled := T / FMapping.BandWidth;
+  BandIndex := Floor(Scaled);
+  Rel := Scaled - BandIndex;  // position dans la bande, de 0 (début) à 1 (bord)
+  I := EnsureRange(Trunc(BandIndex * FMapping.BandWidth * kLutSize), 0, kLutSize - 1);
+  Factor := 1 - FMapping.Shading * (1 - Rel);
+  if FMapping.HasContours and (Rel >= 1 - FMapping.ContourWidth) then
+    Factor := Factor * kContourDarkness;
+  Result := ScaleColor(FLut[I], Factor);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TColorMapper.PalettePosition(Mu: Single): Double;
+var
+  U: Double;
+begin
+  if IsNan(Mu) or IsInfinite(Mu) or (Mu < 0) then
+    Exit(NaN);
+  U := Mu / kRefIter;
+  if FMapping.Stretch <> 1 then
+    U := Power(U, FMapping.Stretch);
+  Result := FMapping.Offset + FMapping.Repeats * U;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TColorMapper.NeighbourPosition(Mu: Single; Fallback: Double): Double;
+begin
+  Result := PalettePosition(Mu);
+  if IsNan(Result) then
+    Result := Fallback;  // voisin absent : le pixel lui-même, pour une pente d'un seul côté
+end;
+
+{------------------------------------------------------------------------------}
+
+function TColorMapper.ShadeValue(Mu, Left, Right, Up, Down: Single): Cardinal;
+var
+  Z, SlopeX, SlopeY, Lit: Double;
+begin
+  Result := MapValue(Mu);
+  if not FMapping.HasRelief then
+    Exit;
+  Z := PalettePosition(Mu);
+  if IsNan(Z) then
+    Exit(kInsideColor);
+  SlopeX := FMapping.ReliefHeight * (NeighbourPosition(Right, Z) - NeighbourPosition(Left, Z)) / 2;
+  SlopeY := FMapping.ReliefHeight * (NeighbourPosition(Down, Z) - NeighbourPosition(Up, Z)) / 2;
+  // normale (-SlopeX, -SlopeY, 1) normalisée, produit scalaire avec la lumière, rapporté à celui du plan plat
+  Lit := (FLightZ - SlopeX * FLightX - SlopeY * FLightY) / Sqrt(SlopeX * SlopeX + SlopeY * SlopeY + 1) / FLightZ;
+  Result := ScaleColor(Result, Max(0.0, 1 + FMapping.ReliefIntensity * (Lit - 1)));
 end;
 
 {------------------------------------------------------------------------------}
@@ -384,6 +505,24 @@ begin
   Result.Repeats := kDefaultRepeats;
   Result.Stretch := 1;
   Result.IsInverted := False;
+  Result.Mode := cmSmooth;
+  Result.BandWidth := kDefaultBandWidth;
+  Result.Shading := kDefaultShading;
+  Result.HasContours := False;
+  Result.ContourWidth := kDefaultContourWidth;
+  Result.HasRelief := False;
+  Result.LightAngle := kDefaultLightAngle;
+  Result.ReliefIntensity := kDefaultReliefIntensity;
+  Result.ReliefHeight := kDefaultReliefHeight;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ClampOrDefault(Value, Default, Lowest, Highest: Double): Double;
+begin
+  if IsNan(Value) then
+    Exit(Default);
+  Result := EnsureRange(Value, Lowest, Highest);
 end;
 
 {------------------------------------------------------------------------------}
@@ -400,6 +539,17 @@ begin
   if IsNan(Result.Stretch) then
     Result.Stretch := 1;
   Result.Stretch := EnsureRange(Result.Stretch, kMinStretch, kMaxStretch);
+  Result.BandWidth := ClampOrDefault(Result.BandWidth, kDefaultBandWidth, kMinBandWidth, kMaxBandWidth);
+  Result.Shading := ClampOrDefault(Result.Shading, kDefaultShading, kMinShading, kMaxShading);
+  Result.ContourWidth := ClampOrDefault(Result.ContourWidth, kDefaultContourWidth, kMinContourWidth,
+    kMaxContourWidth);
+  if IsNan(Result.LightAngle) or IsInfinite(Result.LightAngle) then
+    Result.LightAngle := kDefaultLightAngle;
+  Result.LightAngle := Result.LightAngle - kFullTurnDegrees * Floor(Result.LightAngle / kFullTurnDegrees);
+  Result.ReliefIntensity := ClampOrDefault(Result.ReliefIntensity, kDefaultReliefIntensity, kMinReliefIntensity,
+    kMaxReliefIntensity);
+  Result.ReliefHeight := ClampOrDefault(Result.ReliefHeight, kDefaultReliefHeight, kMinReliefHeight,
+    kMaxReliefHeight);
 end;
 
 {------------------------------------------------------------------------------}
