@@ -83,6 +83,18 @@ const
   kSectionParams = 'Params';
   kSectionColors = 'Colors';
   kSectionPalette = 'Palette';
+  // clés d'effets de [Colors] : écrites seulement si elles diffèrent du défaut
+  kKeyMode = 'Mode';
+  kKeyBandWidth = 'BandWidth';
+  kKeyShading = 'Shading';
+  kKeyContours = 'Contours';
+  kKeyContourWidth = 'ContourWidth';
+  kKeyRelief = 'Relief';
+  kKeyLightAngle = 'LightAngle';
+  kKeyReliefIntensity = 'ReliefIntensity';
+  kKeyReliefHeight = 'ReliefHeight';
+  kModeSmooth = 'Smooth';
+  kModeBands = 'Bands';
   kDefaultFormula = 'Mandelbrot';
   kFormatVersion = 1;
   kMinLocationWidth: Double = 1e-300;
@@ -262,6 +274,66 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure AddDoubleIfChanged(L: TStrings; const AKey: string; AValue, ADefault: Double);
+begin
+  if AValue <> ADefault then
+    L.Add(AKey + '=' + FloatToInvariant(AValue));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure AddBoolIfChanged(L: TStrings; const AKey: string; AValue, ADefault: Boolean);
+begin
+  if AValue <> ADefault then
+    L.Add(AKey + '=' + BoolTo01(AValue));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Sans effets, la section [Colors] reste identique à celle d'avant
+procedure AddEffectLines(L: TStrings; const AMapping: TColorMapping);
+var
+  D: TColorMapping;
+begin
+  D := DefaultColorMapping;
+  if AMapping.Mode <> D.Mode then
+    L.Add(kKeyMode + '=' + kModeBands);
+  AddDoubleIfChanged(L, kKeyBandWidth, AMapping.BandWidth, D.BandWidth);
+  AddDoubleIfChanged(L, kKeyShading, AMapping.Shading, D.Shading);
+  AddBoolIfChanged(L, kKeyContours, AMapping.HasContours, D.HasContours);
+  AddDoubleIfChanged(L, kKeyContourWidth, AMapping.ContourWidth, D.ContourWidth);
+  AddBoolIfChanged(L, kKeyRelief, AMapping.HasRelief, D.HasRelief);
+  AddDoubleIfChanged(L, kKeyLightAngle, AMapping.LightAngle, D.LightAngle);
+  AddDoubleIfChanged(L, kKeyReliefIntensity, AMapping.ReliefIntensity, D.ReliefIntensity);
+  AddDoubleIfChanged(L, kKeyReliefHeight, AMapping.ReliefHeight, D.ReliefHeight);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Lit les clés d'effets ; absente ou invalide : la valeur déjà dans AMapping (le défaut) est conservée
+procedure ReadEffects(Ini: TMemIniFile; var AMapping: TColorMapping);
+var
+  ModeText, Section: string;
+begin
+  Section := kSectionColors;
+  ModeText := Trim(Ini.ReadString(Section, kKeyMode, kModeSmooth));
+  if SameText(ModeText, kModeBands) then
+    AMapping.Mode := cmBands
+  else
+    AMapping.Mode := cmSmooth;
+  AMapping.BandWidth := InvariantToDouble(Ini.ReadString(Section, kKeyBandWidth, ''), AMapping.BandWidth);
+  AMapping.Shading := InvariantToDouble(Ini.ReadString(Section, kKeyShading, ''), AMapping.Shading);
+  AMapping.HasContours := Ini.ReadBool(Section, kKeyContours, AMapping.HasContours);
+  AMapping.ContourWidth := InvariantToDouble(Ini.ReadString(Section, kKeyContourWidth, ''), AMapping.ContourWidth);
+  AMapping.HasRelief := Ini.ReadBool(Section, kKeyRelief, AMapping.HasRelief);
+  AMapping.LightAngle := InvariantToDouble(Ini.ReadString(Section, kKeyLightAngle, ''), AMapping.LightAngle);
+  AMapping.ReliefIntensity :=
+    InvariantToDouble(Ini.ReadString(Section, kKeyReliefIntensity, ''), AMapping.ReliefIntensity);
+  AMapping.ReliefHeight := InvariantToDouble(Ini.ReadString(Section, kKeyReliefHeight, ''), AMapping.ReliefHeight);
+end;
+
+{------------------------------------------------------------------------------}
+
 function TFractalLocation.SaveToText: string;
 var
   L, PaletteLines: TStringList;
@@ -286,6 +358,7 @@ begin
     L.Add('Repeats=' + FloatToInvariant(FMapping.Repeats));
     L.Add('Stretch=' + FloatToInvariant(FMapping.Stretch));
     L.Add('Invert=' + BoolTo01(FMapping.IsInverted));
+    AddEffectLines(L, FMapping);
     L.Add('');
     L.Add('[' + kSectionPalette + ']');
     FPalette.SaveToStrings(PaletteLines);
@@ -354,6 +427,7 @@ begin
     FMapping.Repeats := InvariantToDouble(Ini.ReadString(kSectionColors, 'Repeats', ''), FMapping.Repeats);
     FMapping.Stretch := InvariantToDouble(Ini.ReadString(kSectionColors, 'Stretch', ''), FMapping.Stretch);
     FMapping.IsInverted := Ini.ReadBool(kSectionColors, 'Invert', False);
+    ReadEffects(Ini, FMapping);
     FMapping := ClampColorMapping(FMapping);
 
     Lines.Clear;

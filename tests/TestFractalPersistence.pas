@@ -38,6 +38,10 @@ type
     procedure TestSuggestedNameDirections;
     procedure TestSuggestedNameZoomLabel;
     procedure TestUniqueBaseName;
+    procedure TestEffectsRoundTrip;
+    procedure TestNoEffectsColorsSectionUnchanged;
+    procedure TestOldFileGivesDefaultEffects;
+    procedure TestInvalidEffectsUseDefaults;
   end;
 
 implementation
@@ -52,6 +56,8 @@ const
   kDeepCenterY = '0.13182590420531197049313205638513901234567890123456789012345678901234567891';
   kOldFileCenterX = '-0.743643887037158704';
   kWhenSuffix = '_20261016-0912';  // date de NameAt
+  // section [Colors] d'un lieu sans effets, telle qu'écrite par master (référence figée)
+  kFrozenColorsSection = '[Colors]'#13#10'Offset=0.299999999999999989'#13#10'Repeats=40'#13#10'Stretch=0.800000000000000044'#13#10'Invert=1'#13#10;
 
 {------------------------------------------------------------------------------}
 
@@ -568,6 +574,165 @@ begin
   Touch(Folder + 'Vue_2.png');
   CheckEquals('Vue_3', UniqueBaseName(Folder, 'Vue', '.png'));
 end;
+
+function ColorsSectionOf(const AText: string): string;   // de [Colors] (inclus) jusqu'à la ligne vide
+var
+  Start, Stop: Integer;
+begin
+  Start := Pos('[Colors]', AText);
+  Result := '';
+  if Start > 0 then
+  begin
+    Stop := Start;
+    while (Stop < Length(AText)) and not ((AText[Stop] = #10) and (AText[Stop + 1] in [#13, #10])) do
+      Inc(Stop);
+    Result := Copy(AText, Start, Stop - Start + 1);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function LocationWithMapping(const AMapping: TColorMapping): TFractalLocation;
+var
+  F: TMultibrotFormula;
+  P: TGradientPalette;
+begin
+  F := TMultibrotFormula.Create;
+  P := CreateBuiltInPalette(1);
+  try
+    Result := TFractalLocation.Create;
+    Result.CaptureFrom(F, MakeViewport(kSampleX, kSampleY, 1.5e-10, 800, 600), False, P, AMapping);
+  finally
+    P.Free;
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestEffectsRoundTrip;
+var
+  A, B, C: TFractalLocation;
+  M: TColorMapping;
+  FileName: string;
+begin
+  M := DefaultColorMapping;
+  M.Mode := cmBands;
+  M.BandWidth := 0.2;
+  M.Shading := 0.7;
+  M.HasContours := True;
+  M.ContourWidth := 0.15;
+  M.HasRelief := True;
+  M.LightAngle := 135;
+  M.ReliefIntensity := 0.6;
+  M.ReliefHeight := 3.5;
+  M := ClampColorMapping(M);
+  A := LocationWithMapping(M);
+  B := TFractalLocation.Create;
+  C := TFractalLocation.Create;
+  try
+    // texte (PNG)
+    B.LoadFromText(A.SaveToText);
+    CheckTrue(B.Mapping.Mode = cmBands);
+    CheckEquals(M.BandWidth, B.Mapping.BandWidth, 1e-9);
+    CheckEquals(M.Shading, B.Mapping.Shading, 1e-9);
+    CheckTrue(B.Mapping.HasContours);
+    CheckEquals(M.ContourWidth, B.Mapping.ContourWidth, 1e-9);
+    CheckTrue(B.Mapping.HasRelief);
+    CheckEquals(M.LightAngle, B.Mapping.LightAngle, 1e-9);
+    CheckEquals(M.ReliefIntensity, B.Mapping.ReliefIntensity, 1e-9);
+    CheckEquals(M.ReliefHeight, B.Mapping.ReliefHeight, 1e-9);
+    // fichier .frac
+    FileName := IncludeTrailingPathDelimiter(GetEnvironmentVariable('TEMP')) + 'effects_roundtrip.frac';
+    A.SaveToFile(FileName);
+    try
+      C.LoadFromFile(FileName);
+    finally
+      DeleteFile(FileName);
+    end;
+    CheckTrue(C.Mapping.Mode = cmBands);
+    CheckEquals(M.BandWidth, C.Mapping.BandWidth, 1e-9);
+    CheckEquals(M.Shading, C.Mapping.Shading, 1e-9);
+    CheckTrue(C.Mapping.HasContours);
+    CheckEquals(M.ContourWidth, C.Mapping.ContourWidth, 1e-9);
+    CheckTrue(C.Mapping.HasRelief);
+    CheckEquals(M.LightAngle, C.Mapping.LightAngle, 1e-9);
+    CheckEquals(M.ReliefIntensity, C.Mapping.ReliefIntensity, 1e-9);
+    CheckEquals(M.ReliefHeight, C.Mapping.ReliefHeight, 1e-9);
+  finally
+    C.Free;
+    B.Free;
+    A.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestNoEffectsColorsSectionUnchanged;
+var
+  A: TFractalLocation;
+begin
+  A := SampleLocation;
+  try
+    CheckEquals(kFrozenColorsSection, ColorsSectionOf(A.SaveToText));
+  finally
+    A.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestOldFileGivesDefaultEffects;
+var
+  L: TFractalLocation;
+  D: TColorMapping;
+begin
+  D := DefaultColorMapping;
+  L := TFractalLocation.Create;
+  try
+    L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'[Colors]'#13#10'Offset=0.25'#13#10);
+    CheckTrue(L.Mapping.Mode = cmSmooth);
+    CheckEquals(D.BandWidth, L.Mapping.BandWidth, 0);
+    CheckEquals(D.Shading, L.Mapping.Shading, 0);
+    CheckFalse(L.Mapping.HasContours);
+    CheckEquals(D.ContourWidth, L.Mapping.ContourWidth, 0);
+    CheckFalse(L.Mapping.HasRelief);
+    CheckEquals(D.LightAngle, L.Mapping.LightAngle, 0);
+    CheckEquals(D.ReliefIntensity, L.Mapping.ReliefIntensity, 0);
+    CheckEquals(D.ReliefHeight, L.Mapping.ReliefHeight, 0);
+  finally
+    L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPersistence.TestInvalidEffectsUseDefaults;
+var
+  L: TFractalLocation;
+  D: TColorMapping;
+begin
+  D := DefaultColorMapping;
+  L := TFractalLocation.Create;
+  try
+    L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'[Colors]'#13#10'Mode=Zigzag'#13#10'BandWidth=abc'#13#10
+      + 'Shading=1e999'#13#10'Contours=oui'#13#10'ContourWidth='#13#10'Relief=x'#13#10'LightAngle=??'#13#10
+      + 'ReliefIntensity=nan'#13#10'ReliefHeight=--'#13#10);
+    CheckTrue(L.Mapping.Mode = cmSmooth);
+    CheckEquals(D.BandWidth, L.Mapping.BandWidth, 0);
+    CheckEquals(D.Shading, L.Mapping.Shading, 0);
+    CheckFalse(L.Mapping.HasContours);
+    CheckEquals(D.ContourWidth, L.Mapping.ContourWidth, 0);
+    CheckFalse(L.Mapping.HasRelief);
+    CheckEquals(D.LightAngle, L.Mapping.LightAngle, 0);
+    CheckEquals(D.ReliefIntensity, L.Mapping.ReliefIntensity, 0);
+    CheckEquals(D.ReliefHeight, L.Mapping.ReliefHeight, 0);
+  finally
+    L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 initialization
   RegisterTest(TTestPersistence.Suite);
