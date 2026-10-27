@@ -47,6 +47,7 @@
 			<DCCReference Include="src\Fractal.Persistence.pas"/>
 			<DCCReference Include="src\Fractal.Navigation.pas"/>
 			<DCCReference Include="src\Fractal.HiRes.pas"/>
+			<DCCReference Include="src\Fractal.Settings.pas"/>
 			<DCCReference Include="src\Fractal.View.pas"/>
 			<DCCReference Include="src\MainFrm.pas">
 				<Form>MainForm</Form>
