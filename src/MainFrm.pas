@@ -7,7 +7,7 @@ uses
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.HighFloat, Fractal.Formulas, Fractal.Engine, Fractal.Palette,
   Fractal.Navigation,
   {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
-  Fractal.Persistence, Fractal.Png, Fractal.View, Fractal.RustKernel, ImgList, Menus, ToolWin,
+  Fractal.Persistence, Fractal.Png, Fractal.View, Fractal.RustKernel, Fractal.Settings, ImgList, Menus, ToolWin,
   HelpFrm, ActnList;
 
 const
@@ -101,6 +101,7 @@ type
     CategoryPanelFormulas: TCategoryPanel;
     Label1: TLabel;
     Fin1: TMenuItem;
+    MenuReinitialiserTout: TMenuItem;
     N1: TMenuItem;
     btnHome: TBitBtn;
     btnResetFormula: TBitBtn;
@@ -158,6 +159,7 @@ type
     procedure MenuAideEffetsClick(Sender: TObject);
     procedure Fin1Click(Sender: TObject);
     procedure Action_RustEngineExecute(Sender: TObject);
+    procedure ResetAllClick(Sender: TObject);
   private
     FView: TFractalView;
     FEngine: TRenderEngine;
@@ -186,6 +188,8 @@ type
     FHiResForm: TForm;  // THiResForm, déclaré dans l'implémentation pour éviter une dépendance d'interface
     FSmokeLog: TStringList;
     FHasSmokeFailure: Boolean;
+    FSettings: TAppSettings;
+    FIsSessionEnabled: Boolean;  // vrai après RestoreSession : le test de fumée ne lit ni n'écrit la session
     procedure InitNavigation;
     procedure AppMessage(var Msg: TMsg; var Handled: Boolean);
     procedure ViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -250,9 +254,17 @@ type
 
     procedure CheckSmokeStep(const StepName: string);
     procedure CheckEffectsSmoke;
+    procedure CheckResetAllSmoke;
     procedure SmokeException(Sender: TObject; E: Exception);
+
+    procedure SelectKernel(Kernel: TEngineKernelType);
+    procedure ApplyNavMode;
+    procedure ResetAll;
+    procedure SaveSession;
+    function FolderOrDefault(const Folder: string): string;
   public
     function RunSmokeTest(const OutputFile: string): Integer;
+    procedure RestoreSession;
   end;
 
 var
@@ -318,6 +330,7 @@ begin
   FPalette := CreateBuiltInPalette(0);
   FMapping := DefaultColorMapping;
   RebuildMapper;
+  FSettings := DefaultAppSettings;
 
   FAppEvents := TApplicationEvents.Create(Self);
   FAppEvents.OnMessage := AppMessage;
@@ -555,9 +568,17 @@ end;
 
 procedure TMainForm.NavModeChange(Sender: TObject);
 begin
+  ApplyNavMode;
+  FView.SetFocus;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Sans SetFocus : aussi appelé au démarrage, avant que la fenêtre soit visible
+procedure TMainForm.ApplyNavMode;
+begin
   FNavigator.SetMode(kNavigationModes[cbNavMode.ItemIndex]);
   FView.IsJuliaVisible := FNavigator.Mode is TJuliaNavigationMode;
-  FView.SetFocus;
 end;
 
 {------------------------------------------------------------------------------}
@@ -867,6 +888,32 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Réinitialiser tout : après des changements de formule, de couleurs, d'effets et de mode, l'écran revient à celui
+// du démarrage.
+procedure TMainForm.CheckResetAllSmoke;
+var
+  Default: TColorMapping;
+begin
+  SetFormula(TMultibrotFormula.Create, True);
+  FMapping.Repeats := FMapping.Repeats + 1;
+  FMapping.HasRelief := True;
+  ColorsChanged;
+  cbNavMode.ItemIndex := High(kNavigationModes);
+  ApplyNavMode;
+  ResetAll;
+  if not WaitForRender(kSmokeTimeoutMs) then
+    raise Exception.Create('rendu après réinitialisation non terminé');
+  CheckSmokeStep('réinitialisation');
+  Default := DefaultColorMapping;
+  if not (FFormula is TMandelbrotFormula) or FMapping.HasRelief or (FMapping.Repeats <> Default.Repeats)
+    or (cbPalette.ItemIndex <> 0) or (cbNavMode.ItemIndex <> 0) or FView.IsJuliaVisible
+    or not Action_DelphiEngine.Checked or FNavigator.CanGoBack then
+    raise Exception.Create('réinitialisation incomplète');
+  FSmokeLog.Add('Réinitialisation OK');
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.SmokeException(Sender: TObject; E: Exception);
 begin
   FSmokeLog.Add('ÉCHEC : exception non gérée : ' + E.Message);
@@ -1086,6 +1133,7 @@ begin
       if not FileExists(HiResFile) then
         raise Exception.Create('fichier du rendu HD absent');
       FSmokeLog.Add('Rendu HD OK');
+      CheckResetAllSmoke;
       if not FHasSmokeFailure then
         Result := 0;
     except
@@ -1692,8 +1740,10 @@ begin
   try
     Dlg.Filter := 'Lieux et images (*.frac;*.png)|*.frac;*.png|' + kFracFilter + '|' + kPngFilter;
     Dlg.Options := Dlg.Options + [ofFileMustExist];
+    Dlg.InitialDir := FolderOrDefault(FSettings.LocationFolder);
     if not Dlg.Execute then
       Exit;
+    FSettings.LocationFolder := ExtractFilePath(Dlg.FileName);
     try
       if SameText(ExtractFileExt(Dlg.FileName), '.png') then
       begin
@@ -1732,8 +1782,10 @@ begin
     Dlg.DefaultExt := 'frac';
     Dlg.Options := Dlg.Options + [ofOverwritePrompt];
     Dlg.FileName := CurrentSuggestedName;
+    Dlg.InitialDir := FolderOrDefault(FSettings.LocationFolder);
     if not Dlg.Execute then
       Exit;
+    FSettings.LocationFolder := ExtractFilePath(Dlg.FileName);
     try
       Location.SaveToFile(Dlg.FileName);
     except
@@ -1758,8 +1810,10 @@ begin
     Dlg.DefaultExt := 'png';
     Dlg.Options := Dlg.Options + [ofOverwritePrompt];
     Dlg.FileName := CurrentSuggestedName;
+    Dlg.InitialDir := FolderOrDefault(FSettings.ImageFolder);
     if not Dlg.Execute then
       Exit;
+    FSettings.ImageFolder := ExtractFilePath(Dlg.FileName);
     try
       ExportViewPng(Dlg.FileName);
     except
@@ -1846,7 +1900,20 @@ begin
   if not (Sender is TAction) then
     raise Exception.Create(Sender.ClassName + ' : n''est pas une TAction');
 
-  FEngine.Kernel := TByteToEngineKernel[TAction(Sender).Tag];
+  SelectKernel(TByteToEngineKernel[TAction(Sender).Tag]);
+  FView.SetFocus;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Sans SetFocus : aussi appelé au démarrage, avant que la fenêtre soit visible. Le menu suit le moteur choisi.
+procedure TMainForm.SelectKernel(Kernel: TEngineKernelType);
+begin
+  if Kernel = ekRust then
+    Action_RustEngine.Checked := True
+  else
+    Action_DelphiEngine.Checked := True;
+  FEngine.Kernel := Kernel;
 
   FJuliaEngine.Kernel := FEngine.Kernel;
   UpdateKernelEpsilon;
@@ -1855,7 +1922,95 @@ begin
   RenderCurrent;
   if FView.IsJuliaVisible then
     RenderJuliaPreview;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.RestoreSession;
+var
+  Location: TFractalLocation;
+begin
+  FIsSessionEnabled := True;
+  FSettings := LoadAppSettings(SettingsFilePath, Length(kNavigationModes));
+  if FSettings.IsRustEngine and IsRustKernelAvailable then
+    SelectKernel(ekRust);
+  Location := TFractalLocation.Create;
+  try
+    if TryLoadSession(SessionFilePath, Location) then
+      try
+        ApplyLocation(Location);
+      except
+        on E: Exception do
+          FStatusMessage := 'Dernière séance non reprise : ' + E.Message;
+      end;
+  finally
+    Location.Free;
+  end;
+  cbNavMode.ItemIndex := FSettings.NavModeIndex;
+  ApplyNavMode;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.SaveSession;
+var
+  Location: TFractalLocation;
+begin
+  if not FIsSessionEnabled then
+    Exit;
+  Location := CaptureLocation;
+  try
+    TrySaveSession(SessionFilePath, Location);
+  finally
+    Location.Free;
+  end;
+  // sans DLL Rust, le choix enregistré est gardé pour une prochaine séance où elle sera présente
+  if IsRustKernelAvailable then
+    FSettings.IsRustEngine := Action_RustEngine.Checked;
+  FSettings.NavModeIndex := cbNavMode.ItemIndex;
+  if FHiResForm <> nil then
+    THiResForm(FHiResForm).CaptureSettings(FSettings);
+  SaveAppSettings(SettingsFilePath, FSettings);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ResetAllClick(Sender: TObject);
+begin
+  if MessageDlg('Tout remettre comme au démarrage du programme ? Le lieu en cours sera perdu s''il n''est pas '
+    + 'dans les favoris.', mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+  ResetAll;
   FView.SetFocus;
+end;
+
+{------------------------------------------------------------------------------}
+
+// L'écran du démarrage : formule, vue, couleurs, effets, mode et moteur par défaut, historique vidé. Favoris,
+// palettes, dossiers et réglages HD sont gardés.
+procedure TMainForm.ResetAll;
+begin
+  SelectKernel(ekDelphi);
+  cbNavMode.ItemIndex := 0;
+  ApplyNavMode;
+  cbPalette.ItemIndex := 0;
+  FPalette.Assign(TGradientPalette(FPalettes[0]));
+  FMapping := DefaultColorMapping;
+  UpdateColorControls;
+  ColorsChanged;
+  FIsAutoIter := True;
+  SetFormula(TMandelbrotFormula.Create, True);  // Reset du navigateur : vue de départ, historique vidé
+end;
+
+{------------------------------------------------------------------------------}
+
+// Dossier mémorisé s'il existe encore ; sinon vide, et Windows choisit
+function TMainForm.FolderOrDefault(const Folder: string): string;
+begin
+  if (Folder <> '') and DirectoryExists(Folder) then
+    Result := Folder
+  else
+    Result := '';
 end;
 
 {------------------------------------------------------------------------------}
@@ -1999,6 +2154,7 @@ begin
   begin
     FHiResForm := THiResForm.Create(Self);
     THiResForm(FHiResForm).OnRequestSnapshot := PrepareHiResForm;
+    THiResForm(FHiResForm).ApplySettings(FSettings);
   end;
   PrepareHiResForm(nil);
   THiResForm(FHiResForm).SuggestFileName;
@@ -2026,6 +2182,8 @@ procedure TMainForm.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
 begin
   if (FHiResForm <> nil) and THiResForm(FHiResForm).IsRunning then
     THiResForm(FHiResForm).FormCloseQuery(Self, CanClose);
+  if CanClose then
+    SaveSession;
 end;
 
 {------------------------------------------------------------------------------}

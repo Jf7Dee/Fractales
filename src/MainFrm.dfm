@@ -775,6 +775,10 @@ object MainForm: TMainForm
         Caption = '&Enregistrer...'
         OnClick = SaveClick
       end
+      object MenuReinitialiserTout: TMenuItem
+        Caption = '&R'#233'initialiser tout...'
+        OnClick = ResetAllClick
+      end
       object N1: TMenuItem
         Caption = '-'
       end

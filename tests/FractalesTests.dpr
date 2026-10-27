@@ -17,6 +17,7 @@ uses
   Fractal.Persistence in '..\src\Fractal.Persistence.pas',
   Fractal.Navigation in '..\src\Fractal.Navigation.pas',
   Fractal.HiRes in '..\src\Fractal.HiRes.pas',
+  Fractal.Settings in '..\src\Fractal.Settings.pas',
   TestFractalTypes in 'TestFractalTypes.pas',
   TestFractalHighFloat in 'TestFractalHighFloat.pas',
   TestFractalPerturbation in 'TestFractalPerturbation.pas',
@@ -29,7 +30,8 @@ uses
   TestFractalPersistence in 'TestFractalPersistence.pas',
   TestFractalNavigation in 'TestFractalNavigation.pas',
   TestFractalHiRes in 'TestFractalHiRes.pas',
-  TestFractalRustKernel in 'TestFractalRustKernel.pas';
+  TestFractalRustKernel in 'TestFractalRustKernel.pas',
+  TestFractalSettings in 'TestFractalSettings.pas';
 
 begin
   RunRegisteredTests(rxbHaltOnFailures);

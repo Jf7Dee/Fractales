@@ -18,6 +18,7 @@ uses
   Fractal.Persistence in 'src\Fractal.Persistence.pas',
   Fractal.Navigation in 'src\Fractal.Navigation.pas',
   Fractal.HiRes in 'src\Fractal.HiRes.pas',
+  Fractal.Settings in 'src\Fractal.Settings.pas',
   Fractal.View in 'src\Fractal.View.pas',
   MainFrm in 'src\MainFrm.pas' {MainForm},
   PaletteEditorFrm in 'src\PaletteEditorFrm.pas' {PaletteEditorForm},
@@ -33,5 +34,8 @@ begin
   if FindCmdLineSwitch('smoketest') then
     ExitCode := MainForm.RunSmokeTest(ParamStr(2))
   else
+  begin
+    MainForm.RestoreSession;
     Application.Run;
+  end;
 end.

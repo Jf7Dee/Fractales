@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls, ExtCtrls, ShlObj,
   {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
-  Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine, Fractal.HiRes;
+  Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine, Fractal.HiRes, Fractal.Settings;
 
 const
   kPresetCurrentView = 0;
@@ -61,6 +61,8 @@ type
     procedure Prepare(const V: TViewport; Formula: TFractalFormula; Palette: TGradientPalette;
       const Mapping: TColorMapping; const LocationText: RawByteString; Kernel: TEngineKernelType);
     procedure SuggestFileName;
+    procedure ApplySettings(const S: TAppSettings);
+    procedure CaptureSettings(var S: TAppSettings);
     procedure StartRender;
     function IsRunning: Boolean;
     property OnRequestSnapshot: TNotifyEvent read FOnRequestSnapshot write FOnRequestSnapshot;
@@ -156,6 +158,40 @@ begin
     Folder := PicturesFolder;
   edFile.Text := Folder + UniqueBaseName(Folder,
     SuggestedName(TFractalFormulaClass(FFormula.ClassType), FViewport, Now), kPngExtension) + kPngExtension;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Réglages de la dernière séance : format, taille personnalisée, suréchantillonnage et dossier
+procedure THiResForm.ApplySettings(const S: TAppSettings);
+begin
+  cbPreset.ItemIndex := S.HiResPreset;
+  if S.HiResPreset = kPresetCustom then
+  begin
+    edWidth.Text := IntToStr(S.HiResWidth);
+    edHeight.Text := IntToStr(S.HiResHeight);
+  end;
+  cbPresetChange(nil);
+  cbSupersample.ItemIndex := S.HiResSupersample - 1;
+  if (S.HiResFolder <> '') and DirectoryExists(S.HiResFolder) then
+    edFile.Text := IncludeTrailingPathDelimiter(S.HiResFolder) + kDefaultFileName;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure THiResForm.CaptureSettings(var S: TAppSettings);
+var
+  Width, Height: Integer;
+begin
+  S.HiResPreset := cbPreset.ItemIndex;
+  if (cbPreset.ItemIndex = kPresetCustom) and TryStrToInt(edWidth.Text, Width)
+    and TryStrToInt(edHeight.Text, Height) then
+  begin
+    S.HiResWidth := Width;
+    S.HiResHeight := Height;
+  end;
+  S.HiResSupersample := cbSupersample.ItemIndex + 1;
+  S.HiResFolder := ExtractFilePath(Trim(edFile.Text));
 end;
 
 {------------------------------------------------------------------------------}
