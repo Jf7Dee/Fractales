@@ -48,6 +48,8 @@ type
     procedure TestMapBufferRowWithoutReliefMatchesMapRow;
     procedure TestReliefUsesBlockLevel;
     procedure TestCopyEffects;
+    procedure TestWithDefaultColorsKeepsEffects;
+    procedure TestWithDefaultEffectsKeepsColors;
   end;
 
 implementation
@@ -1027,6 +1029,62 @@ begin
   CheckEquals(0, Dest.Offset, 1e-12);
   CheckEquals(7, Dest.Repeats, 1e-12);
   CheckTrue(Dest.IsInverted);
+end;
+
+{------------------------------------------------------------------------------}
+
+function CustomizedMapping: TColorMapping;
+begin
+  Result := DefaultColorMapping;
+  Result.Offset := 0.3;
+  Result.Repeats := 7;
+  Result.Stretch := 2;
+  Result.IsInverted := True;
+  Result.Mode := cmBands;
+  Result.Shading := 0.9;
+  Result.HasContours := True;
+  Result.HasRelief := True;
+  Result.ReliefHeight := 33;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestWithDefaultColorsKeepsEffects;
+var
+  M, Default: TColorMapping;
+begin
+  M := WithDefaultColors(CustomizedMapping);
+  Default := DefaultColorMapping;
+  CheckEquals(Default.Offset, M.Offset, 1e-12);
+  CheckEquals(Default.Repeats, M.Repeats, 1e-12);
+  CheckEquals(Default.Stretch, M.Stretch, 1e-12);
+  CheckFalse(M.IsInverted);
+  // les effets ne bougent pas
+  CheckTrue(M.Mode = cmBands);
+  CheckEquals(0.9, M.Shading, 1e-12);
+  CheckTrue(M.HasContours);
+  CheckTrue(M.HasRelief);
+  CheckEquals(33, M.ReliefHeight, 1e-12);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestPalette.TestWithDefaultEffectsKeepsColors;
+var
+  M, Default: TColorMapping;
+begin
+  M := WithDefaultEffects(CustomizedMapping);
+  Default := DefaultColorMapping;
+  CheckTrue(M.Mode = cmSmooth);
+  CheckEquals(Default.Shading, M.Shading, 1e-12);
+  CheckFalse(M.HasContours);
+  CheckFalse(M.HasRelief);
+  CheckEquals(Default.ReliefHeight, M.ReliefHeight, 1e-12);
+  // les couleurs ne bougent pas
+  CheckEquals(0.3, M.Offset, 1e-12);
+  CheckEquals(7, M.Repeats, 1e-12);
+  CheckEquals(2, M.Stretch, 1e-12);
+  CheckTrue(M.IsInverted);
 end;
 
 initialization

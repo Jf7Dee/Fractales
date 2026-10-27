@@ -61,7 +61,7 @@ const
     (Action: 'Colorer par bandes'; Command: 'Effets : mode Bandes (Largeur, Modelé)'),
     (Action: 'Souligner le bord des bandes'; Command: 'Effets : Contours (Épaisseur)'),
     (Action: 'Donner du relief'; Command: 'Effets : Relief (Lumière, Intensité, Hauteur)'),
-    (Action: 'Revenir au rendu lisse'; Command: 'Effets : mode Lisse, ou bouton de remise à zéro des couleurs'));
+    (Action: 'Revenir au rendu lisse'; Command: 'Effets : mode Lisse, ou bouton de remise à zéro des effets'));
 
   kHelpNotes: array[THelpTopic] of string = (
     'Les touches de navigation sont ignorées quand le focus est dans un champ, une liste ou un curseur ' +

@@ -105,6 +105,7 @@ type
     btnHome: TBitBtn;
     btnResetFormula: TBitBtn;
     btnResetColors: TBitBtn;
+    btnResetEffects: TBitBtn;
     ToolBar1: TToolBar;
     ToolButton2: TToolButton;
     ImageList2: TImageList;
@@ -148,6 +149,7 @@ type
     procedure btnHomeClick(Sender: TObject);
     procedure btnResetFormulaClick(Sender: TObject);
     procedure btnResetColorsClick(Sender: TObject);
+    procedure btnResetEffectsClick(Sender: TObject);
     procedure btnDeleteFavoriteClick(Sender: TObject);
     procedure btnEditFavoriteNameClick(Sender: TObject);
     procedure MenuAideClavierClick(Sender: TObject);
@@ -604,12 +606,21 @@ end;
 
 procedure TMainForm.btnResetColorsClick(Sender: TObject);
 begin
-  FMapping := DefaultColorMapping;
+  FMapping := WithDefaultColors(FMapping);  // les effets ont leur propre bouton
   UpdateColorControls;  // repositionne les curseurs sous la garde FIsUpdating
   ColorsChanged;
   {pour le reset eventuel de la palette:
    cbPalette.ItemIndex := 0;
   P aletteComboChange(nil);}
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.btnResetEffectsClick(Sender: TObject);
+begin
+  FMapping := WithDefaultEffects(FMapping);
+  UpdateEffectControls;
+  ColorsChanged;
 end;
 
 {------------------------------------------------------------------------------}

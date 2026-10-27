@@ -121,6 +121,8 @@ function ClampColorMapping(const M: TColorMapping): TColorMapping;
 function MappingFromSliders(Offset, Repeats, Stretch: Integer; IsInverted: Boolean): TColorMapping;
 procedure MappingToSliders(const M: TColorMapping; out Offset, Repeats, Stretch: Integer);
 procedure CopyEffects(const Source: TColorMapping; var Dest: TColorMapping);
+function WithDefaultColors(const M: TColorMapping): TColorMapping;
+function WithDefaultEffects(const M: TColorMapping): TColorMapping;
 function BandWidthFromSlider(Position: Integer): Double;
 function BandWidthToSlider(Width: Double): Integer;
 function ShadingFromSlider(Position: Integer): Double;
@@ -695,6 +697,24 @@ begin
   Dest.LightAngle := Source.LightAngle;
   Dest.ReliefIntensity := Source.ReliefIntensity;
   Dest.ReliefHeight := Source.ReliefHeight;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Bouton de réinitialisation des couleurs : décalage, répétitions, étirement et inversion par défaut, effets gardés
+function WithDefaultColors(const M: TColorMapping): TColorMapping;
+begin
+  Result := DefaultColorMapping;
+  CopyEffects(M, Result);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Bouton de réinitialisation des effets : effets par défaut, couleurs gardées
+function WithDefaultEffects(const M: TColorMapping): TColorMapping;
+begin
+  Result := M;
+  CopyEffects(DefaultColorMapping, Result);
 end;
 
 {------------------------------------------------------------------------------}
