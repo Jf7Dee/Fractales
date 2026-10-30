@@ -12,3 +12,4 @@ __history/
 *.stat
 bench-rust/target/
 kernel-rust/target/
+publication/
