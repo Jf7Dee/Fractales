@@ -42,6 +42,8 @@ function TryParseManifest(const Text: string; out M: TUpdateManifest): Boolean;
 function SiblingUrl(const ManifestUrl, FileName: string): string;
 function DecideUpdate(Mode: TUpdateMode; const Installed, Available: TFileVersion): TUpdateDecision;
 function FileSha256(const FileName: string): string;
+function TryInstallFiles(const Folder: string; out ErrorText: string): Boolean;
+procedure DeleteNewFiles(const Folder: string);
 
 implementation
 
@@ -71,6 +73,8 @@ const
   kCryptVerifyContext = DWORD($F0000000);
   kCalgSha256 = $0000800C;
   kHashVal = 2;                        // HP_HASHVAL
+  kMaxRenames = 4;
+  kMissingNewFilesText = 'Fichiers téléchargés introuvables.';
 
 type
   TCryptHandle = NativeUInt;
@@ -369,6 +373,70 @@ begin
   Result := '';
   for I := 0 to kShaByteCount - 1 do
     Result := Result + kHexDigits[(Digest[I] shr 4) + 1] + kHexDigits[(Digest[I] and $F) + 1];
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure DeleteNewFiles(const Folder: string);
+begin
+  SysUtils.DeleteFile(Folder + kExeFileName + kNewSuffix);
+  SysUtils.DeleteFile(Folder + kRustKernelFileName + kNewSuffix);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TryInstallFiles(const Folder: string; out ErrorText: string): Boolean;
+var
+  Exe, Dll: string;
+  Done: array[0..kMaxRenames - 1] of record
+    Source, Target: string;
+  end;
+  DoneCount, I: Integer;
+
+  // Renomme sans écraser et note le renommage réussi ; en cas d'échec, capture le message système
+  function Rename(const Source, Target: string): Boolean;
+  begin
+    Result := MoveFile(PChar(Source), PChar(Target));
+    if Result then
+    begin
+      Done[DoneCount].Source := Source;
+      Done[DoneCount].Target := Target;
+      Inc(DoneCount);
+    end
+    else
+      ErrorText := SysErrorMessage(GetLastError);
+  end;
+
+  // Efface un ancien fichier s'il existe ; son absence n'est pas une erreur
+  function RemoveStale(const FileName: string): Boolean;
+  begin
+    Result := not FileExists(FileName) or SysUtils.DeleteFile(FileName);
+    if not Result then
+      ErrorText := SysErrorMessage(GetLastError);
+  end;
+
+begin
+  ErrorText := '';
+  DoneCount := 0;
+  Exe := Folder + kExeFileName;
+  Dll := Folder + kRustKernelFileName;
+  Result := False;
+  if not FileExists(Exe + kNewSuffix) or not FileExists(Dll + kNewSuffix) then
+  begin
+    ErrorText := kMissingNewFilesText;
+    Exit;
+  end;
+  Result := RemoveStale(Exe + kOldSuffix) and RemoveStale(Dll + kOldSuffix)
+    and Rename(Exe, Exe + kOldSuffix)
+    and (not FileExists(Dll) or Rename(Dll, Dll + kOldSuffix))
+    and Rename(Exe + kNewSuffix, Exe)
+    and Rename(Dll + kNewSuffix, Dll);
+  if Result then
+    Exit;
+  // Retour arrière : les renommages réussis sont défaits en ordre inverse (le message reste celui de l'échec)
+  for I := DoneCount - 1 downto 0 do
+    MoveFile(PChar(Done[I].Target), PChar(Done[I].Source));
+  DeleteNewFiles(Folder);
 end;
 
 end.

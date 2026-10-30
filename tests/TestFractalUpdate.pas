@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, Classes, SysUtils, TestFramework, Fractal.Update, TestUtils;
+  Windows, Classes, SysUtils, TestFramework, Fractal.Update, Fractal.RustKernel, TestUtils;
 
 type
   TTestUpdate = class(TTestCase)
@@ -12,6 +12,10 @@ type
     function ManifestText(const Mandatory, ExeHash, Eol: string): string;
     procedure WriteText(const FileName, Text: string);
     procedure WriteBytes(const FileName: string; const Bytes: AnsiString);
+    function FreshFolder(const Name: string): string;
+    function ReadAll(const FileName: string): string;
+    procedure RemoveFolder(const Folder: string);
+    procedure Stage(const Folder: string; WithDll, WithNew: Boolean);
   published
     procedure TestMissingConfigIsNone;
     procedure TestConfigModes;
@@ -26,6 +30,11 @@ type
     procedure TestSiblingUrl;
     procedure TestDecideUpdate;
     procedure TestSha256;
+    procedure TestInstallSwapsFiles;
+    procedure TestInstallWithoutExistingDll;
+    procedure TestInstallReplacesStaleOldFiles;
+    procedure TestInstallRollsBackOnFailure;
+    procedure TestInstallWithoutNewFiles;
   end;
 
 implementation
@@ -81,6 +90,66 @@ begin
       S.WriteBuffer(Bytes[1], Length(Bytes));
   finally
     S.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.RemoveFolder(const Folder: string);
+var
+  SR: TSearchRec;
+begin
+  if FindFirst(Folder + '*', faAnyFile, SR) = 0 then
+  try
+    repeat
+      if (SR.Attr and faDirectory) = 0 then
+        DeleteFile(Folder + SR.Name);
+    until FindNext(SR) <> 0;
+  finally
+    FindClose(SR);
+  end;
+  RemoveDir(Folder);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestUpdate.FreshFolder(const Name: string): string;
+begin
+  Result := TestTempFolder + Name + '\';
+  RemoveFolder(Result);
+  ForceDirectories(Result);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestUpdate.ReadAll(const FileName: string): string;
+var
+  S: TFileStream;
+  A: AnsiString;
+begin
+  S := TFileStream.Create(FileName, fmOpenRead or fmShareDenyNone);
+  try
+    SetLength(A, S.Size);
+    if S.Size > 0 then
+      S.ReadBuffer(A[1], S.Size);
+    Result := string(A);
+  finally
+    S.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Contenus distincts : exe/dll d'origine, puis exe.new/dll.new
+procedure TTestUpdate.Stage(const Folder: string; WithDll, WithNew: Boolean);
+begin
+  WriteBytes(Folder + kExeFileName, 'exe-ancien');
+  if WithDll then
+    WriteBytes(Folder + kRustKernelFileName, 'dll-ancienne');
+  if WithNew then
+  begin
+    WriteBytes(Folder + kExeFileName + kNewSuffix, 'exe-nouveau');
+    WriteBytes(Folder + kRustKernelFileName + kNewSuffix, 'dll-nouvelle');
   end;
 end;
 
@@ -264,6 +333,120 @@ begin
   WriteBytes(FileName, '');
   CheckEquals(kDllHash, FileSha256(FileName));
   DeleteFile(FileName);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestInstallSwapsFiles;
+var
+  F, Err: string;
+begin
+  F := FreshFolder('install-swap');
+  try
+    Stage(F, True, True);
+    CheckTrue(TryInstallFiles(F, Err), Err);
+    CheckEquals('exe-nouveau', ReadAll(F + kExeFileName));
+    CheckEquals('dll-nouvelle', ReadAll(F + kRustKernelFileName));
+    CheckEquals('exe-ancien', ReadAll(F + kExeFileName + kOldSuffix));
+    CheckEquals('dll-ancienne', ReadAll(F + kRustKernelFileName + kOldSuffix));
+    CheckFalse(FileExists(F + kExeFileName + kNewSuffix));
+    CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix));
+  finally
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestInstallWithoutExistingDll;
+var
+  F, Err: string;
+begin
+  F := FreshFolder('install-nodll');
+  try
+    Stage(F, False, True);
+    CheckTrue(TryInstallFiles(F, Err), Err);
+    CheckEquals('exe-nouveau', ReadAll(F + kExeFileName));
+    CheckEquals('dll-nouvelle', ReadAll(F + kRustKernelFileName));
+    CheckEquals('exe-ancien', ReadAll(F + kExeFileName + kOldSuffix));
+    CheckFalse(FileExists(F + kRustKernelFileName + kOldSuffix));
+    CheckFalse(FileExists(F + kExeFileName + kNewSuffix));
+    CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix));
+  finally
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestInstallReplacesStaleOldFiles;
+var
+  F, Err: string;
+begin
+  F := FreshFolder('install-stale');
+  try
+    Stage(F, True, True);
+    WriteBytes(F + kExeFileName + kOldSuffix, 'exe-perime');
+    WriteBytes(F + kRustKernelFileName + kOldSuffix, 'dll-perimee');
+    CheckTrue(TryInstallFiles(F, Err), Err);
+    CheckEquals('exe-ancien', ReadAll(F + kExeFileName + kOldSuffix));
+    CheckEquals('dll-ancienne', ReadAll(F + kRustKernelFileName + kOldSuffix));
+    CheckEquals('exe-nouveau', ReadAll(F + kExeFileName));
+    CheckEquals('dll-nouvelle', ReadAll(F + kRustKernelFileName));
+  finally
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestInstallRollsBackOnFailure;
+var
+  F, Err: string;
+  Locked: TFileStream;
+  Ok: Boolean;
+begin
+  F := FreshFolder('install-rollback');
+  try
+    Stage(F, True, True);
+    Locked := TFileStream.Create(F + kRustKernelFileName, fmOpenRead or fmShareExclusive);
+    try
+      Ok := TryInstallFiles(F, Err);
+    finally
+      Locked.Free;
+    end;
+    CheckFalse(Ok);
+    CheckTrue(Err <> '', 'message d''erreur');
+    CheckEquals('exe-ancien', ReadAll(F + kExeFileName));
+    CheckEquals('dll-ancienne', ReadAll(F + kRustKernelFileName));
+    CheckFalse(FileExists(F + kExeFileName + kNewSuffix));
+    CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix));
+    CheckFalse(FileExists(F + kExeFileName + kOldSuffix));
+    CheckFalse(FileExists(F + kRustKernelFileName + kOldSuffix));
+  finally
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestInstallWithoutNewFiles;
+var
+  F, Err: string;
+begin
+  F := FreshFolder('install-nonew');
+  try
+    Stage(F, True, False);
+    WriteBytes(F + kExeFileName + kNewSuffix, 'exe-nouveau');
+    CheckFalse(TryInstallFiles(F, Err));
+    CheckEquals('exe-ancien', ReadAll(F + kExeFileName));
+    CheckEquals('dll-ancienne', ReadAll(F + kRustKernelFileName));
+    CheckEquals('exe-nouveau', ReadAll(F + kExeFileName + kNewSuffix));
+    CheckFalse(FileExists(F + kExeFileName + kOldSuffix));
+    CheckFalse(FileExists(F + kRustKernelFileName + kOldSuffix));
+  finally
+    RemoveFolder(F);
+  end;
 end;
 
 initialization
