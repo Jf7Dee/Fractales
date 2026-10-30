@@ -602,8 +602,10 @@ end;
 
 destructor TUpdateDownloadThread.Destroy;
 begin
-  FDownloader.Free;
+  // Le Destroy hérité attend la fin d'un fil encore actif : annuler d'abord, libérer le téléchargeur ensuite
+  FDownloader.Cancel;
   inherited Destroy;
+  FDownloader.Free;
 end;
 
 {------------------------------------------------------------------------------}
