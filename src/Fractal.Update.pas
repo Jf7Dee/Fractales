@@ -1,12 +1,12 @@
 ﻿unit Fractal.Update;
 
-// Partie pure de la mise à jour du programme : réglages (MiseAJour.ini), versions, manifeste publié avec chaque release,
-// décision et empreinte SHA-256. Aucun accès au réseau ici.
+// Mise à jour du programme : réglages (MiseAJour.ini), versions, manifeste publié avec chaque release, décision,
+// empreinte SHA-256, installation, puis vérification et téléchargement (par un TDownloader) et leurs deux fils.
 
 interface
 
 uses
-  SysUtils;
+  SysUtils, Classes, Fractal.Download;
 
 const
   kUpdateConfigFileName = 'MiseAJour.ini';
@@ -31,6 +31,7 @@ type
     DllSha256: string;
   end;
   TUpdateDecision = (udNothing, udPropose, udNotify);
+  TUpdateCheckResult = (ucNothing, ucAvailable, ucFailed, ucInvalid);
 
 function LoadUpdateConfig(const FileName: string): TUpdateConfig;
 function UpdateConfigFilePath: string;
@@ -44,11 +45,59 @@ function DecideUpdate(Mode: TUpdateMode; const Installed, Available: TFileVersio
 function FileSha256(const FileName: string): string;
 function TryInstallFiles(const Folder: string; out ErrorText: string): Boolean;
 procedure DeleteNewFiles(const Folder: string);
+function CheckForUpdate(Downloader: TDownloader; const ManifestUrl: string; const Installed: TFileVersion;
+  out Manifest: TUpdateManifest; out ErrorText: string): TUpdateCheckResult;
+function DownloadUpdate(Downloader: TDownloader; const ManifestUrl, Folder: string; const Manifest: TUpdateManifest;
+  OnProgress: TDownloadProgress; out ErrorText: string): Boolean;
+
+type
+  // Les résultats se lisent dans OnDone (appelé dans le fil principal, via OnTerminate) ; à libérer par l'appelant
+  TUpdateCheckThread = class(TThread)
+  private
+    FManifestUrl: string;
+    FInstalled: TFileVersion;
+    FCheckResult: TUpdateCheckResult;
+    FManifest: TUpdateManifest;
+    FErrorText: string;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ManifestUrl: string; const Installed: TFileVersion; OnDone: TNotifyEvent);
+    property CheckResult: TUpdateCheckResult read FCheckResult;
+    property Manifest: TUpdateManifest read FManifest;
+    property ErrorText: string read FErrorText;
+  end;
+
+  // OnProgress est relayé dans le fil principal (Synchronize) ; ne pas appeler WaitFor depuis ce fil-là pendant le
+  // téléchargement
+  TUpdateDownloadThread = class(TThread)
+  private
+    FManifestUrl: string;
+    FFolder: string;
+    FManifest: TUpdateManifest;
+    FOnProgress: TDownloadProgress;
+    FDownloader: TDownloader;
+    FIsSuccess: Boolean;
+    FErrorText: string;
+    FReceived: Int64;
+    FTotal: Int64;
+    procedure HandleProgress(Received, Total: Int64);
+    procedure DeliverProgress;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ManifestUrl, Folder: string; const Manifest: TUpdateManifest;
+      OnProgress: TDownloadProgress; OnDone: TNotifyEvent);
+    destructor Destroy; override;
+    procedure Cancel;
+    property IsSuccess: Boolean read FIsSuccess;
+    property ErrorText: string read FErrorText;
+  end;
 
 implementation
 
 uses
-  Windows, Classes, IniFiles, Fractal.RustKernel;
+  Windows, IniFiles, Fractal.RustKernel;
 
 const
   kSectionUpdate = 'MiseAJour';
@@ -75,6 +124,8 @@ const
   kHashVal = 2;                        // HP_HASHVAL
   kMaxRenames = 4;
   kMissingNewFilesText = 'Fichiers téléchargés introuvables.';
+  kCorruptFormat = 'Le fichier %s est corrompu (empreinte différente).';
+  kVersionMismatchText = 'La version téléchargée ne correspond pas au manifeste.';
 
 type
   TCryptHandle = NativeUInt;
@@ -437,6 +488,166 @@ begin
   for I := DoneCount - 1 downto 0 do
     MoveFile(PChar(Done[I].Target), PChar(Done[I].Source));
   DeleteNewFiles(Folder);
+end;
+
+{------------------------------------------------------------------------------}
+
+function CheckForUpdate(Downloader: TDownloader; const ManifestUrl: string; const Installed: TFileVersion;
+  out Manifest: TUpdateManifest; out ErrorText: string): TUpdateCheckResult;
+var
+  Text: string;
+begin
+  TryParseManifest('', Manifest);      // remet le manifeste à zéro
+  ErrorText := '';
+  try
+    Text := Downloader.DownloadText(ManifestUrl);
+  except
+    on E: EDownloadError do
+    begin
+      ErrorText := E.Message;
+      Result := ucFailed;
+      Exit;
+    end;
+  end;
+  if not TryParseManifest(Text, Manifest) then
+    Result := ucInvalid
+  else if CompareVersions(Manifest.Version, Installed) > 0 then
+    Result := ucAvailable
+  else
+    Result := ucNothing;
+end;
+
+{------------------------------------------------------------------------------}
+
+function DownloadUpdate(Downloader: TDownloader; const ManifestUrl, Folder: string; const Manifest: TUpdateManifest;
+  OnProgress: TDownloadProgress; out ErrorText: string): Boolean;
+var
+  ExeNew, DllNew: string;
+  Downloaded: TFileVersion;
+begin
+  Result := False;
+  ErrorText := '';
+  ExeNew := Folder + kExeFileName + kNewSuffix;
+  DllNew := Folder + kRustKernelFileName + kNewSuffix;
+  try
+    Downloader.DownloadToFile(SiblingUrl(ManifestUrl, kExeFileName), ExeNew, OnProgress);
+    Downloader.DownloadToFile(SiblingUrl(ManifestUrl, kRustKernelFileName), DllNew, OnProgress);
+    if not SameText(FileSha256(ExeNew), Manifest.ExeSha256) then
+      ErrorText := Format(kCorruptFormat, [kExeFileName])
+    else if not SameText(FileSha256(DllNew), Manifest.DllSha256) then
+      ErrorText := Format(kCorruptFormat, [kRustKernelFileName])
+    else if not TryReadFileVersion(ExeNew, Downloaded) or (CompareVersions(Downloaded, Manifest.Version) <> 0) then
+      ErrorText := kVersionMismatchText   // anti-boucle : le manifeste annonce autre chose que ce qu'il publie
+    else
+      Result := True;
+  except
+    on E: Exception do
+      ErrorText := E.Message;
+  end;
+  if not Result then
+    DeleteNewFiles(Folder);
+end;
+
+{------------------------------------------------------------------------------}
+
+constructor TUpdateCheckThread.Create(const ManifestUrl: string; const Installed: TFileVersion;
+  OnDone: TNotifyEvent);
+begin
+  inherited Create(True);
+  FManifestUrl := ManifestUrl;
+  FInstalled := Installed;
+  FCheckResult := ucFailed;
+  OnTerminate := OnDone;
+  Start;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TUpdateCheckThread.Execute;
+var
+  Downloader: TWinInetDownloader;
+begin
+  try
+    Downloader := TWinInetDownloader.Create;
+    try
+      FCheckResult := CheckForUpdate(Downloader, FManifestUrl, FInstalled, FManifest, FErrorText);
+    finally
+      Downloader.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      FCheckResult := ucFailed;
+      FErrorText := E.Message;
+    end;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+constructor TUpdateDownloadThread.Create(const ManifestUrl, Folder: string; const Manifest: TUpdateManifest;
+  OnProgress: TDownloadProgress; OnDone: TNotifyEvent);
+begin
+  inherited Create(True);
+  FManifestUrl := ManifestUrl;
+  FFolder := Folder;
+  FManifest := Manifest;
+  FOnProgress := OnProgress;
+  FDownloader := TWinInetDownloader.Create;
+  OnTerminate := OnDone;
+  Start;
+end;
+
+{------------------------------------------------------------------------------}
+
+destructor TUpdateDownloadThread.Destroy;
+begin
+  FDownloader.Free;
+  inherited Destroy;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TUpdateDownloadThread.Cancel;
+begin
+  FDownloader.Cancel;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TUpdateDownloadThread.HandleProgress(Received, Total: Int64);
+begin
+  FReceived := Received;
+  FTotal := Total;
+  Synchronize(DeliverProgress);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TUpdateDownloadThread.DeliverProgress;
+begin
+  if Assigned(FOnProgress) then
+    FOnProgress(FReceived, FTotal);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TUpdateDownloadThread.Execute;
+var
+  Relay: TDownloadProgress;
+begin
+  Relay := nil;
+  if Assigned(FOnProgress) then
+    Relay := HandleProgress;
+  try
+    FIsSuccess := DownloadUpdate(FDownloader, FManifestUrl, FFolder, FManifest, Relay, FErrorText);
+  except
+    on E: Exception do
+    begin
+      FIsSuccess := False;
+      FErrorText := E.Message;
+    end;
+  end;
 end;
 
 end.

@@ -18,6 +18,7 @@ uses
   Fractal.Navigation in '..\src\Fractal.Navigation.pas',
   Fractal.HiRes in '..\src\Fractal.HiRes.pas',
   Fractal.Settings in '..\src\Fractal.Settings.pas',
+  Fractal.Download in '..\src\Fractal.Download.pas',
   Fractal.Update in '..\src\Fractal.Update.pas',
   TestFractalTypes in 'TestFractalTypes.pas',
   TestFractalHighFloat in 'TestFractalHighFloat.pas',

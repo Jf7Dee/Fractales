@@ -3,7 +3,8 @@
 interface
 
 uses
-  Windows, Classes, SysUtils, TestFramework, Fractal.Update, Fractal.RustKernel, TestUtils;
+  Windows, Classes, SysUtils, TestFramework, Fractal.Update, Fractal.Download, Fractal.RustKernel,
+  TestUtils;
 
 type
   TTestUpdate = class(TTestCase)
@@ -16,6 +17,10 @@ type
     function ReadAll(const FileName: string): string;
     procedure RemoveFolder(const Folder: string);
     procedure Stage(const Folder: string; WithDll, WithNew: Boolean);
+    function ExeSource: string;
+    function NewManifest(const Version, ExeHash, DllHash: string): string;
+    procedure PrepareDownload(const Name: string; out Folder, ExeHash, DllHash: string);
+    function RunDownload(Fake: TObject; const Folder, Version, ExeHash, DllHash: string; out Err: string): Boolean;
   published
     procedure TestMissingConfigIsNone;
     procedure TestConfigModes;
@@ -35,6 +40,15 @@ type
     procedure TestInstallReplacesStaleOldFiles;
     procedure TestInstallRollsBackOnFailure;
     procedure TestInstallWithoutNewFiles;
+    procedure TestCheckFindsNewerVersion;
+    procedure TestCheckSameVersionIsNothing;
+    procedure TestCheckNetworkFailure;
+    procedure TestCheckInvalidManifest;
+    procedure TestDownloadUpdateSucceeds;
+    procedure TestDownloadRejectsBadHash;
+    procedure TestDownloadRejectsVersionMismatch;
+    procedure TestDownloadFailureLeavesNoNewFiles;
+    procedure TestDownloadCancelled;
   end;
 
 implementation
@@ -44,6 +58,81 @@ const
   kExeHashLower = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
   kDllHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
   kNotes = 'Effets de couleur et séance conservée';
+  kFakeManifestUrl = 'http://fake/manifeste.ini';
+  kFakeExeUrl = 'http://fake/Fractales.exe';
+  kFakeDllUrl = 'http://fake/fractal_kernel.dll';
+
+type
+  // Téléchargeur sans réseau : adresse -> fichier local ; une adresse inconnue répond « HTTP 404 »
+  TFakeDownloader = class(TDownloader)
+  private
+    FMap: TStringList;
+    FCalls: Integer;
+  public
+    FailAtFile: Integer;               // numéro (à partir de 1) du DownloadToFile qui échoue ; 0 = aucun
+    constructor Create;
+    destructor Destroy; override;
+    procedure Add(const Url, LocalFile: string);
+    function DownloadText(const Url: string): string; override;
+    procedure DownloadToFile(const Url, FileName: string; OnProgress: TDownloadProgress); override;
+  end;
+
+{------------------------------------------------------------------------------}
+
+constructor TFakeDownloader.Create;
+begin
+  inherited Create;
+  FMap := TStringList.Create;
+end;
+
+{------------------------------------------------------------------------------}
+
+destructor TFakeDownloader.Destroy;
+begin
+  FMap.Free;
+  inherited Destroy;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFakeDownloader.Add(const Url, LocalFile: string);
+begin
+  FMap.Values[Url] := LocalFile;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFakeDownloader.DownloadText(const Url: string): string;
+var
+  L: TStringList;
+begin
+  if FMap.Values[Url] = '' then
+    raise EDownloadError.Create('HTTP 404');
+  L := TStringList.Create;
+  try
+    L.LoadFromFile(FMap.Values[Url], TEncoding.UTF8);
+    Result := L.Text;
+  finally
+    L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFakeDownloader.DownloadToFile(const Url, FileName: string; OnProgress: TDownloadProgress);
+begin
+  if IsCancelled then
+    raise EDownloadCancelled.Create('Téléchargement annulé.');
+  Inc(FCalls);
+  if FCalls = FailAtFile then
+    raise EDownloadError.Create('connexion interrompue');
+  if FMap.Values[Url] = '' then
+    raise EDownloadError.Create('HTTP 404');
+  if not CopyFile(PChar(FMap.Values[Url]), PChar(FileName), False) then
+    raise EDownloadError.Create(SysErrorMessage(GetLastError));
+  if Assigned(OnProgress) then
+    OnProgress(1, 1);
+end;
 
 {------------------------------------------------------------------------------}
 
@@ -445,6 +534,249 @@ begin
     CheckFalse(FileExists(F + kExeFileName + kOldSuffix));
     CheckFalse(FileExists(F + kRustKernelFileName + kOldSuffix));
   finally
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestUpdate.ExeSource: string;
+begin
+  Result := ExtractFilePath(ParamStr(0)) + kExeFileName;   // bin\Fractales.exe, produit par « build.sh app »
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestUpdate.NewManifest(const Version, ExeHash, DllHash: string): string;
+begin
+  Result := '[Version]'#13#10'Numero=' + Version + #13#10'Obligatoire=0'#13#10#13#10'[Fichiers]'#13#10 +
+    'Fractales.exe=' + ExeHash + #13#10'fractal_kernel.dll=' + DllHash + #13#10;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Dossier de travail + faux exe (copie de bin\Fractales.exe) et fausse DLL, avec leurs empreintes
+procedure TTestUpdate.PrepareDownload(const Name: string; out Folder, ExeHash, DllHash: string);
+begin
+  Folder := FreshFolder(Name);
+  CopyFile(PChar(ExeSource), PChar(Folder + 'src-exe.bin'), False);
+  WriteBytes(Folder + 'src-dll.bin', 'fausse-dll');
+  ExeHash := FileSha256(Folder + 'src-exe.bin');
+  DllHash := FileSha256(Folder + 'src-dll.bin');
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestUpdate.RunDownload(Fake: TObject; const Folder, Version, ExeHash, DllHash: string;
+  out Err: string): Boolean;
+var
+  D: TFakeDownloader;
+  M: TUpdateManifest;
+begin
+  D := TFakeDownloader(Fake);
+  D.Add(kFakeExeUrl, Folder + 'src-exe.bin');
+  D.Add(kFakeDllUrl, Folder + 'src-dll.bin');
+  CheckTrue(TryParseManifest(NewManifest(Version, ExeHash, DllHash), M), 'manifeste du test');
+  Result := DownloadUpdate(D, kFakeManifestUrl, Folder, M, nil, Err);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestCheckFindsNewerVersion;
+var
+  D: TFakeDownloader;
+  M: TUpdateManifest;
+  Err: string;
+begin
+  WriteText(TestTempFolder + 'check-new.ini', NewManifest('0.6.0.0', kExeHashLower, kDllHash));
+  D := TFakeDownloader.Create;
+  try
+    D.Add(kFakeManifestUrl, TestTempFolder + 'check-new.ini');
+    CheckTrue(CheckForUpdate(D, kFakeManifestUrl, V(0, 5, 0, 0), M, Err) = ucAvailable, 'ucAvailable');
+    CheckEquals('0.6.0.0', VersionToString(M.Version));
+    CheckEquals(kExeHashLower, M.ExeSha256);
+  finally
+    D.Free;
+    DeleteFile(TestTempFolder + 'check-new.ini');
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestCheckSameVersionIsNothing;
+var
+  D: TFakeDownloader;
+  M: TUpdateManifest;
+  Err: string;
+begin
+  WriteText(TestTempFolder + 'check-same.ini', NewManifest('0.5.0.0', kExeHashLower, kDllHash));
+  D := TFakeDownloader.Create;
+  try
+    D.Add(kFakeManifestUrl, TestTempFolder + 'check-same.ini');
+    CheckTrue(CheckForUpdate(D, kFakeManifestUrl, V(0, 5, 0, 0), M, Err) = ucNothing, 'ucNothing');
+  finally
+    D.Free;
+    DeleteFile(TestTempFolder + 'check-same.ini');
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestCheckNetworkFailure;
+var
+  D: TFakeDownloader;
+  M: TUpdateManifest;
+  Err: string;
+begin
+  D := TFakeDownloader.Create;
+  try
+    CheckTrue(CheckForUpdate(D, kFakeManifestUrl, V(0, 5, 0, 0), M, Err) = ucFailed, 'ucFailed');
+    CheckTrue(Pos('404', Err) > 0, 'ErrorText : ' + Err);
+  finally
+    D.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestCheckInvalidManifest;
+var
+  D: TFakeDownloader;
+  M: TUpdateManifest;
+  Err: string;
+begin
+  WriteText(TestTempFolder + 'check-bad.ini', 'ceci n''est pas un manifeste');
+  D := TFakeDownloader.Create;
+  try
+    D.Add(kFakeManifestUrl, TestTempFolder + 'check-bad.ini');
+    CheckTrue(CheckForUpdate(D, kFakeManifestUrl, V(0, 5, 0, 0), M, Err) = ucInvalid, 'ucInvalid');
+  finally
+    D.Free;
+    DeleteFile(TestTempFolder + 'check-bad.ini');
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestDownloadUpdateSucceeds;
+var
+  D: TFakeDownloader;
+  F, ExeHash, DllHash, Err: string;
+begin
+  if not FileExists(ExeSource) then
+  begin
+    Status('bin\Fractales.exe absent : test sauté');
+    Exit;
+  end;
+  PrepareDownload('dl-ok', F, ExeHash, DllHash);
+  D := TFakeDownloader.Create;
+  try
+    CheckTrue(RunDownload(D, F, '0.5.0.0', ExeHash, DllHash, Err), Err);
+    CheckTrue(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
+    CheckTrue(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
+  finally
+    D.Free;
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestDownloadRejectsBadHash;
+var
+  D: TFakeDownloader;
+  F, ExeHash, DllHash, Err: string;
+begin
+  if not FileExists(ExeSource) then
+  begin
+    Status('bin\Fractales.exe absent : test sauté');
+    Exit;
+  end;
+  PrepareDownload('dl-badhash', F, ExeHash, DllHash);
+  D := TFakeDownloader.Create;
+  try
+    CheckFalse(RunDownload(D, F, '0.5.0.0', ExeHash, kDllHash, Err), 'doit échouer');
+    CheckEquals(Format('Le fichier %s est corrompu (empreinte différente).', [kRustKernelFileName]), Err);
+    CheckFalse(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
+    CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
+  finally
+    D.Free;
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestDownloadRejectsVersionMismatch;
+var
+  D: TFakeDownloader;
+  F, ExeHash, DllHash, Err: string;
+begin
+  if not FileExists(ExeSource) then
+  begin
+    Status('bin\Fractales.exe absent : test sauté');
+    Exit;
+  end;
+  PrepareDownload('dl-version', F, ExeHash, DllHash);
+  D := TFakeDownloader.Create;
+  try
+    CheckFalse(RunDownload(D, F, '0.6.0.0', ExeHash, DllHash, Err), 'doit échouer');
+    CheckEquals('La version téléchargée ne correspond pas au manifeste.', Err);
+    CheckFalse(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
+    CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
+  finally
+    D.Free;
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestDownloadFailureLeavesNoNewFiles;
+var
+  D: TFakeDownloader;
+  F, ExeHash, DllHash, Err: string;
+begin
+  if not FileExists(ExeSource) then
+  begin
+    Status('bin\Fractales.exe absent : test sauté');
+    Exit;
+  end;
+  PrepareDownload('dl-fail', F, ExeHash, DllHash);
+  D := TFakeDownloader.Create;
+  try
+    D.FailAtFile := 2;
+    CheckFalse(RunDownload(D, F, '0.5.0.0', ExeHash, DllHash, Err), 'doit échouer');
+    CheckTrue(Err <> '', 'ErrorText');
+    CheckFalse(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
+    CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
+  finally
+    D.Free;
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestDownloadCancelled;
+var
+  D: TFakeDownloader;
+  F, ExeHash, DllHash, Err: string;
+begin
+  if not FileExists(ExeSource) then
+  begin
+    Status('bin\Fractales.exe absent : test sauté');
+    Exit;
+  end;
+  PrepareDownload('dl-cancel', F, ExeHash, DllHash);
+  D := TFakeDownloader.Create;
+  try
+    D.Cancel;
+    CheckFalse(RunDownload(D, F, '0.5.0.0', ExeHash, DllHash, Err), 'doit échouer');
+    CheckFalse(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
+    CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
+  finally
+    D.Free;
     RemoveFolder(F);
   end;
 end;

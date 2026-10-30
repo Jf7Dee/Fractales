@@ -48,6 +48,7 @@
 			<DCCReference Include="src\Fractal.Navigation.pas"/>
 			<DCCReference Include="src\Fractal.HiRes.pas"/>
 			<DCCReference Include="src\Fractal.Settings.pas"/>
+			<DCCReference Include="src\Fractal.Download.pas"/>
 			<DCCReference Include="src\Fractal.Update.pas"/>
 			<DCCReference Include="src\Fractal.View.pas"/>
 			<DCCReference Include="src\MainFrm.pas">
