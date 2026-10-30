@@ -12,11 +12,13 @@ for F in "$EXE" "$DLL"; do
     exit 1
   fi
 done
-# FileVersion de l'exe ; la sortie de PowerShell se termine par CR LF, qu'on retire
-VERSION=$(powershell -NoProfile -Command "(Get-Item -LiteralPath '$(cygpath -w "$EXE")').VersionInfo.FileVersion" |
+# Version de l'exe lue dans sa partie numérique (VS_FIXEDFILEINFO), celle que compare le programme, et non dans le
+# texte FileVersion qui peut en différer ; la sortie de PowerShell se termine par CR LF, qu'on retire
+VERSION=$(powershell -NoProfile -Command "\$v = (Get-Item -LiteralPath '$(cygpath -w "$EXE")').VersionInfo;
+  '{0}.{1}.{2}.{3}' -f \$v.FileMajorPart, \$v.FileMinorPart, \$v.FileBuildPart, \$v.FilePrivatePart" |
   tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-if [ -z "$VERSION" ]; then
-  echo "Impossible de lire la version de $EXE (FileVersion vide)."
+if [ -z "$VERSION" ] || [ "$VERSION" = '0.0.0.0' ]; then
+  echo "Impossible de lire la version de $EXE (partie numérique absente)."
   exit 1
 fi
 TARGET="publication/$VERSION"

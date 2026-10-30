@@ -129,7 +129,9 @@ begin
     RaiseLastDownloadError;
   try
     SetTimeouts(Session);
-    Request := InternetOpenUrl(Session, PChar(Url), nil, 0, INTERNET_FLAG_RELOAD or INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    // NO_UI : jamais de boîte de dialogue de WinInet (fil sans fenêtre) ; NO_COOKIES : rien n'est conservé
+    Request := InternetOpenUrl(Session, PChar(Url), nil, 0, INTERNET_FLAG_RELOAD or INTERNET_FLAG_NO_CACHE_WRITE
+      or INTERNET_FLAG_NO_UI or INTERNET_FLAG_NO_COOKIES, 0);
     if Request = nil then
       RaiseLastDownloadError;
     try
