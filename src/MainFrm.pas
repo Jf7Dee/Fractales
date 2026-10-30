@@ -44,6 +44,8 @@ const
   kUpdateFailedFormat = 'Recherche de mise à jour impossible : %s';
   kUpdateInvalidText = 'Manifeste de mise à jour invalide.';
   kUpdateAvailableFormat = 'Version %s disponible.';
+  // résultat de la vérification, traité hors du OnTerminate du fil (une exception y tuerait le programme)
+  WM_UPDATE_CHECKED = WM_USER + 1;
 
 type
   TMainForm = class(TForm)
@@ -198,7 +200,11 @@ type
     FInstalledVersion: TFileVersion;
     FUpdateThread: TUpdateCheckThread;  // libéré dans FormDestroy, jamais dans son propre OnTerminate
     FIsUpdateCheckHandled: Boolean;
+    FUpdateCheckResult: TUpdateCheckResult;  // copies des résultats du fil, lues par WMUpdateChecked
+    FUpdateManifest: TUpdateManifest;
+    FUpdateErrorText: string;
     FShouldRestart: Boolean;
+    procedure WMUpdateChecked(var Message: TMessage); message WM_UPDATE_CHECKED;
     procedure InitNavigation;
     procedure AppMessage(var Msg: TMsg; var Handled: Boolean);
     procedure ViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -370,8 +376,9 @@ procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   if FUpdateThread <> nil then
   begin
-    // WaitFor depuis le fil principal traite les Synchronize : OnTerminate ne doit plus ouvrir la fenêtre
+    // WaitFor depuis le fil principal traite les Synchronize : OnTerminate ne doit plus être appelé
     FUpdateThread.OnTerminate := nil;
+    Hide;  // une vérification lente (délais de 10 s) ne laisse pas une fenêtre figée à l'écran
     FUpdateThread.WaitFor;
     FreeAndNil(FUpdateThread);
   end;
@@ -2063,21 +2070,33 @@ end;
 
 procedure TMainForm.UpdateCheckDone(Sender: TObject);
 begin
-  // Fil principal, dans le OnTerminate du fil : ne pas le libérer ici (FormDestroy s'en charge)
+  // Fil principal, dans le OnTerminate du fil : ne pas le libérer ici (FormDestroy s'en charge). Une exception
+  // ici remonterait dans le fil et tuerait le programme : on copie les résultats, la suite passe par un message
   if FIsUpdateCheckHandled or (FUpdateThread = nil) then
     Exit;
   FIsUpdateCheckHandled := True;
-  case FUpdateThread.CheckResult of
+  FUpdateCheckResult := FUpdateThread.CheckResult;
+  FUpdateManifest := FUpdateThread.Manifest;
+  FUpdateErrorText := FUpdateThread.ErrorText;
+  PostMessage(Handle, WM_UPDATE_CHECKED, 0, 0);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.WMUpdateChecked(var Message: TMessage);
+begin
+  // Boucle de messages normale : une exception y est affichée par Application.HandleException
+  case FUpdateCheckResult of
     ucFailed:
-      FStatusMessage := Format(kUpdateFailedFormat, [FUpdateThread.ErrorText]);
+      FStatusMessage := Format(kUpdateFailedFormat, [FUpdateErrorText]);
     ucInvalid:
       FStatusMessage := kUpdateInvalidText;
     ucAvailable:
-      case DecideUpdate(FUpdateConfig.Mode, FInstalledVersion, FUpdateThread.Manifest.Version) of
+      case DecideUpdate(FUpdateConfig.Mode, FInstalledVersion, FUpdateManifest.Version) of
         udNotify:
-          FStatusMessage := Format(kUpdateAvailableFormat, [VersionToString(FUpdateThread.Manifest.Version)]);
+          FStatusMessage := Format(kUpdateAvailableFormat, [VersionToString(FUpdateManifest.Version)]);
         udPropose:
-          ShowUpdateForm(FUpdateThread.Manifest);
+          ShowUpdateForm(FUpdateManifest);
       end;
   end;
   UpdateStatus;

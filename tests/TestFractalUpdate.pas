@@ -40,6 +40,7 @@ type
     procedure TestInstallWithoutExistingDll;
     procedure TestInstallReplacesStaleOldFiles;
     procedure TestInstallRollsBackOnFailure;
+    procedure TestInstallWaitsForTransientLock;
     procedure TestInstallWithoutNewFiles;
     procedure TestCheckFindsNewerVersion;
     procedure TestCheckSameVersionIsNothing;
@@ -62,6 +63,7 @@ const
   kFakeManifestUrl = 'http://fake/manifeste.ini';
   kFakeExeUrl = 'http://fake/Fractales.exe';
   kFakeDllUrl = 'http://fake/fractal_kernel.dll';
+  kTransientLockMs = 300;              // plus court que les essais de renommage (5 essais, 200 ms entre deux)
 
 type
   // Téléchargeur sans réseau : adresse -> fichier local ; une adresse inconnue répond « HTTP 404 »
@@ -76,6 +78,17 @@ type
     procedure Add(const Url, LocalFile: string);
     function DownloadText(const Url: string): string; override;
     procedure DownloadToFile(const Url, FileName: string; OnProgress: TDownloadProgress); override;
+  end;
+
+  // Verrou passager (antivirus, indexation) : libère le fichier ouvert après un court délai
+  TDelayedRelease = class(TThread)
+  private
+    FLocked: TFileStream;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(Locked: TFileStream);
+    destructor Destroy; override;
   end;
 
 {------------------------------------------------------------------------------}
@@ -133,6 +146,30 @@ begin
     raise EDownloadError.Create(SysErrorMessage(GetLastError));
   if Assigned(OnProgress) then
     OnProgress(1, 1);
+end;
+
+{------------------------------------------------------------------------------}
+
+constructor TDelayedRelease.Create(Locked: TFileStream);
+begin
+  FLocked := Locked;
+  inherited Create(False);
+end;
+
+{------------------------------------------------------------------------------}
+
+destructor TDelayedRelease.Destroy;
+begin
+  inherited Destroy;                   // attend la fin de Execute
+  FreeAndNil(FLocked);                 // si le fil n'a jamais tourné
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TDelayedRelease.Execute;
+begin
+  Sleep(kTransientLockMs);
+  FreeAndNil(FLocked);
 end;
 
 {------------------------------------------------------------------------------}
@@ -334,7 +371,8 @@ begin
     Exit;
   end;
   CheckTrue(TryReadFileVersion(ExeName, R));
-  CheckEquals(0, CompareVersions(R, V(0, 5, 0, 0)));
+  // le numéro change à chaque version : on vérifie seulement qu'il est lu
+  CheckTrue(CompareVersions(R, V(0, 0, 0, 0)) <> 0, 'version de l''exe à 0.0.0.0');
 end;
 
 {------------------------------------------------------------------------------}
@@ -537,6 +575,34 @@ begin
     CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix));
     CheckFalse(FileExists(F + kExeFileName + kOldSuffix));
     CheckFalse(FileExists(F + kRustKernelFileName + kOldSuffix));
+  finally
+    RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Un retour arrière qui échoue ne se provoque pas de façon fiable (il défait un renommage qui vient de réussir) :
+// on vérifie à la place que les renommages réessaient tant qu'un verrou passager tient le fichier
+procedure TTestUpdate.TestInstallWaitsForTransientLock;
+var
+  F, Err: string;
+  Release: TDelayedRelease;
+  Ok: Boolean;
+begin
+  F := FreshFolder('install-transient');
+  try
+    Stage(F, True, True);
+    Release := TDelayedRelease.Create(TFileStream.Create(F + kRustKernelFileName, fmOpenRead or fmShareExclusive));
+    try
+      Ok := TryInstallFiles(F, Err);
+    finally
+      Release.Free;
+    end;
+    CheckTrue(Ok, Err);
+    CheckEquals('exe-nouveau', ReadAll(F + kExeFileName));
+    CheckEquals('dll-nouvelle', ReadAll(F + kRustKernelFileName));
+    CheckEquals('dll-ancienne', ReadAll(F + kRustKernelFileName + kOldSuffix));
   finally
     RemoveFolder(F);
   end;

@@ -125,6 +125,9 @@ const
   kCalgSha256 = $0000800C;
   kHashVal = 2;                        // HP_HASHVAL
   kMaxRenames = 4;
+  kMoveAttempts = 5;                   // un antivirus ou l'indexation peut tenir un fichier un court instant
+  kMoveRetryMs = 200;
+  kUndoIncompleteText = 'Retour arrière incomplet : renommez les fichiers .old à la main.';
   kMissingNewFilesText = 'Fichiers téléchargés introuvables.';
   kCorruptFormat = 'Le fichier %s est corrompu (empreinte différente).';
   kVersionMismatchText = 'La version téléchargée ne correspond pas au manifeste.';
@@ -438,6 +441,23 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Renomme sans écraser, en réessayant si le fichier est momentanément pris (GetLastError : celui du dernier essai)
+function MoveFileRetrying(const Source, Target: string): Boolean;
+var
+  Attempt: Integer;
+begin
+  Result := MoveFile(PChar(Source), PChar(Target));
+  Attempt := 1;
+  while not Result and (Attempt < kMoveAttempts) do
+  begin
+    Sleep(kMoveRetryMs);
+    Result := MoveFile(PChar(Source), PChar(Target));
+    Inc(Attempt);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 function TryInstallFiles(const Folder: string; out ErrorText: string): Boolean;
 var
   Exe, Dll: string;
@@ -445,11 +465,12 @@ var
     Source, Target: string;
   end;
   DoneCount, I: Integer;
+  IsUndoComplete: Boolean;
 
   // Renomme sans écraser et note le renommage réussi ; en cas d'échec, capture le message système
   function Rename(const Source, Target: string): Boolean;
   begin
-    Result := MoveFile(PChar(Source), PChar(Target));
+    Result := MoveFileRetrying(Source, Target);
     if Result then
     begin
       Done[DoneCount].Source := Source;
@@ -486,10 +507,15 @@ begin
     and Rename(Dll + kNewSuffix, Dll);
   if Result then
     Exit;
-  // Retour arrière : les renommages réussis sont défaits en ordre inverse (le message reste celui de l'échec)
+  // Retour arrière : les renommages réussis sont défaits en ordre inverse (le message reste celui de l'échec) ; un
+  // retour arrière impossible ne doit pas passer pour « la version actuelle reste en place »
+  IsUndoComplete := True;
   for I := DoneCount - 1 downto 0 do
-    MoveFile(PChar(Done[I].Target), PChar(Done[I].Source));
+    if not MoveFileRetrying(Done[I].Target, Done[I].Source) then
+      IsUndoComplete := False;
   DeleteNewFiles(Folder);
+  if not IsUndoComplete then
+    ErrorText := ErrorText + #13#10 + kUndoIncompleteText;
 end;
 
 {------------------------------------------------------------------------------}

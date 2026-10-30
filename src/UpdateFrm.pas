@@ -147,27 +147,34 @@ procedure TUpdateForm.DownloadDone(Sender: TObject);
 var
   ErrorText: string;
 begin
-  // Appelé dans le fil principal, dans le OnTerminate du fil : ne pas libérer le fil ici
+  // Appelé dans le fil principal, dans le OnTerminate du fil : ne pas libérer le fil ici. Une exception ne doit
+  // pas en sortir (elle remonterait dans le fil et tuerait le programme) : elle s'affiche comme un échec
   FIsDownloading := False;
-  if (not FThread.IsSuccess) and FIsCancelled and not FIsMandatory then
-  begin
-    // Annulation voulue : retour au programme, rien n'a changé
-    FOutcome := uoLater;
-    Close;
-    Exit;
-  end;
-  if FThread.IsSuccess then
-  begin
-    if TryInstallFiles(FFolder, ErrorText) then
+  try
+    if FIsCancelled and not FIsMandatory then
     begin
-      FOutcome := uoInstalled;
+      // Annulation voulue, même si le second fichier venait d'arriver : retour au programme, rien n'a changé
+      DeleteNewFiles(FFolder);
+      FOutcome := uoLater;
       Close;
+      Exit;
+    end;
+    if FThread.IsSuccess then
+    begin
+      if TryInstallFiles(FFolder, ErrorText) then
+      begin
+        FOutcome := uoInstalled;
+        Close;
+      end
+      else
+        ShowFailure(ErrorText);
     end
     else
-      ShowFailure(ErrorText);
-  end
-  else
-    ShowFailure(FThread.ErrorText);
+      ShowFailure(FThread.ErrorText);
+  except
+    on E: Exception do
+      ShowFailure(E.Message);
+  end;
 end;
 
 {------------------------------------------------------------------------------}
