@@ -255,6 +255,7 @@ type
     procedure CheckSmokeStep(const StepName: string);
     procedure CheckEffectsSmoke;
     procedure CheckResetAllSmoke;
+    procedure CheckUpdateFormSmoke;
     procedure SmokeException(Sender: TObject; E: Exception);
 
     procedure SelectKernel(Kernel: TEngineKernelType);
@@ -275,7 +276,7 @@ implementation
 {$R *.dfm}
 
 uses
-  PaletteEditorFrm, HiResFrm;
+  PaletteEditorFrm, HiResFrm, UpdateFrm, Fractal.Update;
 
 {------------------------------------------------------------------------------}
 
@@ -914,6 +915,49 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Fenêtre « Mise à jour » : texte et bouton de gauche selon que la version est obligatoire ou non (sans ShowModal,
+// sans réseau).
+procedure TMainForm.CheckUpdateFormSmoke;
+const
+  kExpectedMessage = 'La version 0.6.0.0 est disponible (version installée : 0.5.0.0).';
+var
+  Form: TUpdateForm;
+  Manifest: TUpdateManifest;
+  Installed: TFileVersion;
+begin
+  Manifest.Version[0] := 0;
+  Manifest.Version[1] := 6;
+  Manifest.Version[2] := 0;
+  Manifest.Version[3] := 0;
+  Manifest.IsMandatory := True;
+  Manifest.Notes := '';
+  Manifest.ExeSha256 := '';
+  Manifest.DllSha256 := '';
+  Installed[0] := 0;
+  Installed[1] := 5;
+  Installed[2] := 0;
+  Installed[3] := 0;
+  Form := TUpdateForm.Create(nil);
+  try
+    Form.Prepare(Manifest, Installed, 'http://localhost/manifeste.ini', ExtractFilePath(ParamStr(0)));
+    if Form.lblMessage.Caption <> kExpectedMessage then
+      raise Exception.Create('texte de la fenêtre de mise à jour : ' + Form.lblMessage.Caption);
+    if Form.btnLater.Caption <> 'Quitter' then
+      raise Exception.Create('bouton « Quitter » attendu pour une version obligatoire');
+    Manifest.IsMandatory := False;
+    Form.Prepare(Manifest, Installed, 'http://localhost/manifeste.ini', ExtractFilePath(ParamStr(0)));
+    if Form.lblMessage.Caption <> kExpectedMessage then
+      raise Exception.Create('texte de la fenêtre de mise à jour (non obligatoire) : ' + Form.lblMessage.Caption);
+    if Form.btnLater.Caption <> 'Plus tard' then
+      raise Exception.Create('bouton « Plus tard » attendu pour une version facultative');
+  finally
+    Form.Free;
+  end;
+  FSmokeLog.Add('Fenêtre de mise à jour OK');
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.SmokeException(Sender: TObject; E: Exception);
 begin
   FSmokeLog.Add('ÉCHEC : exception non gérée : ' + E.Message);
@@ -1134,6 +1178,7 @@ begin
         raise Exception.Create('fichier du rendu HD absent');
       FSmokeLog.Add('Rendu HD OK');
       CheckResetAllSmoke;
+      CheckUpdateFormSmoke;
       if not FHasSmokeFailure then
         Result := 0;
     except

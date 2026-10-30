@@ -60,6 +60,9 @@
 			<DCCReference Include="src\HiResFrm.pas">
 				<Form>HiResForm</Form>
 			</DCCReference>
+			<DCCReference Include="src\UpdateFrm.pas">
+				<Form>UpdateForm</Form>
+			</DCCReference>
 			<DCCReference Include="src\HelpFrm.pas">
 				<Form>HelpForm</Form>
 			</DCCReference>

@@ -25,6 +25,7 @@ uses
   MainFrm in 'src\MainFrm.pas' {MainForm},
   PaletteEditorFrm in 'src\PaletteEditorFrm.pas' {PaletteEditorForm},
   HiResFrm in 'src\HiResFrm.pas' {HiResForm},
+  UpdateFrm in 'src\UpdateFrm.pas' {UpdateForm},
   HelpFrm in 'src\HelpFrm.pas' {HelpForm};
 
 {$R *.res}

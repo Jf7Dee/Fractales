@@ -68,8 +68,9 @@ type
     property ErrorText: string read FErrorText;
   end;
 
-  // OnProgress est relayé dans le fil principal (Synchronize) ; ne pas appeler WaitFor depuis ce fil-là pendant le
-  // téléchargement
+  // OnProgress est relayé dans le fil principal (Synchronize). Deux pièges : (a) ne jamais libérer le fil dans son
+  // propre OnDone (il est encore dans Synchronize) ; (b) WaitFor/Free depuis le fil principal traite les
+  // Synchronize, donc OnDone peut se déclencher pendant la libération : mettre OnTerminate à nil avant de libérer
   TUpdateDownloadThread = class(TThread)
   private
     FManifestUrl: string;
