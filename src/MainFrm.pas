@@ -8,7 +8,7 @@ uses
   Fractal.Navigation,
   {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
   Fractal.Persistence, Fractal.Png, Fractal.View, Fractal.RustKernel, Fractal.Settings, ImgList, Menus, ToolWin,
-  HelpFrm, ActnList;
+  HelpFrm, ActnList, Fractal.Update;
 
 const
   kJuliaPreviewWidth = 240;
@@ -40,6 +40,10 @@ const
   kPngFilter = 'Image PNG (*.png)|*.png';
   kModeSmoothIndex = 0;  // ordre des éléments de cbColoringMode
   kModeBandsIndex = 1;
+  // notes de la vérification de mise à jour, dans la barre d'état
+  kUpdateFailedFormat = 'Recherche de mise à jour impossible : %s';
+  kUpdateInvalidText = 'Manifeste de mise à jour invalide.';
+  kUpdateAvailableFormat = 'Version %s disponible.';
 
 type
   TMainForm = class(TForm)
@@ -190,6 +194,11 @@ type
     FHasSmokeFailure: Boolean;
     FSettings: TAppSettings;
     FIsSessionEnabled: Boolean;  // vrai après RestoreSession : le test de fumée ne lit ni n'écrit la session
+    FUpdateConfig: TUpdateConfig;
+    FInstalledVersion: TFileVersion;
+    FUpdateThread: TUpdateCheckThread;  // libéré dans FormDestroy, jamais dans son propre OnTerminate
+    FIsUpdateCheckHandled: Boolean;
+    FShouldRestart: Boolean;
     procedure InitNavigation;
     procedure AppMessage(var Msg: TMsg; var Handled: Boolean);
     procedure ViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -263,9 +272,13 @@ type
     procedure ResetAll;
     procedure SaveSession;
     function FolderOrDefault(const Folder: string): string;
+    procedure UpdateCheckDone(Sender: TObject);
+    procedure ShowUpdateForm(const Manifest: TUpdateManifest);
   public
     function RunSmokeTest(const OutputFile: string): Integer;
     procedure RestoreSession;
+    procedure StartUpdateCheck;
+    property ShouldRestart: Boolean read FShouldRestart;
   end;
 
 var
@@ -276,7 +289,7 @@ implementation
 {$R *.dfm}
 
 uses
-  PaletteEditorFrm, HiResFrm, UpdateFrm, Fractal.Update;
+  PaletteEditorFrm, HiResFrm, UpdateFrm;
 
 {------------------------------------------------------------------------------}
 
@@ -355,6 +368,13 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
+  if FUpdateThread <> nil then
+  begin
+    // WaitFor depuis le fil principal traite les Synchronize : OnTerminate ne doit plus ouvrir la fenêtre
+    FUpdateThread.OnTerminate := nil;
+    FUpdateThread.WaitFor;
+    FreeAndNil(FUpdateThread);
+  end;
   tmrDisplay.Enabled := False;
   FView.OnResize := nil;
   FView.OnMouseDown := nil;
@@ -2016,6 +2036,78 @@ begin
   if FHiResForm <> nil then
     THiResForm(FHiResForm).CaptureSettings(FSettings);
   SaveAppSettings(SettingsFilePath, FSettings);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.StartUpdateCheck;
+begin
+  // Appelé par le .dpr après RestoreSession ; le test de fumée n'y passe jamais
+  if FUpdateThread <> nil then
+    Exit;
+  FUpdateConfig := LoadUpdateConfig(UpdateConfigFilePath);
+  if FUpdateConfig.Mode = umNone then
+    Exit;
+  if not TryReadFileVersion(ParamStr(0), FInstalledVersion) then
+    Exit;
+  FIsUpdateCheckHandled := False;
+  try
+    FUpdateThread := TUpdateCheckThread.Create(FUpdateConfig.ManifestUrl, FInstalledVersion, UpdateCheckDone);
+  except
+    on E: Exception do
+      FStatusMessage := Format(kUpdateFailedFormat, [E.Message]);  // la vérification n'empêche pas le démarrage
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.UpdateCheckDone(Sender: TObject);
+begin
+  // Fil principal, dans le OnTerminate du fil : ne pas le libérer ici (FormDestroy s'en charge)
+  if FIsUpdateCheckHandled or (FUpdateThread = nil) then
+    Exit;
+  FIsUpdateCheckHandled := True;
+  case FUpdateThread.CheckResult of
+    ucFailed:
+      FStatusMessage := Format(kUpdateFailedFormat, [FUpdateThread.ErrorText]);
+    ucInvalid:
+      FStatusMessage := kUpdateInvalidText;
+    ucAvailable:
+      case DecideUpdate(FUpdateConfig.Mode, FInstalledVersion, FUpdateThread.Manifest.Version) of
+        udNotify:
+          FStatusMessage := Format(kUpdateAvailableFormat, [VersionToString(FUpdateThread.Manifest.Version)]);
+        udPropose:
+          ShowUpdateForm(FUpdateThread.Manifest);
+      end;
+  end;
+  UpdateStatus;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.ShowUpdateForm(const Manifest: TUpdateManifest);
+var
+  Dlg: TUpdateForm;
+  Outcome: TUpdateOutcome;
+begin
+  Dlg := TUpdateForm.Create(Self);
+  try
+    Dlg.Prepare(Manifest, FInstalledVersion, FUpdateConfig.ManifestUrl, ExtractFilePath(ParamStr(0)));
+    Dlg.ShowModal;
+    Outcome := Dlg.Outcome;
+  finally
+    Dlg.Free;
+  end;
+  // Fermeture par le chemin normal (FormCloseQuery → SaveSession) ; le .dpr relance le nouvel exe ensuite
+  case Outcome of
+    uoInstalled:
+      begin
+        FShouldRestart := True;
+        Close;
+      end;
+    uoQuit:
+      Close;
+  end;
 end;
 
 {------------------------------------------------------------------------------}

@@ -39,6 +39,10 @@ begin
   else
   begin
     MainForm.RestoreSession;
+    MainForm.StartUpdateCheck;
     Application.Run;
+    // Session.frac est écrit (FormCloseQuery) : le nouvel exe reprend la séance
+    if MainForm.ShouldRestart then
+      LaunchProgram(ParamStr(0));
   end;
 end.

@@ -49,6 +49,7 @@ function CheckForUpdate(Downloader: TDownloader; const ManifestUrl: string; cons
   out Manifest: TUpdateManifest; out ErrorText: string): TUpdateCheckResult;
 function DownloadUpdate(Downloader: TDownloader; const ManifestUrl, Folder: string; const Manifest: TUpdateManifest;
   OnProgress: TDownloadProgress; out ErrorText: string): Boolean;
+procedure LaunchProgram(const ExeName: string);
 
 type
   // Les résultats se lisent dans OnDone (appelé dans le fil principal, via OnTerminate) ; à libérer par l'appelant
@@ -98,7 +99,7 @@ type
 implementation
 
 uses
-  Windows, IniFiles, Fractal.RustKernel;
+  Windows, ShellAPI, IniFiles, Fractal.RustKernel;
 
 const
   kSectionUpdate = 'MiseAJour';
@@ -551,15 +552,23 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure LaunchProgram(const ExeName: string);
+begin
+  // Sans argument, depuis le dossier de l'exe ; un échec n'a pas de suite (le programme se termine)
+  ShellExecute(0, 'open', PChar(ExeName), nil, PChar(ExtractFilePath(ExeName)), SW_SHOWNORMAL);
+end;
+
+{------------------------------------------------------------------------------}
+
 constructor TUpdateCheckThread.Create(const ManifestUrl: string; const Installed: TFileVersion;
   OnDone: TNotifyEvent);
 begin
-  inherited Create(True);
+  // Le fil démarre dans AfterConstruction, une fois les champs remplis : appeler Start ici le démarrerait deux fois
+  inherited Create(False);
   FManifestUrl := ManifestUrl;
   FInstalled := Installed;
   FCheckResult := ucFailed;
   OnTerminate := OnDone;
-  Start;
 end;
 
 {------------------------------------------------------------------------------}
@@ -589,14 +598,13 @@ end;
 constructor TUpdateDownloadThread.Create(const ManifestUrl, Folder: string; const Manifest: TUpdateManifest;
   OnProgress: TDownloadProgress; OnDone: TNotifyEvent);
 begin
-  inherited Create(True);
+  inherited Create(False);             // démarré dans AfterConstruction (voir TUpdateCheckThread.Create)
   FManifestUrl := ManifestUrl;
   FFolder := Folder;
   FManifest := Manifest;
   FOnProgress := OnProgress;
   FDownloader := TWinInetDownloader.Create;
   OnTerminate := OnDone;
-  Start;
 end;
 
 {------------------------------------------------------------------------------}
