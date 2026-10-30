@@ -19,6 +19,7 @@ uses
   Fractal.Navigation in 'src\Fractal.Navigation.pas',
   Fractal.HiRes in 'src\Fractal.HiRes.pas',
   Fractal.Settings in 'src\Fractal.Settings.pas',
+  Fractal.Update in 'src\Fractal.Update.pas',
   Fractal.View in 'src\Fractal.View.pas',
   MainFrm in 'src\MainFrm.pas' {MainForm},
   PaletteEditorFrm in 'src\PaletteEditorFrm.pas' {PaletteEditorForm},
