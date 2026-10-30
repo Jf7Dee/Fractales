@@ -31,6 +31,7 @@ type
     procedure TestParseManifest;
     procedure TestManifestWithBomAndLf;
     procedure TestInvalidManifests;
+    procedure TestScriptManifestFormat;
     procedure TestMandatoryFlag;
     procedure TestSiblingUrl;
     procedure TestDecideUpdate;
@@ -377,6 +378,30 @@ begin
   CheckFalse(TryParseManifest(ManifestText('0', Copy(kExeHashLower, 1, 63) + 'g', #13#10), M), 'empreinte avec g');
   CheckFalse(TryParseManifest(Copy(Good, 1, Pos('[Fichiers]', Good) - 1), M), 'section Fichiers absente');
   CheckFalse(TryParseManifest('', M), 'texte vide');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestScriptManifestFormat;
+// Texte tel que l'écrit tools/preparer-version.sh : CRLF, ligne vide entre les sections, notes accentuées
+const
+  kScriptManifest = '[Version]'#13#10 +
+    'Numero=0.5.0.0'#13#10 +
+    'Obligatoire=1'#13#10 +
+    'Notes=Séance conservée'#13#10 +
+    #13#10 +
+    '[Fichiers]'#13#10 +
+    'Fractales.exe=d2c07da0061e39c403c1ec41a1a8a4ce2a305d55d18d169bb11450102892f873'#13#10 +
+    'fractal_kernel.dll=ed95d1fd8a1e666ac5004a2e4b23e53fbe799b48e890473d052b6d7d5c55163c'#13#10;
+var
+  M: TUpdateManifest;
+begin
+  CheckTrue(TryParseManifest(kScriptManifest, M));
+  CheckEquals(0, CompareVersions(M.Version, V(0, 5, 0, 0)));
+  CheckTrue(M.IsMandatory);
+  CheckEquals('Séance conservée', M.Notes);
+  CheckEquals('d2c07da0061e39c403c1ec41a1a8a4ce2a305d55d18d169bb11450102892f873', M.ExeSha256);
+  CheckEquals('ed95d1fd8a1e666ac5004a2e4b23e53fbe799b48e890473d052b6d7d5c55163c', M.DllSha256);
 end;
 
 {------------------------------------------------------------------------------}
