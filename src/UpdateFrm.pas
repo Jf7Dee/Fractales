@@ -27,6 +27,7 @@ type
     FFolder: string;
     FIsMandatory: Boolean;
     FIsDownloading: Boolean;
+    FIsCancelled: Boolean;
     FOutcome: TUpdateOutcome;
     FThread: TUpdateDownloadThread;
     procedure ShowFailure(const Reason: string);
@@ -52,6 +53,8 @@ const
   kCaptionUpdate = 'Mettre à jour';
   kCaptionRetry = 'Réessayer';
   kProgressMax = 1000;
+  kMessageHeight = 38;
+  kMessageGap = 6;
 
 {------------------------------------------------------------------------------}
 
@@ -63,6 +66,8 @@ begin
   FFolder := Folder;
   FIsMandatory := Manifest.IsMandatory;
   FIsDownloading := False;
+  FIsCancelled := False;
+  lblMessage.Height := kMessageHeight;
   lblMessage.Caption := Format(kMsgAvailable, [VersionToString(Manifest.Version), VersionToString(Installed)]);
   lblMessage.Visible := True;
   lblNotes.Caption := Manifest.Notes;
@@ -101,6 +106,7 @@ begin
   btnCancel.Enabled := True;
   btnCancel.Visible := True;
   FIsDownloading := True;
+  FIsCancelled := False;
   FThread := TUpdateDownloadThread.Create(FManifestUrl, FFolder, FManifest, DownloadProgress, DownloadDone);
 end;
 
@@ -121,6 +127,7 @@ procedure TUpdateForm.btnCancelClick(Sender: TObject);
 begin
   if FThread <> nil then
   begin
+    FIsCancelled := True;
     btnCancel.Enabled := False;
     FThread.Cancel;
   end;
@@ -142,6 +149,13 @@ var
 begin
   // Appelé dans le fil principal, dans le OnTerminate du fil : ne pas libérer le fil ici
   FIsDownloading := False;
+  if (not FThread.IsSuccess) and FIsCancelled and not FIsMandatory then
+  begin
+    // Annulation voulue : retour au programme, rien n'a changé
+    FOutcome := uoLater;
+    Close;
+    Exit;
+  end;
   if FThread.IsSuccess then
   begin
     if TryInstallFiles(FFolder, ErrorText) then
@@ -163,6 +177,7 @@ begin
   pbProgress.Visible := False;
   btnCancel.Visible := False;
   lblNotes.Visible := False;
+  lblMessage.Height := btnLater.Top - lblMessage.Top - kMessageGap; // les notes sont cachées : toute la place
   lblMessage.Caption := Format(kMsgFailure, [Reason]);
   lblMessage.Visible := True;
   if FIsMandatory then
