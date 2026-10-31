@@ -1,14 +1,14 @@
 #!/bin/sh
 # Prépare le dossier d'une release à déposer à la main sur github.com : exe, DLL et manifeste.ini.
-# Usage : ./tools/preparer-version.sh [dossier des fichiers compilés, par défaut bin]
+# Usage : ./tools/preparer-version.sh [dossier des fichiers compilés, par défaut la racine du projet, où compile l'IDE]
 set -e
 cd "$(dirname "$0")/.."
-SOURCE="${1:-bin}"
+SOURCE="${1:-.}"
 EXE="$SOURCE/Fractales.exe"
 DLL="$SOURCE/fractal_kernel.dll"
 for F in "$EXE" "$DLL"; do
   if [ ! -f "$F" ]; then
-    echo "Fichier introuvable : $F (compilez d'abord : ./build.sh app)"
+    echo "Fichier introuvable : $F (compilez d'abord dans l'IDE, ou donnez le dossier : ./tools/preparer-version.sh bin)"
     exit 1
   fi
 done
@@ -26,6 +26,10 @@ if [ -e "$TARGET" ]; then
   echo "Le dossier $TARGET existe déjà : supprimez-le ou changez le numéro de version."
   exit 1
 fi
+# Date des fichiers, pour repérer d'un coup d'œil un exe ou une DLL périmés
+echo "Version $VERSION, fichiers pris dans $SOURCE :"
+echo "  Fractales.exe       $(date -r "$EXE" '+%Y-%m-%d %H:%M')"
+echo "  fractal_kernel.dll  $(date -r "$DLL" '+%Y-%m-%d %H:%M')"
 EXE_HASH=$(sha256sum "$EXE" | cut -d ' ' -f 1)
 DLL_HASH=$(sha256sum "$DLL" | cut -d ' ' -f 1)
 printf 'Notes (une ligne, facultatif) : '
