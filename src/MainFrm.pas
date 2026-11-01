@@ -2052,7 +2052,7 @@ begin
   // Appelé par le .dpr après RestoreSession ; le test de fumée n'y passe jamais
   if FUpdateThread <> nil then
     Exit;
-  FUpdateConfig := LoadUpdateConfig(UpdateConfigFilePath);
+  FUpdateConfig := FSettings.Update;     // lu par RestoreSession, avec Fractales.ini
   if FUpdateConfig.Mode = umNone then
     Exit;
   if not TryReadFileVersion(ParamStr(0), FInstalledVersion) then

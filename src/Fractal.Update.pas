@@ -1,15 +1,14 @@
 ﻿unit Fractal.Update;
 
-// Mise à jour du programme : réglages (MiseAJour.ini), versions, manifeste publié avec chaque release, décision,
+// Mise à jour du programme : réglages (section [MiseAJour] de Fractales.ini), versions, manifeste publié avec chaque release, décision,
 // empreinte SHA-256, installation, puis vérification et téléchargement (par un TDownloader) et leurs deux fils.
 
 interface
 
 uses
-  SysUtils, Classes, Fractal.Download;
+  SysUtils, Classes, IniFiles, Fractal.Download;
 
 const
-  kUpdateConfigFileName = 'MiseAJour.ini';
   kManifestFileName = 'manifeste.ini';
   kDefaultManifestUrl = 'https://github.com/Jf7Dee/Fractales/releases/latest/download/manifeste.ini';
   kExeFileName = 'Fractales.exe';      // la DLL : kRustKernelFileName (Fractal.RustKernel)
@@ -33,8 +32,9 @@ type
   TUpdateDecision = (udNothing, udPropose, udNotify);
   TUpdateCheckResult = (ucNothing, ucAvailable, ucFailed, ucInvalid);
 
-function LoadUpdateConfig(const FileName: string): TUpdateConfig;
-function UpdateConfigFilePath: string;
+function DefaultUpdateConfig: TUpdateConfig;
+function ReadUpdateConfig(Ini: TCustomIniFile): TUpdateConfig;
+procedure WriteUpdateConfig(Ini: TCustomIniFile; const C: TUpdateConfig);
 function TryParseVersion(const S: string; out V: TFileVersion): Boolean;
 function CompareVersions(const A, B: TFileVersion): Integer;
 function VersionToString(const V: TFileVersion): string;
@@ -99,7 +99,7 @@ type
 implementation
 
 uses
-  Windows, ShellAPI, IniFiles, Fractal.RustKernel;
+  Windows, ShellAPI, Fractal.RustKernel;
 
 const
   kSectionUpdate = 'MiseAJour';
@@ -110,6 +110,7 @@ const
   kKeyNumber = 'Numero';
   kKeyMandatory = 'Obligatoire';
   kKeyNotes = 'Notes';
+  kModeNone = 'Aucune';
   kModePropose = 'Proposer';
   kModeSilent = 'Silencieux';
   kMandatoryYes = '1';
@@ -149,40 +150,44 @@ function UpdDestroyHash(Hash: TCryptHandle): BOOL; stdcall; external 'advapi32.d
 
 {------------------------------------------------------------------------------}
 
-function LoadUpdateConfig(const FileName: string): TUpdateConfig;
-var
-  Ini: TMemIniFile;
-  Text: string;
+function DefaultUpdateConfig: TUpdateConfig;
 begin
-  Result.Mode := umNone;
+  Result.Mode := umPropose;
   Result.ManifestUrl := kDefaultManifestUrl;
-  if not FileExists(FileName) then
-    Exit;
-  try
-    Ini := TMemIniFile.Create(FileName, TEncoding.UTF8);
-    try
-      Text := Trim(Ini.ReadString(kSectionUpdate, kKeyMode, ''));
-      if SameText(Text, kModePropose) then
-        Result.Mode := umPropose
-      else if SameText(Text, kModeSilent) then
-        Result.Mode := umSilent;
-      Text := Trim(Ini.ReadString(kSectionUpdate, kKeyManifest, ''));
-      if Text <> '' then
-        Result.ManifestUrl := Text;
-    finally
-      Ini.Free;
-    end;
-  except
-    Result.Mode := umNone;  // fichier illisible : aucune vérification
-    Result.ManifestUrl := kDefaultManifestUrl;
-  end;
 end;
 
 {------------------------------------------------------------------------------}
 
-function UpdateConfigFilePath: string;
+// Section [MiseAJour] de Fractales.ini : seul « Aucune » coupe la vérification ; absente ou inconnue = Proposer
+function ReadUpdateConfig(Ini: TCustomIniFile): TUpdateConfig;
+var
+  Text: string;
 begin
-  Result := ExtractFilePath(ParamStr(0)) + kUpdateConfigFileName;
+  Result := DefaultUpdateConfig;
+  if Ini = nil then
+    Exit;
+  Text := Trim(Ini.ReadString(kSectionUpdate, kKeyMode, ''));
+  if SameText(Text, kModeNone) then
+    Result.Mode := umNone
+  else if SameText(Text, kModeSilent) then
+    Result.Mode := umSilent;
+  Text := Trim(Ini.ReadString(kSectionUpdate, kKeyManifest, ''));
+  if Text <> '' then
+    Result.ManifestUrl := Text;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Le mode est toujours écrit (la clé se voit dans le fichier) ; l'adresse seulement si ce n'est pas celle de GitHub
+procedure WriteUpdateConfig(Ini: TCustomIniFile; const C: TUpdateConfig);
+const
+  kModeTexts: array[TUpdateMode] of string = (kModeNone, kModePropose, kModeSilent);
+begin
+  if Ini = nil then
+    Exit;
+  Ini.WriteString(kSectionUpdate, kKeyMode, kModeTexts[C.Mode]);
+  if (C.ManifestUrl <> '') and (C.ManifestUrl <> kDefaultManifestUrl) then
+    Ini.WriteString(kSectionUpdate, kKeyManifest, C.ManifestUrl);
 end;
 
 {------------------------------------------------------------------------------}

@@ -46,7 +46,12 @@ const
   kNoTotal = -1;
   kCancelledText = 'Téléchargement annulé.';
   kHttpErrorFormat = 'HTTP %d';
-  kNetworkErrorFormat = 'erreur réseau %d';   // codes WinInet (12000 et plus) inconnus de SysErrorMessage
+  kNetworkErrorFormat = '%s : erreur réseau %d';   // codes WinInet (12000 et plus) inconnus de SysErrorMessage
+  kStepErrorFormat = '%s : %s (%d)';
+  kStepOpen = 'InternetOpen';          // étapes nommées dans les messages d'erreur
+  kStepOpenUrl = 'InternetOpenUrl';
+  kStepQueryStatus = 'HttpQueryInfo';
+  kStepRead = 'InternetReadFile';
 
 {------------------------------------------------------------------------------}
 
@@ -57,17 +62,22 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Lève EDownloadError avec le message de la dernière erreur Windows
-procedure RaiseLastDownloadError;
+// Lève EDownloadError avec l'étape en cause et le message de l'erreur Windows
+procedure RaiseDownloadError(const Step: string; Code: DWORD);
 var
-  Code: DWORD;
   Msg: string;
 begin
-  Code := GetLastError;
   Msg := Trim(SysErrorMessage(Code));
   if Msg = '' then
-    Msg := Format(kNetworkErrorFormat, [Code]);
-  raise EDownloadError.Create(Msg);
+    raise EDownloadError.Create(Format(kNetworkErrorFormat, [Step, Code]));
+  raise EDownloadError.Create(Format(kStepErrorFormat, [Step, Msg, Code]));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure RaiseLastDownloadError(const Step: string);
+begin
+  RaiseDownloadError(Step, GetLastError);
 end;
 
 {------------------------------------------------------------------------------}
@@ -93,7 +103,7 @@ begin
   Len := SizeOf(Result);
   Index := 0;
   if not HttpQueryInfo(Request, HTTP_QUERY_STATUS_CODE or HTTP_QUERY_FLAG_NUMBER, @Result, Len, Index) then
-    RaiseLastDownloadError;
+    RaiseLastDownloadError(kStepQueryStatus);
 end;
 
 {------------------------------------------------------------------------------}
@@ -114,6 +124,38 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Ouvre l'adresse avec les réglages réseau de Windows (proxy compris), puis en connexion directe si l'adresse ne
+// s'ouvre pas ainsi : un réglage de proxy défaillant fait échouer WinInet sur certains postes (erreur 1168). Une
+// réponse du serveur, même une erreur HTTP, n'est jamais réessayée
+procedure OpenUrl(const Url: string; out Session, Request: HINTERNET);
+const
+  kAccessTypes: array[0..1] of DWORD = (INTERNET_OPEN_TYPE_PRECONFIG, INTERNET_OPEN_TYPE_DIRECT);
+var
+  I: Integer;
+  Code: DWORD;
+begin
+  Request := nil;
+  Code := 0;
+  for I := Low(kAccessTypes) to High(kAccessTypes) do
+  begin
+    Session := InternetOpen(kAgentName, kAccessTypes[I], nil, nil, 0);
+    if Session = nil then
+      RaiseLastDownloadError(kStepOpen);
+    SetTimeouts(Session);
+    // NO_UI : jamais de boîte de dialogue de WinInet (fil sans fenêtre) ; NO_COOKIES : rien n'est conservé
+    Request := InternetOpenUrl(Session, PChar(Url), nil, 0, INTERNET_FLAG_RELOAD or INTERNET_FLAG_NO_CACHE_WRITE
+      or INTERNET_FLAG_NO_UI or INTERNET_FLAG_NO_COOKIES, 0);
+    if Request <> nil then
+      Exit;
+    Code := GetLastError;
+    InternetCloseHandle(Session);
+  end;
+  Session := nil;
+  RaiseDownloadError(kStepOpenUrl, Code);   // erreur du dernier essai, en direct
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TWinInetDownloader.Fetch(const Url: string; Sink: TStream; OnProgress: TDownloadProgress);
 var
   Session, Request: HINTERNET;
@@ -124,16 +166,8 @@ var
 begin
   if IsCancelled then
     raise EDownloadCancelled.Create(kCancelledText);
-  Session := InternetOpen(kAgentName, INTERNET_OPEN_TYPE_PRECONFIG, nil, nil, 0);
-  if Session = nil then
-    RaiseLastDownloadError;
+  OpenUrl(Url, Session, Request);
   try
-    SetTimeouts(Session);
-    // NO_UI : jamais de boîte de dialogue de WinInet (fil sans fenêtre) ; NO_COOKIES : rien n'est conservé
-    Request := InternetOpenUrl(Session, PChar(Url), nil, 0, INTERNET_FLAG_RELOAD or INTERNET_FLAG_NO_CACHE_WRITE
-      or INTERNET_FLAG_NO_UI or INTERNET_FLAG_NO_COOKIES, 0);
-    if Request = nil then
-      RaiseLastDownloadError;
     try
       Status := QueryStatusCode(Request);
       if Status <> kHttpOk then
@@ -146,7 +180,7 @@ begin
           raise EDownloadCancelled.Create(kCancelledText);
         Got := 0;
         if not InternetReadFile(Request, @Block[0], kBlockSize, Got) then
-          RaiseLastDownloadError;
+          RaiseLastDownloadError(kStepRead);
         if Got > 0 then
         begin
           Sink.WriteBuffer(Block[0], Got);

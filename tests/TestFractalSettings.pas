@@ -4,7 +4,7 @@ interface
 
 uses
   Windows, Classes, SysUtils, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Persistence,
-  Fractal.Settings, TestUtils;
+  Fractal.Settings, Fractal.Update, TestUtils;
 
 type
   TTestSettings = class(TTestCase)
@@ -45,6 +45,8 @@ begin
   Result.HiResWidth := 2000;
   Result.HiResHeight := 1500;
   Result.HiResSupersample := 3;
+  Result.Update.Mode := umSilent;
+  Result.Update.ManifestUrl := 'http://localhost:8000/manifeste.ini';
 end;
 
 {------------------------------------------------------------------------------}
@@ -105,6 +107,8 @@ begin
   CheckEquals(2000, R.HiResWidth);
   CheckEquals(1500, R.HiResHeight);
   CheckEquals(3, R.HiResSupersample);
+  CheckTrue(R.Update.Mode = umSilent);
+  CheckEquals(S.Update.ManifestUrl, R.Update.ManifestUrl);
 end;
 
 {------------------------------------------------------------------------------}
@@ -120,6 +124,8 @@ begin
   CheckEquals('', R.LocationFolder);
   CheckEquals(D.HiResPreset, R.HiResPreset);
   CheckEquals(D.HiResSupersample, R.HiResSupersample);
+  CheckTrue(R.Update.Mode = umPropose);
+  CheckEquals(kDefaultManifestUrl, R.Update.ManifestUrl);
 end;
 
 {------------------------------------------------------------------------------}

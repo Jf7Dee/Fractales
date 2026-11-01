@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, Classes, SysUtils, TestFramework, Fractal.Update, Fractal.Download, Fractal.RustKernel,
+  Windows, Classes, SysUtils, IniFiles, TestFramework, Fractal.Update, Fractal.Download, Fractal.RustKernel,
   TestUtils;
 
 type
@@ -22,8 +22,9 @@ type
     procedure PrepareDownload(const Name: string; out Folder, ExeHash, DllHash: string);
     function RunDownload(Fake: TObject; const Folder, Version, ExeHash, DllHash: string; out Err: string): Boolean;
   published
-    procedure TestMissingConfigIsNone;
+    procedure TestMissingSectionIsPropose;
     procedure TestConfigModes;
+    procedure TestWriteConfig;
     procedure TestParseVersion;
     procedure TestCompareVersions;
     procedure TestVersionToString;
@@ -51,6 +52,7 @@ type
     procedure TestDownloadRejectsVersionMismatch;
     procedure TestDownloadFailureLeavesNoNewFiles;
     procedure TestDownloadCancelled;
+    procedure TestDownloadErrorNamesStep;
   end;
 
 implementation
@@ -282,38 +284,90 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TTestUpdate.TestMissingConfigIsNone;
+// Fichier ini en mémoire, tel qu'il serait lu depuis Fractales.ini ; à libérer par l'appelant
+function IniFromText(const Text: string): TMemIniFile;
+var
+  Lines: TStringList;
+begin
+  Result := TMemIniFile.Create('');
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Text;
+    Result.SetStrings(Lines);
+  finally
+    Lines.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ConfigFromText(const Text: string): TUpdateConfig;
+var
+  Ini: TMemIniFile;
+begin
+  Ini := IniFromText(Text);
+  try
+    Result := ReadUpdateConfig(Ini);
+  finally
+    Ini.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestMissingSectionIsPropose;
 var
   C: TUpdateConfig;
 begin
-  C := LoadUpdateConfig(TestTempFolder + 'MiseAJour-absent.ini');
-  CheckTrue(C.Mode = umNone);
+  C := ConfigFromText('[Engine]'#13#10'Kernel=Rust');
+  CheckTrue(C.Mode = umPropose);
   CheckEquals(kDefaultManifestUrl, C.ManifestUrl);
+  C := ReadUpdateConfig(nil);
+  CheckTrue(C.Mode = umPropose);
+  CheckTrue(DefaultUpdateConfig.Mode = umPropose);
 end;
 
 {------------------------------------------------------------------------------}
 
 procedure TTestUpdate.TestConfigModes;
 var
-  FileName: string;
   C: TUpdateConfig;
 begin
-  FileName := TestTempFolder + 'MiseAJour-modes.ini';
-  WriteText(FileName, '[MiseAJour]'#13#10'Mode=proposer');
-  C := LoadUpdateConfig(FileName);
+  C := ConfigFromText('[MiseAJour]'#13#10'Mode=proposer');
   CheckTrue(C.Mode = umPropose);
   CheckEquals(kDefaultManifestUrl, C.ManifestUrl);
-  WriteText(FileName, '[MiseAJour]'#13#10'Mode=Silencieux'#13#10'Manifeste=http://localhost:8000/manifeste.ini');
-  C := LoadUpdateConfig(FileName);
+  C := ConfigFromText('[MiseAJour]'#13#10'Mode=Silencieux'#13#10'Manifeste=http://localhost:8000/manifeste.ini');
   CheckTrue(C.Mode = umSilent);
   CheckEquals('http://localhost:8000/manifeste.ini', C.ManifestUrl);
-  WriteText(FileName, '[MiseAJour]'#13#10'Mode=Toujours');
-  CheckTrue(LoadUpdateConfig(FileName).Mode = umNone);
-  WriteText(FileName, '[MiseAJour]'#13#10'Mode=Aucune'#13#10'Manifeste=');
-  C := LoadUpdateConfig(FileName);
+  // valeur inconnue : le mode par défaut ; seul « Aucune » coupe la vérification
+  CheckTrue(ConfigFromText('[MiseAJour]'#13#10'Mode=Toujours').Mode = umPropose);
+  C := ConfigFromText('[MiseAJour]'#13#10'Mode=aucune'#13#10'Manifeste=');
   CheckTrue(C.Mode = umNone);
   CheckEquals(kDefaultManifestUrl, C.ManifestUrl);
-  DeleteFile(FileName);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestWriteConfig;
+var
+  Ini: TMemIniFile;
+  C: TUpdateConfig;
+begin
+  Ini := TMemIniFile.Create('');
+  try
+    WriteUpdateConfig(Ini, DefaultUpdateConfig);
+    CheckEquals('Proposer', Ini.ReadString('MiseAJour', 'Mode', ''));
+    CheckFalse(Ini.ValueExists('MiseAJour', 'Manifeste'), 'adresse de GitHub non écrite');
+    C.Mode := umNone;
+    C.ManifestUrl := 'http://localhost:8000/manifeste.ini';
+    WriteUpdateConfig(Ini, C);
+    C := ReadUpdateConfig(Ini);
+    CheckTrue(C.Mode = umNone);
+    CheckEquals('http://localhost:8000/manifeste.ini', C.ManifestUrl);
+    WriteUpdateConfig(nil, C);
+  finally
+    Ini.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -869,6 +923,29 @@ begin
   finally
     D.Free;
     RemoveFolder(F);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestUpdate.TestDownloadErrorNamesStep;
+var
+  D: TWinInetDownloader;
+  Msg: string;
+begin
+  // adresse mal formée : refusée par WinInet sans réseau, après l'essai en direct
+  D := TWinInetDownloader.Create;
+  try
+    Msg := '';
+    try
+      D.DownloadText('pas une adresse');
+    except
+      on E: EDownloadError do
+        Msg := E.Message;
+    end;
+    CheckEquals(1, Pos('InternetOpenUrl : ', Msg), Msg);
+  finally
+    D.Free;
   end;
 end;
 

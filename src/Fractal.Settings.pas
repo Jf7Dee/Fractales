@@ -6,7 +6,7 @@
 interface
 
 uses
-  SysUtils, IniFiles, Fractal.Persistence;
+  SysUtils, IniFiles, Fractal.Persistence, Fractal.Update;
 
 const
   kSettingsFileName = 'Fractales.ini';
@@ -30,6 +30,7 @@ type
     HiResWidth: Integer;       // taille personnalisée
     HiResHeight: Integer;
     HiResSupersample: Integer;
+    Update: TUpdateConfig;     // section [MiseAJour]
   end;
 
 function DefaultAppSettings: TAppSettings;
@@ -74,6 +75,7 @@ begin
   Result.HiResWidth := kDefaultHiResWidth;
   Result.HiResHeight := kDefaultHiResHeight;
   Result.HiResSupersample := kDefaultSupersample;
+  Result.Update := DefaultUpdateConfig;
 end;
 
 {------------------------------------------------------------------------------}
@@ -110,6 +112,7 @@ begin
         kMaxHiResSize);
       Result.HiResSupersample := ReadBounded(Ini, kSectionHiRes, kKeySupersample, D.HiResSupersample,
         kMinSupersample, kMaxSupersample);
+      Result.Update := ReadUpdateConfig(Ini);
     finally
       Ini.Free;
     end;
@@ -142,6 +145,7 @@ begin
       Ini.WriteInteger(kSectionHiRes, kKeyWidth, S.HiResWidth);
       Ini.WriteInteger(kSectionHiRes, kKeyHeight, S.HiResHeight);
       Ini.WriteInteger(kSectionHiRes, kKeySupersample, S.HiResSupersample);
+      WriteUpdateConfig(Ini, S.Update);
       Ini.Rename(FileName, False);
       Ini.UpdateFile;
     finally
