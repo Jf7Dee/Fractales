@@ -135,7 +135,6 @@ var
   Code: DWORD;
 begin
   Request := nil;
-  Code := 0;
   for I := Low(kAccessTypes) to High(kAccessTypes) do
   begin
     Session := InternetOpen(kAgentName, kAccessTypes[I], nil, nil, 0);

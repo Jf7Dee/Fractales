@@ -40,9 +40,7 @@ const
   kPngFilter = 'Image PNG (*.png)|*.png';
   kModeSmoothIndex = 0;  // ordre des éléments de cbColoringMode
   kModeBandsIndex = 1;
-  // notes de la vérification de mise à jour, dans la barre d'état
-  kUpdateFailedFormat = 'Recherche de mise à jour impossible : %s';
-  kUpdateInvalidText = 'Manifeste de mise à jour invalide.';
+  // notes de la vérification de mise à jour, dans la barre d'état (les échecs : Fractal.Update)
   kUpdateAvailableFormat = 'Version %s disponible.';
   // résultat de la vérification, traité hors du OnTerminate du fil (une exception y tuerait le programme)
   WM_UPDATE_CHECKED = WM_USER + 1;
@@ -163,6 +161,7 @@ type
     procedure MenuAideSourisClick(Sender: TObject);
     procedure MenuAideGestesClick(Sender: TObject);
     procedure MenuAideEffetsClick(Sender: TObject);
+    procedure MenuAideAProposClick(Sender: TObject);
     procedure Fin1Click(Sender: TObject);
     procedure Action_RustEngineExecute(Sender: TObject);
     procedure ResetAllClick(Sender: TObject);
@@ -204,6 +203,7 @@ type
     FUpdateManifest: TUpdateManifest;
     FUpdateErrorText: string;
     FShouldRestart: Boolean;
+    FIsAboutShowing: Boolean;  // la fenêtre « À propos » fait sa propre recherche : pas de seconde proposition
     procedure WMUpdateChecked(var Message: TMessage); message WM_UPDATE_CHECKED;
     procedure InitNavigation;
     procedure AppMessage(var Msg: TMsg; var Handled: Boolean);
@@ -271,6 +271,7 @@ type
     procedure CheckEffectsSmoke;
     procedure CheckResetAllSmoke;
     procedure CheckUpdateFormSmoke;
+    procedure CheckAboutFormSmoke;
     procedure SmokeException(Sender: TObject; E: Exception);
 
     procedure SelectKernel(Kernel: TEngineKernelType);
@@ -295,7 +296,7 @@ implementation
 {$R *.dfm}
 
 uses
-  PaletteEditorFrm, HiResFrm, UpdateFrm;
+  PaletteEditorFrm, HiResFrm, UpdateFrm, AboutFrm;
 
 {------------------------------------------------------------------------------}
 
@@ -985,6 +986,41 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Fenêtre « À propos » : version affichée, bouton de recherche, textes des résultats (sans ShowModal, sans réseau).
+procedure TMainForm.CheckAboutFormSmoke;
+var
+  Form: TAboutForm;
+  Installed: TFileVersion;
+begin
+  Installed[0] := 0;
+  Installed[1] := 5;
+  Installed[2] := 0;
+  Installed[3] := 1;
+  Form := TAboutForm.Create(nil);
+  try
+    Form.Prepare(True, Installed, 'http://localhost/manifeste.ini');
+    if Form.lblVersion.Caption <> 'Version 0.5.0.1' then
+      raise Exception.Create('version de la fenêtre « À propos » : ' + Form.lblVersion.Caption);
+    if not Form.btnCheck.Enabled then
+      raise Exception.Create('bouton de recherche grisé alors que la version est connue');
+    Form.Prepare(False, Installed, 'http://localhost/manifeste.ini');
+    if (Form.lblVersion.Caption <> 'Version inconnue') or Form.btnCheck.Enabled then
+      raise Exception.Create('version inconnue : texte ou bouton de recherche incorrect');
+  finally
+    Form.Free;
+  end;
+  if CheckResultText(ucNothing, '') <> 'Version déjà à jour.' then
+    raise Exception.Create('texte « à jour » : ' + CheckResultText(ucNothing, ''));
+  if CheckResultText(ucFailed, 'InternetOpenUrl : erreur réseau 12007') <>
+    'Recherche de mise à jour impossible : InternetOpenUrl : erreur réseau 12007' then
+    raise Exception.Create('texte d''échec : ' + CheckResultText(ucFailed, 'InternetOpenUrl : erreur réseau 12007'));
+  if CheckResultText(ucInvalid, '') <> kUpdateInvalidText then
+    raise Exception.Create('texte « manifeste invalide » : ' + CheckResultText(ucInvalid, ''));
+  FSmokeLog.Add('Fenêtre À propos OK');
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.SmokeException(Sender: TObject; E: Exception);
 begin
   FSmokeLog.Add('ÉCHEC : exception non gérée : ' + E.Message);
@@ -1206,6 +1242,7 @@ begin
       FSmokeLog.Add('Rendu HD OK');
       CheckResetAllSmoke;
       CheckUpdateFormSmoke;
+      CheckAboutFormSmoke;
       if not FHasSmokeFailure then
         Result := 0;
     except
@@ -2096,7 +2133,10 @@ begin
         udNotify:
           FStatusMessage := Format(kUpdateAvailableFormat, [VersionToString(FUpdateManifest.Version)]);
         udPropose:
-          ShowUpdateForm(FUpdateManifest);
+          if FIsAboutShowing then
+            FStatusMessage := Format(kUpdateAvailableFormat, [VersionToString(FUpdateManifest.Version)])
+          else
+            ShowUpdateForm(FUpdateManifest);
       end;
   end;
   UpdateStatus;
@@ -2368,6 +2408,36 @@ end;
 procedure TMainForm.MenuAideEffetsClick(Sender: TObject);
 begin
   ShowHelp(htEffects);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.MenuAideAProposClick(Sender: TObject);
+var
+  Dlg: TAboutForm;
+  HasVersion: Boolean;
+  IsUpdateAvailable: Boolean;
+  Manifest: TUpdateManifest;
+begin
+  // La recherche demandée ici ne dépend pas du mode : même avec Mode=Aucune, elle propose sans installer
+  FUpdateConfig := FSettings.Update;
+  HasVersion := TryReadFileVersion(ParamStr(0), FInstalledVersion);
+  Dlg := TAboutForm.Create(Self);
+  try
+    Dlg.Prepare(HasVersion, FInstalledVersion, FUpdateConfig.ManifestUrl);
+    FIsAboutShowing := True;
+    try
+      Dlg.ShowModal;
+    finally
+      FIsAboutShowing := False;
+    end;
+    IsUpdateAvailable := Dlg.IsUpdateAvailable;
+    Manifest := Dlg.Manifest;
+  finally
+    Dlg.Free;
+  end;
+  if IsUpdateAvailable then
+    ShowUpdateForm(Manifest);
 end;
 
 {------------------------------------------------------------------------------}

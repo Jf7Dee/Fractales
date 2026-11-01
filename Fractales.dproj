@@ -126,6 +126,9 @@
         <DCCReference Include="src\HelpFrm.pas">
             <Form>HelpForm</Form>
         </DCCReference>
+        <DCCReference Include="src\AboutFrm.pas">
+            <Form>AboutForm</Form>
+        </DCCReference>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

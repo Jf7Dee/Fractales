@@ -14,6 +14,9 @@ const
   kExeFileName = 'Fractales.exe';      // la DLL : kRustKernelFileName (Fractal.RustKernel)
   kNewSuffix = '.new';
   kOldSuffix = '.old';
+  // résultat d'une vérification qui n'aboutit pas (barre d'état, fenêtre « À propos »)
+  kUpdateFailedFormat = 'Recherche de mise à jour impossible : %s';
+  kUpdateInvalidText = 'Manifeste de mise à jour invalide.';
 
 type
   TUpdateMode = (umNone, umPropose, umSilent);

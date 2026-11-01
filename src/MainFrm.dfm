@@ -831,6 +831,13 @@ object MainForm: TMainForm
         Caption = '&Effets de couleur...'
         OnClick = MenuAideEffetsClick
       end
+      object N3: TMenuItem
+        Caption = '-'
+      end
+      object MenuAideAPropos: TMenuItem
+        Caption = #192' &propos de Fractales...'
+        OnClick = MenuAideAProposClick
+      end
     end
   end
   object ImageList2: TImageList
