@@ -3,11 +3,13 @@
 interface
 
 uses
-  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls,
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls,
+  pngimage,  // TPngImage : le bandeau (vallée des hippocampes) est un PNG rangé dans le .dfm
   Fractal.Update;
 
 type
   TAboutForm = class(TForm)
+    imgBanner: TImage;
     lblTitle: TLabel;
     lblVersion: TLabel;
     lblStatus: TLabel;
