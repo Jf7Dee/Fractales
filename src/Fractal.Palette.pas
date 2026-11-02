@@ -23,7 +23,7 @@ const
   kMaxShading = 1.0;
   kDefaultShading = 0.5;
   kMinContourWidth = 0.02;  // épaisseur du contour, en fraction de la bande
-  kMaxContourWidth = 0.5;
+  kMaxContourWidth = 0.14;  // au-delà, le contour mange la bande ; le curseur gagne en finesse
   kDefaultContourWidth = 0.1;
   kFullTurnDegrees = 360.0;
   kDefaultLightAngle = 135.0;  // lumière venant du haut à gauche (0 = droite, 90 = haut)

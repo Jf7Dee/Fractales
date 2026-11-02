@@ -622,7 +622,7 @@ begin
   M.BandWidth := 0.2;
   M.Shading := 0.7;
   M.HasContours := True;
-  M.ContourWidth := 0.15;
+  M.ContourWidth := 0.12;
   M.HasRelief := True;
   M.LightAngle := 135;
   M.ReliefIntensity := 0.6;
