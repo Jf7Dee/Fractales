@@ -620,7 +620,7 @@ begin
   M := DefaultColorMapping;
   M.Mode := cmBands;
   M.BandWidth := 0.2;
-  M.Shading := 0.7;
+  M.Shading := 0.4;
   M.HasContours := True;
   M.ContourWidth := 0.12;
   M.HasRelief := True;

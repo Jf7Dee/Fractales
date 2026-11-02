@@ -19,9 +19,9 @@ const
   kMinBandWidth = 1 / 64;  // largeur d'une bande, en fraction du cycle de la palette
   kMaxBandWidth = 0.25;
   kDefaultBandWidth = 1 / 16;
-  kMinShading = 0.0;  // amplitude du modelé : 0 = bande plate, 1 = du noir à la couleur pleine
-  kMaxShading = 1.0;
-  kDefaultShading = 0.5;
+  kMinShading = 0.0;  // amplitude du modelé : 0 = bande plate, 1 = du noir à la couleur pleine (au-delà de 0.5, trop dur)
+  kMaxShading = 0.5;
+  kDefaultShading = 0.25;
   kMinContourWidth = 0.02;  // épaisseur du contour, en fraction de la bande
   kMaxContourWidth = 0.14;  // au-delà, le contour mange la bande ; le curseur gagne en finesse
   kDefaultContourWidth = 0.1;
