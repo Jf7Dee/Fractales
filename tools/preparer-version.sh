@@ -1,14 +1,14 @@
 #!/bin/sh
 # Prépare le dossier d'une release à déposer à la main sur github.com : exe, DLL et manifeste.ini.
-# Usage : ./tools/preparer-version.sh [dossier des fichiers compilés, par défaut la racine du projet, où compile l'IDE]
+# Usage : ./tools/preparer-version.sh [dossier des fichiers compilés, par défaut bin, où l'IDE compile en Release]
 set -e
 cd "$(dirname "$0")/.."
-SOURCE="${1:-.}"
+SOURCE="${1:-bin}"
 EXE="$SOURCE/Fractales.exe"
 DLL="$SOURCE/fractal_kernel.dll"
 for F in "$EXE" "$DLL"; do
   if [ ! -f "$F" ]; then
-    echo "Fichier introuvable : $F (compilez d'abord dans l'IDE, ou donnez le dossier : ./tools/preparer-version.sh bin)"
+    echo "Fichier introuvable : $F (compilez d'abord en Release dans l'IDE, ou donnez le dossier : ./tools/preparer-version.sh .)"
     exit 1
   fi
 done
