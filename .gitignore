@@ -13,3 +13,4 @@ __history/
 bench-rust/target/
 kernel-rust/target/
 publication/
+examples/
