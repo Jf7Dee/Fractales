@@ -695,14 +695,12 @@ begin
     CheckTrue(Red(LitColor) > Red(ShadowColor), Format('%x %x', [LitColor, ShadowColor]));
     CheckTrue(Red(LitColor) > $80);
     CheckTrue(Red(ShadowColor) < $80);
-    // même chose dans l'axe vertical : lumière du haut (90) sur un plan montant vers le bas
+    // même chose dans l'axe vertical : lumière du haut (90), plus de lumière du dessous ; le plan montant vers le
+    // bas est clair, celui qui monte vers le haut est sombre
     Map.LightAngle := 90;
     Lit.Free;
     Lit := TColorMapper.Create(P, Map);
-    Map.LightAngle := 270;
-    Shadow.Free;
-    Shadow := TColorMapper.Create(P, Map);
-    CheckTrue(Red(Lit.ShadeValue(500, 500, 500, 400, 600)) > Red(Shadow.ShadeValue(500, 500, 500, 400, 600)));
+    CheckTrue(Red(Lit.ShadeValue(500, 500, 500, 400, 600)) > Red(Lit.ShadeValue(500, 500, 500, 600, 400)));
   finally
     Shadow.Free;
     Lit.Free;
@@ -831,6 +829,13 @@ begin
   CheckEquals(kMaxReliefIntensity, R.ReliefIntensity, 1e-12);
   CheckEquals(kMaxReliefHeight, R.ReliefHeight, 1e-12);
   CheckEquals(5, R.LightAngle, 1e-9);
+  // lumière venant du dessous : ramenée au bord le plus proche
+  M.LightAngle := 200;
+  CheckEquals(kMaxLightAngle, ClampColorMapping(M).LightAngle, 1e-9);
+  M.LightAngle := 300;
+  CheckEquals(0, ClampColorMapping(M).LightAngle, 1e-9);
+  M.LightAngle := -10;
+  CheckEquals(0, ClampColorMapping(M).LightAngle, 1e-9);
   M.BandWidth := NaN;
   M.LightAngle := NaN;
   R := ClampColorMapping(M);
@@ -858,6 +863,11 @@ begin
   CheckEquals(kMaxReliefHeight, ReliefHeightFromSlider(kEffectSliderMax), 1e-9);
   CheckEquals(kDefaultReliefHeight, ReliefHeightFromSlider(ReliefHeightToSlider(kDefaultReliefHeight)), 0.5);
   CheckEquals(kDefaultLightAngle, LightAngleFromSlider(LightAngleToSlider(kDefaultLightAngle)), 1e-9);
+  // sens inversé : à gauche la lumière vient de la gauche (180), à droite de la droite (0)
+  CheckEquals(kMaxLightAngle, LightAngleFromSlider(0), 1e-12);
+  CheckEquals(0, LightAngleFromSlider(kLightAngleSliderMax), 1e-12);
+  CheckEquals(0, LightAngleToSlider(200));
+  CheckEquals(kLightAngleSliderMax, LightAngleToSlider(300));
   // NaN : ni exception ni position hors plage
   CheckEquals(ShadingToSlider(kDefaultShading), ShadingToSlider(NaN));
   CheckEquals(ContourWidthToSlider(kDefaultContourWidth), ContourWidthToSlider(NaN));

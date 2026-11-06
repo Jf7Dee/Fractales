@@ -504,7 +504,7 @@ object MainForm: TMainForm
           Top = 180
           Width = 190
           Height = 26
-          Max = 359
+          Max = 180
           TabOrder = 6
           TickStyle = tsNone
           OnChange = EffectChange

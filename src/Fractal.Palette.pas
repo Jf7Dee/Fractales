@@ -26,6 +26,7 @@ const
   kMaxContourWidth = 0.14;  // au-delà, le contour mange la bande ; le curseur gagne en finesse
   kDefaultContourWidth = 0.1;
   kFullTurnDegrees = 360.0;
+  kMaxLightAngle = 180.0;  // lumière venant du dessus seulement : du dessous, le relief paraît inversé
   kDefaultLightAngle = 135.0;  // lumière venant du haut à gauche (0 = droite, 90 = haut)
   kMinReliefIntensity = 0.0;
   kMaxReliefIntensity = 1.0;
@@ -38,7 +39,7 @@ const
   kMinBandCount = 4;  // une bande vaut 1/N du cycle de la palette, avec N entier : les bandes divisent le cycle
   kMaxBandCount = 64;
   kBandSliderMax = kMaxBandCount - kMinBandCount;  // à droite : N petit, donc bandes larges
-  kLightAngleSliderMax = 359;  // pas de 1 degré ; 360 degrés = 0
+  kLightAngleSliderMax = 180;  // pas de 1 degré, sens inversé : curseur à gauche, lumière venant de la gauche
   kInsideColor = $000000;
   kMaxStops = 1024;
   kMaxMapColors = 256;
@@ -628,6 +629,20 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function ClampLightAngle(Angle: Double): Double;
+begin
+  if IsNan(Angle) or IsInfinite(Angle) then
+    Exit(kDefaultLightAngle);
+  Angle := Angle - kFullTurnDegrees * Floor(Angle / kFullTurnDegrees);
+  // lumière venant du dessous (anciens lieux) : ramenée au bord le plus proche, 0 (droite) ou 180 (gauche)
+  if Angle > (kMaxLightAngle + kFullTurnDegrees) / 2 then
+    Result := 0
+  else
+    Result := Min(Angle, kMaxLightAngle);
+end;
+
+{------------------------------------------------------------------------------}
+
 function ClampColorMapping(const M: TColorMapping): TColorMapping;
 begin
   Result := M;
@@ -644,9 +659,7 @@ begin
   Result.Shading := ClampOrDefault(Result.Shading, kDefaultShading, kMinShading, kMaxShading);
   Result.ContourWidth := ClampOrDefault(Result.ContourWidth, kDefaultContourWidth, kMinContourWidth,
     kMaxContourWidth);
-  if IsNan(Result.LightAngle) or IsInfinite(Result.LightAngle) then
-    Result.LightAngle := kDefaultLightAngle;
-  Result.LightAngle := Result.LightAngle - kFullTurnDegrees * Floor(Result.LightAngle / kFullTurnDegrees);
+  Result.LightAngle := ClampLightAngle(Result.LightAngle);
   Result.ReliefIntensity := ClampOrDefault(Result.ReliefIntensity, kDefaultReliefIntensity, kMinReliefIntensity,
     kMaxReliefIntensity);
   Result.ReliefHeight := ClampOrDefault(Result.ReliefHeight, kDefaultReliefHeight, kMinReliefHeight,
@@ -787,17 +800,14 @@ end;
 
 function LightAngleFromSlider(Position: Integer): Double;
 begin
-  Result := EnsureRange(Position, 0, kLightAngleSliderMax);
+  Result := kMaxLightAngle - EnsureRange(Position, 0, kLightAngleSliderMax);
 end;
 
 {------------------------------------------------------------------------------}
 
 function LightAngleToSlider(Angle: Double): Integer;
 begin
-  if IsNan(Angle) or IsInfinite(Angle) then
-    Exit(Round(kDefaultLightAngle));
-  Angle := Angle - kFullTurnDegrees * Floor(Angle / kFullTurnDegrees);
-  Result := Round(Angle) mod Round(kFullTurnDegrees);
+  Result := kLightAngleSliderMax - Round(ClampLightAngle(Angle));
 end;
 
 {------------------------------------------------------------------------------}

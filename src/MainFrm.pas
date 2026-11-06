@@ -880,7 +880,7 @@ end;
 
 procedure TMainForm.CheckEffectsSmoke;
 const
-  kSmokeLightAngle = 45;
+  kSmokeLightPosition = 30;  // lumière à 150 degrés, autre que celle par défaut
 var
   Smooth, Effects: Cardinal;
 begin
@@ -892,9 +892,9 @@ begin
   EffectChange(cbColoringMode);
   chkContours.Checked := True;
   chkRelief.Checked := True;
-  tbLightAngle.Position := kSmokeLightAngle;
+  tbLightAngle.Position := kSmokeLightPosition;
   if (FMapping.Mode <> cmBands) or not FMapping.HasContours or not FMapping.HasRelief
-    or (Abs(FMapping.LightAngle - kSmokeLightAngle) > 1e-9) then
+    or (Abs(FMapping.LightAngle - (kMaxLightAngle - kSmokeLightPosition)) > 1e-9) then
     raise Exception.Create('effets de couleur non appliqués');
   if not tbBandWidth.Enabled or not tbReliefHeight.Enabled then
     raise Exception.Create('curseurs d''effets grisés alors qu''actifs');
@@ -906,7 +906,7 @@ begin
   EffectChange(cbColoringMode);
   chkContours.Checked := False;
   chkRelief.Checked := False;
-  tbLightAngle.Position := Round(kDefaultLightAngle);
+  tbLightAngle.Position := LightAngleToSlider(kDefaultLightAngle);
   DisplayTimer(nil);
   if tbBandWidth.Enabled or tbReliefHeight.Enabled then
     raise Exception.Create('curseurs d''effets non grisés');

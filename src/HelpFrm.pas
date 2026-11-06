@@ -73,8 +73,9 @@ const
     'Les réglages du panneau Effets recolorent l''image tout de suite, sans recalcul, et sont enregistrés avec ' +
       'les lieux. En mode Bandes, la couleur est constante dans chaque bande (la largeur est une fraction du ' +
       'cycle de la palette) ; le modelé éclaire la bande de son début à son bord. Le relief éclaire l''image ' +
-      'comme un paysage dont l''altitude est la position dans la palette : la lumière vient de l''angle ' +
-      'choisi, la hauteur amplifie la pente.');
+      'comme un paysage dont l''altitude est la position dans la palette : la lumière vient du dessus, du ' +
+      'côté où se trouve le curseur (gauche, haut ou droite), la hauteur amplifie la pente et l''intensité ' +
+      'dose l''effet (à zéro, lumière et hauteur ne changent rien).');
 
 {------------------------------------------------------------------------------}
 
