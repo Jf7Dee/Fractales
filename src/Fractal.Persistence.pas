@@ -68,6 +68,9 @@ function UniqueBaseName(const Folder, Base, Extension: string): string;
 function AppDataFolder: string;
 function PaletteFolder: string;
 function FavoritesFolder: string;
+// Centres en haute précision dans les fichiers texte (lieux, scénarios vidéo)
+function CenterDigits(AWidth: TFloat; const C: THighFloat): Integer;
+function ParseCenter(const S: string; AWidth, ADefault: TFloat): THighFloat;
 
 implementation
 
