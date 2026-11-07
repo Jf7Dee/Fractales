@@ -22,6 +22,7 @@ uses
   Fractal.Update in '..\src\Fractal.Update.pas',
   Fractal.VideoPath in '..\src\Fractal.VideoPath.pas',
   Fractal.VideoScenario in '..\src\Fractal.VideoScenario.pas',
+  Fractal.VideoEncoder in '..\src\Fractal.VideoEncoder.pas',
   TestFractalTypes in 'TestFractalTypes.pas',
   TestFractalHighFloat in 'TestFractalHighFloat.pas',
   TestFractalPerturbation in 'TestFractalPerturbation.pas',

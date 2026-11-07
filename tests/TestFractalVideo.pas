@@ -4,7 +4,7 @@ interface
 
 uses
   Windows, SysUtils, Classes, Math, TestFramework, Fractal.HighFloat, Fractal.Types, Fractal.Persistence,
-  Fractal.VideoPath, Fractal.VideoScenario, TestUtils;
+  Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder, TestUtils;
 
 type
   TTestVideoPath = class(TTestCase)
@@ -38,6 +38,16 @@ type
     procedure TestSaveLoadRoundTrip;
     procedure TestLoadGarbage;
     procedure TestMoveAndDelete;
+  end;
+
+  TTestVideoEncoder = class(TTestCase)
+  private
+    function SystemTool(const Name: string): string;
+  published
+    procedure TestArguments;
+    procedure TestFindFfmpeg;
+    procedure TestMissingExe;
+    procedure TestFailingEncoderReportsError;
   end;
 
 implementation
@@ -465,8 +475,104 @@ begin
   end;
 end;
 
+{------------------------------------------------------------------------------}
+
+function TTestVideoEncoder.SystemTool(const Name: string): string;
+begin
+  Result := GetEnvironmentVariable('SystemRoot') + '\System32\' + Name;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoEncoder.TestArguments;
+const
+  kParts: array[0..8] of string = ('-y ', '-f image2pipe', '-framerate 30', '-c:v png -i -', '-c:v libx264',
+    '-pix_fmt yuv420p', '-crf 16', '-movflags +faststart', '"C:\Vidéos\voyage.mp4"');
+var
+  Args: string;
+  I: Integer;
+begin
+  Args := FfmpegArguments('C:\Vidéos\voyage.mp4', 30);
+  for I := Low(kParts) to High(kParts) do
+    CheckTrue(Pos(kParts[I], Args) > 0, kParts[I] + ' absent de : ' + Args);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoEncoder.TestFindFfmpeg;
+var
+  Folder, Fake, Configured: string;
+  L: TStringList;
+begin
+  Folder := TestTempFolder + 'ffmpeg-test\';
+  ForceDirectories(Folder);
+  Fake := Folder + kFfmpegExe;
+  Configured := TestTempFolder + 'ffmpeg-ailleurs.exe';
+  L := TStringList.Create;
+  try
+    SysUtils.DeleteFile(Fake);
+    SysUtils.DeleteFile(Configured);
+    CheckEquals('', FindFfmpeg(Folder, ''), 'rien nulle part');
+    L.SaveToFile(Fake);
+    CheckEquals(Fake, FindFfmpeg(Folder, ''), 'à côté de l''exe');
+    CheckEquals(Fake, FindFfmpeg(Folder, Configured), 'chemin configuré absent : repli');
+    L.SaveToFile(Configured);
+    CheckEquals(Configured, FindFfmpeg(Folder, Configured), 'chemin configuré');
+  finally
+    L.Free;
+    SysUtils.DeleteFile(Fake);
+    SysUtils.DeleteFile(Configured);
+    RemoveDir(Folder);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoEncoder.TestMissingExe;
+begin
+  try
+    TFfmpegPipe.Create('X:\absent\ffmpeg.exe', TestTempFolder + 'absent.mp4', 30).Free;
+    Fail('exe absent accepté');
+  except
+    on E: EVideoEncoderError do
+      CheckEquals(kFfmpegHelp, E.Message);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoEncoder.TestFailingEncoderReportsError;
+var
+  Pipe: TFfmpegPipe;
+  OutFile: string;
+  Png: TMemoryStream;
+begin
+  // where.exe refuse les arguments de FFmpeg et s'arrête en erreur : même chemin qu'un FFmpeg qui échoue
+  OutFile := TestTempFolder + 'echec.mp4';
+  SysUtils.DeleteFile(OutFile);
+  Png := TMemoryStream.Create;
+  Pipe := TFfmpegPipe.Create(SystemTool('where.exe'), OutFile, 30);
+  try
+    Png.SetSize(16);
+    try
+      Pipe.WriteFrame(Png);  // peut déjà échouer si where.exe est parti
+      Pipe.Finish;
+      Fail('échec non signalé');
+    except
+      on E: EVideoEncoderError do
+        CheckTrue(Pos('FFmpeg', E.Message) > 0, E.Message);
+    end;
+    CheckFalse(FileExists(OutFile), 'vidéo partielle laissée');
+  finally
+    Pipe.Free;
+    Png.Free;
+    SysUtils.DeleteFile(OutFile + '.log');
+  end;
+end;
+
 initialization
   RegisterTest(TTestVideoPath.Suite);
   RegisterTest(TTestVideoScenario.Suite);
+  RegisterTest(TTestVideoEncoder.Suite);
 
 end.

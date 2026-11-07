@@ -31,6 +31,7 @@ type
     HiResHeight: Integer;
     HiResSupersample: Integer;
     Update: TUpdateConfig;     // section [MiseAJour]
+    VideoFfmpegPath: string;   // section [Video] ; vide = ffmpeg.exe à côté de l'exe
   end;
 
 function DefaultAppSettings: TAppSettings;
@@ -48,6 +49,8 @@ const
   kSectionNavigation = 'Navigation';
   kSectionFolders = 'Folders';
   kSectionHiRes = 'HiRes';
+  kSectionVideo = 'Video';
+  kKeyFfmpegPath = 'FfmpegPath';
   kKeyKernel = 'Kernel';
   kKeyMode = 'Mode';
   kKeyLocations = 'Locations';
@@ -106,6 +109,7 @@ begin
       Result.LocationFolder := Ini.ReadString(kSectionFolders, kKeyLocations, '');
       Result.ImageFolder := Ini.ReadString(kSectionFolders, kKeyImages, '');
       Result.HiResFolder := Ini.ReadString(kSectionFolders, kKeyHiRes, '');
+      Result.VideoFfmpegPath := Ini.ReadString(kSectionVideo, kKeyFfmpegPath, '');
       Result.HiResPreset := ReadBounded(Ini, kSectionHiRes, kKeyPreset, D.HiResPreset, 0, kHiResPresetCount - 1);
       Result.HiResWidth := ReadBounded(Ini, kSectionHiRes, kKeyWidth, D.HiResWidth, kMinHiResSize, kMaxHiResSize);
       Result.HiResHeight := ReadBounded(Ini, kSectionHiRes, kKeyHeight, D.HiResHeight, kMinHiResSize,
@@ -141,6 +145,7 @@ begin
       Ini.WriteString(kSectionFolders, kKeyLocations, S.LocationFolder);
       Ini.WriteString(kSectionFolders, kKeyImages, S.ImageFolder);
       Ini.WriteString(kSectionFolders, kKeyHiRes, S.HiResFolder);
+      Ini.WriteString(kSectionVideo, kKeyFfmpegPath, S.VideoFfmpegPath);
       Ini.WriteInteger(kSectionHiRes, kKeyPreset, S.HiResPreset);
       Ini.WriteInteger(kSectionHiRes, kKeyWidth, S.HiResWidth);
       Ini.WriteInteger(kSectionHiRes, kKeyHeight, S.HiResHeight);
