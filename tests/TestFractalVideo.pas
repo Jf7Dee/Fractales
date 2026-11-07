@@ -486,8 +486,9 @@ end;
 
 procedure TTestVideoEncoder.TestArguments;
 const
-  kParts: array[0..8] of string = ('-y ', '-f image2pipe', '-framerate 30', '-c:v png -i -', '-c:v libx264',
-    '-pix_fmt yuv420p', '-crf 16', '-movflags +faststart', '"C:\Vidéos\voyage.mp4"');
+  kParts: array[0..9] of string = ('-y ', '-f image2pipe', '-framerate 30', '-c:v png -i -', '-c:v libx264',
+    '-pix_fmt yuv420p', '-crf 16', '-movflags +faststart', '"C:\Vidéos\voyage.mp4"',
+    '-vf "crop=trunc(iw/2)*2:trunc(ih/2)*2"');
 var
   Args: string;
   I: Integer;

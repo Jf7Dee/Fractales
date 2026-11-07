@@ -58,10 +58,12 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// H.264 en yuv420p : lisible partout (téléphones, Facebook, Instagram) ; débit élevé, les fractales compressent mal
+// H.264 en yuv420p : lisible partout (téléphones, Facebook, Instagram) ; débit élevé, les fractales compressent mal.
+// yuv420p exige des dimensions paires : une ligne ou une colonne impaire est retirée (aperçu réduit)
 function FfmpegArguments(const OutputFile: string; Fps: Integer): string;
 begin
   Result := Format('-y -hide_banner -loglevel error -f image2pipe -framerate %d -c:v png -i - ' +
+    '-vf "crop=trunc(iw/2)*2:trunc(ih/2)*2" ' +
     '-c:v libx264 -preset slow -crf 16 -pix_fmt yuv420p -movflags +faststart "%s"', [Fps, OutputFile]);
 end;
 
