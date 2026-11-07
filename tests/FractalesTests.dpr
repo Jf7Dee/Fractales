@@ -20,6 +20,7 @@ uses
   Fractal.Settings in '..\src\Fractal.Settings.pas',
   Fractal.Download in '..\src\Fractal.Download.pas',
   Fractal.Update in '..\src\Fractal.Update.pas',
+  Fractal.VideoPath in '..\src\Fractal.VideoPath.pas',
   TestFractalTypes in 'TestFractalTypes.pas',
   TestFractalHighFloat in 'TestFractalHighFloat.pas',
   TestFractalPerturbation in 'TestFractalPerturbation.pas',
@@ -34,7 +35,8 @@ uses
   TestFractalHiRes in 'TestFractalHiRes.pas',
   TestFractalRustKernel in 'TestFractalRustKernel.pas',
   TestFractalSettings in 'TestFractalSettings.pas',
-  TestFractalUpdate in 'TestFractalUpdate.pas';
+  TestFractalUpdate in 'TestFractalUpdate.pas',
+  TestFractalVideo in 'TestFractalVideo.pas';
 
 begin
   RunRegisteredTests(rxbHaltOnFailures);
