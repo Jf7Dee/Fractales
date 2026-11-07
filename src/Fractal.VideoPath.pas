@@ -54,9 +54,20 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Négligeable devant la plus petite largeur : sinon, en descente profonde, l'arrivée resterait hors champ
 function IsSamePoint(D, W0, W1: TFloat): Boolean;
 begin
-  Result := D <= kSamePointRatio * Max(W0, W1);
+  Result := D <= kSamePointRatio * Min(W0, W1);
+end;
+
+{------------------------------------------------------------------------------}
+
+// ArcSinh de la RTL (Ln(X + Sqrt(X² + 1))) perd toute précision pour X très négatif : symétrie impaire
+function StableArcSinh(X: TFloat): TFloat;
+begin
+  Result := Ln(Abs(X) + Sqrt(X * X + 1));
+  if X < 0 then
+    Result := -Result;
 end;
 
 {------------------------------------------------------------------------------}
@@ -74,7 +85,7 @@ begin
   if IsSamePoint(D, W0, W1) then
     Result := Abs(Ln(W1 / W0)) / kRho
   else
-    Result := (ArcSinh(FlyoverB(W1, W0, D)) + ArcSinh(FlyoverB(W0, W1, D))) / kRho;
+    Result := (StableArcSinh(FlyoverB(W1, W0, D)) + StableArcSinh(FlyoverB(W0, W1, D))) / kRho;
 end;
 
 {------------------------------------------------------------------------------}
@@ -84,7 +95,7 @@ procedure FlyoverFrom(W0, W1, D, S: TFloat; out Offset, Width: TFloat);
 var
   R0: TFloat;
 begin
-  R0 := -ArcSinh(FlyoverB(W0, W1, D));
+  R0 := -StableArcSinh(FlyoverB(W0, W1, D));
   Offset := W0 / kRhoSquare * Sinh(kRho * S) / Cosh(kRho * S + R0);
   Width := W0 * Cosh(R0) / Cosh(kRho * S + R0);
 end;

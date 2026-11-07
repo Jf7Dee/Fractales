@@ -14,11 +14,14 @@ type
     function Shifted(const P: TCameraPose; DX, DY, Width: TFloat): TCameraPose;
     procedure CheckSamePose(const Expected, Actual: TCameraPose; const Msg: string);
     procedure CheckContinuous(const A, B: TCameraPose; Frames: Integer);
+    procedure CheckTargetInView(const A, B: TCameraPose; Frames: Integer);
   published
     procedure TestPoseEndsAreExact;
     procedure TestFlyoverZoomsOutBetweenFarSteps;
     procedure TestFlyoverIsContinuous;
     procedure TestDeepBurningShipDescent;
+    procedure TestWideToDeepOffsetDescent;
+    procedure TestCloseStepFromWideView;
     procedure TestLateralKeepsDepth;
     procedure TestSameStepIsStill;
     procedure TestPureZoom;
@@ -39,6 +42,7 @@ type
     procedure TestSaveLoadRoundTrip;
     procedure TestLoadGarbage;
     procedure TestMoveAndDelete;
+    procedure TestDurationsAreBounded;
   end;
 
   TTestVideoEncoder = class(TTestCase)
@@ -49,6 +53,8 @@ type
     procedure TestFindFfmpeg;
     procedure TestMissingExe;
     procedure TestFailingEncoderReportsError;
+    procedure TestAbortRemovesFiles;
+    procedure TestKillUnblocksFinish;
   end;
 
   TTestVideoRender = class(TTestCase)
@@ -161,6 +167,23 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Dans la seconde moitié du trajet, l'étape d'arrivée est dans le champ (à moins d'une largeur du centre)
+procedure TTestVideoPath.CheckTargetInView(const A, B: TCameraPose; Frames: Integer);
+var
+  P: TCameraPose;
+  I: Integer;
+  Distance: TFloat;
+begin
+  for I := Frames div 2 to Frames do
+  begin
+    P := PoseBetween(A, B, vmFlyover, I / Frames);
+    Distance := Hypot(B.CenterX.Sub(P.CenterX).ToFloat, B.CenterY.Sub(P.CenterY).ToFloat);
+    CheckTrue(Distance <= P.Width, Format('image %d : arrivée à %g, largeur %g', [I, Distance, P.Width]));
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TTestVideoPath.TestFlyoverIsContinuous;
 var
   A: TCameraPose;
@@ -181,6 +204,32 @@ begin
   CheckContinuous(Edge, Urchin, 3000);
   CheckContinuous(Urchin, Edge, 3000);
   CheckSamePose(Urchin, PoseBetween(Edge, Urchin, vmFlyover, 1), 'arrivée');
+end;
+
+{------------------------------------------------------------------------------}
+
+// Relecture : de 1e-5 à 1e-25 avec un décalage de 5e-22, invisible à la largeur de départ mais de cinq écrans à
+// l'arrivée ; l'étape d'arrivée doit entrer dans le champ progressivement, sans saut final
+procedure TTestVideoPath.TestWideToDeepOffsetDescent;
+var
+  A: TCameraPose;
+begin
+  A := Pose(kDeepX, kDeepY, 1e-5);
+  CheckContinuous(A, Shifted(A, 5e-22, 0, 1e-25), 3000);
+  CheckContinuous(Shifted(A, 5e-22, 0, 1e-25), A, 3000);
+  CheckTargetInView(A, Shifted(A, 5e-22, 0, 1e-25), 3000);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue large vers une étape toute proche : argument très négatif d'ArcSinh, les deux moitiés doivent se rejoindre
+procedure TTestVideoPath.TestCloseStepFromWideView;
+var
+  A: TCameraPose;
+begin
+  A := Pose(kDeepX, kDeepY, 1e-3);
+  CheckContinuous(A, Shifted(A, 2e-12, 0, 1e-12), 3000);
+  CheckContinuous(A, Shifted(A, 2e-13, 1e-13, 1e-14), 3000);
 end;
 
 {------------------------------------------------------------------------------}
@@ -499,6 +548,47 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TTestVideoScenario.TestDurationsAreBounded;
+var
+  Sc: TVideoScenario;
+  S: TVideoStep;
+  L: TStringList;
+  FileName: string;
+begin
+  Sc := TVideoScenario.Create;
+  L := TStringList.Create;
+  FileName := TempFile('durees' + kScenarioExtension);
+  try
+    Add(Sc, 'a', 'BurningShip', kInnerX, kInnerY, '2.8e-6');
+    Add(Sc, 'b', 'BurningShip', kEdgeX, kEdgeY, '5e-11');
+    S := Sc[1];
+    S.TravelSeconds := 1e300;
+    S.PauseSeconds := -5;
+    Sc[1] := S;
+    CheckEquals(kMaxStepSeconds, Sc[1].TravelSeconds, 0, 'trajet borné');
+    CheckEquals(0, Sc[1].PauseSeconds, 0, 'pause négative');
+    CheckEquals(Round(kMaxStepSeconds * kVideoFps), Sc.TotalFrames);
+    S.TravelSeconds := 0;
+    S.PauseSeconds := NaN;
+    Sc[1] := S;
+    CheckEquals(kMinTravelFrames / kVideoFps, Sc[1].TravelSeconds, 1e-12, 'trajet nul : durée réelle affichée');
+    CheckEquals(0, Sc[1].PauseSeconds, 0, 'pause NaN');
+    // fichier abîmé : durées démesurées ramenées dans les bornes
+    Sc.SaveToFile(FileName);
+    L.LoadFromFile(FileName);
+    L.Text := StringReplace(L.Text, 'Travel=0.5', 'Travel=1e300', []);
+    L.SaveToFile(FileName);
+    Sc.LoadFromFile(FileName);
+    CheckEquals(kMaxStepSeconds, Sc[1].TravelSeconds, 0, 'fichier : trajet borné');
+  finally
+    SysUtils.DeleteFile(FileName);
+    L.Free;
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 function TTestVideoEncoder.SystemTool(const Name: string): string;
 begin
   Result := GetEnvironmentVariable('SystemRoot') + '\System32\' + Name;
@@ -803,6 +893,49 @@ begin
     Target.Free;
     P.Free;
     Formula.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoEncoder.TestAbortRemovesFiles;
+var
+  Pipe: TFfmpegPipe;
+  OutFile: string;
+begin
+  OutFile := TestTempFolder + 'abandon.mp4';
+  Pipe := TFfmpegPipe.Create(SystemTool('cmd.exe'), OutFile, 30);
+  try
+    Pipe.Abort;
+    CheckFalse(FileExists(OutFile), 'vidéo partielle laissée');
+    CheckFalse(FileExists(OutFile + '.log'), 'journal laissé');
+  finally
+    Pipe.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// cmd.exe sans /c attend des commandes sur son entrée : comme un FFmpeg figé, Finish attendrait sans fin
+procedure TTestVideoEncoder.TestKillUnblocksFinish;
+var
+  Pipe: TFfmpegPipe;
+  OutFile: string;
+begin
+  OutFile := TestTempFolder + 'tue.mp4';
+  Pipe := TFfmpegPipe.Create(SystemTool('cmd.exe'), OutFile, 30);
+  try
+    Pipe.Kill;
+    try
+      Pipe.Finish;
+      Fail('processus tué : échec non signalé');
+    except
+      on E: EVideoEncoderError do
+        ;
+    end;
+  finally
+    Pipe.Free;
+    SysUtils.DeleteFile(OutFile + '.log');
   end;
 end;
 

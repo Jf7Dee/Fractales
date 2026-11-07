@@ -6,7 +6,7 @@
 interface
 
 uses
-  Windows, SysUtils, Classes, Math;
+  Windows, SysUtils, Classes, Math, SyncObjs;
 
 const
   kFfmpegExe = 'ffmpeg.exe';
@@ -21,7 +21,9 @@ type
     FLogFile: string;
     FProcess: TProcessInformation;
     FInput: THandle;  // extrémité d'écriture du tube vers l'entrée de FFmpeg
+    FLock: TCriticalSection;  // FProcess, que Kill peut viser depuis un autre fil
     procedure CloseProcess;
+    procedure StopProcess;
     function LogTail: string;
     procedure Fail(const Text: string);
   public
@@ -29,7 +31,8 @@ type
     destructor Destroy; override;
     procedure WriteFrame(Png: TStream);
     procedure Finish;
-    procedure Abort;
+    procedure Abort;   // abandon voulu : vidéo partielle et journal supprimés
+    procedure Kill;    // depuis un autre fil : arrête FFmpeg, ce qui débloque WriteFrame et Finish
   end;
 
 function FindFfmpeg(const ExeFolder, ConfiguredPath: string): string;
@@ -42,7 +45,6 @@ const
   kPipeBufferBytes = 1024 * 1024;
   kWriteChunkBytes = 64 * 1024;
   kLogTailChars = 800;
-  kAbortWaitMs = 5000;
 
 {------------------------------------------------------------------------------}
 
@@ -78,6 +80,7 @@ var
   IsStarted: Boolean;
 begin
   inherited Create;
+  FLock := TCriticalSection.Create;
   FOutputFile := OutputFile;
   FLogFile := OutputFile + kLogExtension;
   if (FfmpegExe = '') or not FileExists(FfmpegExe) then
@@ -128,6 +131,7 @@ begin
   if FInput <> 0 then
     Abort;
   CloseProcess;
+  FLock.Free;
   inherited Destroy;
 end;
 
@@ -135,11 +139,29 @@ end;
 
 procedure TFfmpegPipe.CloseProcess;
 begin
-  if FProcess.hProcess <> 0 then
-  begin
-    CloseHandle(FProcess.hThread);
-    CloseHandle(FProcess.hProcess);
-    FProcess.hProcess := 0;
+  FLock.Enter;
+  try
+    if FProcess.hProcess <> 0 then
+    begin
+      CloseHandle(FProcess.hThread);
+      CloseHandle(FProcess.hProcess);
+      FProcess.hProcess := 0;
+    end;
+  finally
+    FLock.Leave;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFfmpegPipe.Kill;
+begin
+  FLock.Enter;
+  try
+    if FProcess.hProcess <> 0 then
+      TerminateProcess(FProcess.hProcess, 1);
+  finally
+    FLock.Leave;
   end;
 end;
 
@@ -176,7 +198,7 @@ var
   Tail: string;
 begin
   Tail := LogTail;
-  Abort;
+  StopProcess;  // le journal reste, pour comprendre l'échec
   if Tail <> '' then
     raise EVideoEncoderError.Create(Text + #13#10 + Tail)
   else
@@ -224,7 +246,8 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TFfmpegPipe.Abort;
+// Arrête FFmpeg et attend sa fin (un processus tué meurt toujours), puis supprime la vidéo partielle
+procedure TFfmpegPipe.StopProcess;
 begin
   if FInput <> 0 then
   begin
@@ -235,10 +258,18 @@ begin
   begin
     if WaitForSingleObject(FProcess.hProcess, 0) = WAIT_TIMEOUT then
       TerminateProcess(FProcess.hProcess, 1);
-    WaitForSingleObject(FProcess.hProcess, kAbortWaitMs);
+    WaitForSingleObject(FProcess.hProcess, INFINITE);
     CloseProcess;
   end;
   SysUtils.DeleteFile(FOutputFile);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFfmpegPipe.Abort;
+begin
+  StopProcess;
+  SysUtils.DeleteFile(FLogFile);
 end;
 
 end.

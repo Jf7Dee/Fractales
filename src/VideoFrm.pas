@@ -89,6 +89,7 @@ type
     procedure RefreshList(SelectIndex: Integer);
     procedure RefreshStep;
     procedure RefreshSummary;
+    procedure RefreshSpeed(Index: Integer);
     procedure UpdateControls;
     procedure ShowPreviewFrame;
     procedure FinishRender;
@@ -145,7 +146,7 @@ end;
 function TryParseSeconds(const S: string; out Value: Double): Boolean;
 begin
   Value := InvariantToFloat(StringReplace(Trim(S), ',', '.', []), NaN);
-  Result := not IsNan(Value) and (Value >= 0);
+  Result := not IsNan(Value) and (Value >= 0) and (Value <= kMaxStepSeconds);
 end;
 
 {------------------------------------------------------------------------------}
@@ -180,7 +181,7 @@ procedure TVideoForm.FormDestroy(Sender: TObject);
 begin
   if FRenderer <> nil then
   begin
-    FRenderer.Terminate;
+    FRenderer.Cancel;
     FreeAndNil(FRenderer);  // attend la fin du fil
   end;
   FPreviewPng.Free;
@@ -306,7 +307,6 @@ procedure TVideoForm.RefreshStep;
 var
   Index: Integer;
   S: TVideoStep;
-  Speed: Double;
 begin
   Index := SelectedIndex;
   FIsUpdating := True;
@@ -324,19 +324,31 @@ begin
       cbMode.ItemIndex := Ord(S.Mode);
       edTravel.Text := FormatFloat(kSecondsFormat, S.TravelSeconds);
       edPause.Text := FormatFloat(kSecondsFormat, S.PauseSeconds);
-      lblSpeed.Caption := '';
-      if (Index > 0) and (S.Mode = vmLateral) then
-      begin
-        Speed := LateralScreensPerSecond(FScenario[Index - 1].Pose, S.Pose, S.TravelSeconds);
-        lblSpeed.Caption := Format('Vitesse : %.1f écrans par seconde', [Speed]);
-        if Speed > kLateralSpeedWarning then
-          lblSpeed.Caption := lblSpeed.Caption + ' : trop rapide, allongez le trajet ou passez en survol';
-      end;
+      RefreshSpeed(Index);
     end;
   finally
     FIsUpdating := False;
   end;
   UpdateControls;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.RefreshSpeed(Index: Integer);
+var
+  S: TVideoStep;
+  Speed: Double;
+begin
+  lblSpeed.Caption := '';
+  if Index <= 0 then
+    Exit;
+  S := FScenario[Index];
+  if S.Mode <> vmLateral then
+    Exit;
+  Speed := LateralScreensPerSecond(FScenario[Index - 1].Pose, S.Pose, S.TravelSeconds);
+  lblSpeed.Caption := Format('Vitesse : %.1f écrans par seconde', [Speed]);
+  if Speed > kLateralSpeedWarning then
+    lblSpeed.Caption := lblSpeed.Caption + ' : trop rapide, allongez le trajet ou passez en survol';
 end;
 
 {------------------------------------------------------------------------------}
@@ -487,9 +499,8 @@ begin
   end;
   if Sender = cbMode then
     RefreshStep
-  else if (Index > 0) and (S.Mode = vmLateral) then
-    lblSpeed.Caption := Format('Vitesse : %.1f écrans par seconde',
-      [LateralScreensPerSecond(FScenario[Index - 1].Pose, S.Pose, S.TravelSeconds)]);
+  else
+    RefreshSpeed(Index);
   RefreshSummary;
 end;
 
@@ -602,6 +613,7 @@ function TVideoForm.WaitForRender(TimeoutMs: Cardinal): Boolean;
 var
   Deadline: Cardinal;
 begin
+  tmrProgress.Enabled := False;  // sinon FinishRender libérerait le rendu et ouvrirait une boîte de message
   Deadline := GetTickCount + TimeoutMs;
   while IsRendering and not FRenderer.IsDone and (GetTickCount < Deadline) do
   begin
@@ -658,7 +670,7 @@ end;
 procedure TVideoForm.btnCancelClick(Sender: TObject);
 begin
   if FRenderer <> nil then
-    FRenderer.Terminate;  // le minuteur constate la fin et remet la fenêtre en état
+    FRenderer.Cancel;  // le minuteur constate la fin et remet la fenêtre en état
 end;
 
 {------------------------------------------------------------------------------}
@@ -707,13 +719,16 @@ begin
   CanClose := True;
   if not IsRendering then
     Exit;
+  // minuteur arrêté pendant la question : il ne doit pas libérer le rendu sous nos pieds
+  tmrProgress.Enabled := False;
   CanClose := MessageDlg(kMsgRendering, mtConfirmation, [mbYes, mbNo], 0) = mrYes;
   if CanClose then
   begin
-    FRenderer.Terminate;
+    FRenderer.Cancel;
     FreeAndNil(FRenderer);  // attend la fin du fil, qui arrête FFmpeg et supprime la vidéo partielle
-    tmrProgress.Enabled := False;
-  end;
+  end
+  else
+    tmrProgress.Enabled := True;
 end;
 
 end.

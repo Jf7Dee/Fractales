@@ -13,6 +13,7 @@ const
   kVideoFps = 30;
   kMinTravelFrames = kVideoFps div 2;  // un trajet dure au moins une demi-seconde
   kMaxSmoothing = 3;                   // lissage : chaque pixel calculé en N × N points
+  kMaxStepSeconds = 3600.0;            // trajet ou pause : une heure au plus
 
 type
   TVideoFormat = (vf1x1, vf4x5, vf9x16, vf16x9);
@@ -67,6 +68,8 @@ type
 
 procedure VideoFormatSize(Format: TVideoFormat; out Width, Height: Integer);
 function VideoFormatName(Format: TVideoFormat): string;
+function ClampTravelSeconds(Seconds: Double): Double;
+function ClampPauseSeconds(Seconds: Double): Double;
 
 implementation
 
@@ -95,6 +98,25 @@ end;
 function VideoFormatName(Format: TVideoFormat): string;
 begin
   Result := kFormatNames[Format];
+end;
+
+{------------------------------------------------------------------------------}
+
+// Un trajet dure au moins kMinTravelFrames images : la durée affichée est celle de la vidéo
+function ClampTravelSeconds(Seconds: Double): Double;
+begin
+  if IsNan(Seconds) then
+    Seconds := 0;
+  Result := EnsureRange(Seconds, kMinTravelFrames / kVideoFps, kMaxStepSeconds);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ClampPauseSeconds(Seconds: Double): Double;
+begin
+  if IsNan(Seconds) then
+    Seconds := 0;
+  Result := EnsureRange(Seconds, 0, kMaxStepSeconds);
 end;
 
 {------------------------------------------------------------------------------}
@@ -277,8 +299,8 @@ begin
   if not (Value.Pose.Width > 0) then
     raise EVideoScenarioError.Create('Largeur d''étape invalide.');
   FSteps[Index] := Value;
-  FSteps[Index].TravelSeconds := Max(0, Value.TravelSeconds);
-  FSteps[Index].PauseSeconds := Max(0, Value.PauseSeconds);
+  FSteps[Index].TravelSeconds := ClampTravelSeconds(Value.TravelSeconds);
+  FSteps[Index].PauseSeconds := ClampPauseSeconds(Value.PauseSeconds);
 end;
 
 {------------------------------------------------------------------------------}
@@ -440,8 +462,9 @@ begin
         for M := Low(TVideoMoveMode) to High(TVideoMoveMode) do
           if SameText(Key, kModeNames[M]) then
             S.Mode := M;
-        S.TravelSeconds := Max(0, InvariantToFloat(Ini.ReadString(Section, 'Travel', ''), kMinTravelSeconds));
-        S.PauseSeconds := Max(0, InvariantToFloat(Ini.ReadString(Section, 'Pause', ''), 0));
+        S.TravelSeconds := ClampTravelSeconds(InvariantToFloat(Ini.ReadString(Section, 'Travel', ''),
+          kMinTravelSeconds));
+        S.PauseSeconds := ClampPauseSeconds(InvariantToFloat(Ini.ReadString(Section, 'Pause', ''), 0));
         Loaded.FSteps[I] := S;
       end;
     except

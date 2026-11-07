@@ -7,7 +7,7 @@ interface
 
 uses
   Windows, SysUtils, Classes, Math, Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine,
-  Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder;
+  Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder, SyncObjs;
 
 const
   kPreviewDivisor = 4;  // l'aperçu est rendu au quart de la taille, sans les pauses
@@ -34,6 +34,8 @@ type
     FErrorMessage: string;
     FIsSucceeded: Boolean;
     FIsDone: Boolean;
+    FPipe: TFfmpegPipe;          // visé par Cancel depuis le fil principal, sous FPipeLock
+    FPipeLock: TCriticalSection;
     function IsEmitted(Frame: Integer): Boolean;
     function RenderFrame(const Pose: TCameraPose; Formula: TFractalFormula; Target: TStream): Boolean;
     function GetSecondsLeft: Double;
@@ -46,6 +48,7 @@ type
       Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean;
       Sink: TVideoFrameSink = nil; Divisor: Integer = 0);
     destructor Destroy; override;
+    procedure Cancel;  // à préférer à Terminate : arrête aussi FFmpeg, même pendant la finalisation de la vidéo
     property FramesTotal: Integer read FFramesTotal;
     property FramesDone: Integer read FFramesDone;
     property RenderCount: Integer read FRenderCount;  // images réellement calculées (pauses réutilisées)
@@ -74,6 +77,7 @@ begin
     raise EArgumentException.Create('TVideoRenderer : scénario ou palette nil');
   if Scenario.Count = 0 then
     raise EVideoScenarioError.Create('Scénario vide.');
+  FPipeLock := TCriticalSection.Create;
   FScenario := TVideoScenario.Create;
   FScenario.Assign(Scenario);
   FPalette := TGradientPalette.Create;
@@ -102,6 +106,21 @@ begin
   inherited Destroy;  // attend la fin du fil
   FPalette.Free;
   FScenario.Free;
+  FPipeLock.Free;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoRenderer.Cancel;
+begin
+  Terminate;
+  FPipeLock.Enter;
+  try
+    if FPipe <> nil then
+      FPipe.Kill;
+  finally
+    FPipeLock.Leave;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -183,7 +202,12 @@ begin
       FStartTick := GetTickCount;
       Formula := FScenario.CreateFormula;
       if not Assigned(FSink) then
+      begin
         Pipe := TFfmpegPipe.Create(FFfmpegExe, FOutputFile, kVideoFps);
+        FPipeLock.Enter;
+        FPipe := Pipe;
+        FPipeLock.Leave;
+      end;
       HasFrame := False;
       for I := 0 to FScenario.TotalFrames - 1 do
       begin
@@ -206,21 +230,30 @@ begin
           Pipe.WriteFrame(Frame);
         Inc(FFramesDone);
       end;
-      if Pipe <> nil then
-        if Terminated then
-          Pipe.Abort
-        else
+      if Terminated then
+      begin
+        if Pipe <> nil then
+          Pipe.Abort;
+      end
+      else
+      begin
+        if Pipe <> nil then
           Pipe.Finish;
-      FIsSucceeded := not Terminated;
+        FIsSucceeded := True;  // la vidéo est complète, même si une annulation arrive maintenant
+      end;
     except
       on E: Exception do
       begin
-        FErrorMessage := E.Message;
+        if not Terminated then  // FFmpeg tué par Cancel : une annulation, pas une erreur
+          FErrorMessage := E.Message;
         if Pipe <> nil then
           Pipe.Abort;
       end;
     end;
   finally
+    FPipeLock.Enter;
+    FPipe := nil;
+    FPipeLock.Leave;
     Pipe.Free;
     Formula.Free;
     Frame.Free;
