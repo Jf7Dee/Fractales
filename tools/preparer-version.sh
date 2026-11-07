@@ -30,8 +30,10 @@ fi
 echo "Version $VERSION, fichiers pris dans $SOURCE :"
 echo "  Fractales.exe       $(date -r "$EXE" '+%Y-%m-%d %H:%M')"
 echo "  fractal_kernel.dll  $(date -r "$DLL" '+%Y-%m-%d %H:%M')"
-EXE_HASH=$(sha256sum "$EXE" | cut -d ' ' -f 1)
-DLL_HASH=$(sha256sum "$DLL" | cut -d ' ' -f 1)
+# Empreintes lues sur l'entrée standard : avec un nom de fichier contenant \ (chemin Windows), sha256sum
+# fait précéder l'empreinte d'un \ que le programme refuse
+EXE_HASH=$(sha256sum < "$EXE" | cut -d ' ' -f 1)
+DLL_HASH=$(sha256sum < "$DLL" | cut -d ' ' -f 1)
 printf 'Notes (une ligne, facultatif) : '
 read -r NOTES || NOTES=''
 printf 'Version obligatoire ? (o/N) : '
