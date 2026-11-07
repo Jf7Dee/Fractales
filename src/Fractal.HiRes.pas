@@ -29,6 +29,7 @@ type
     FLocationText: RawByteString;
     FKernel: TEngineKernelType;
     FBandRows: Integer;
+    FTarget: TStream;  // non nil : le PNG va dans ce flux (vidéo) au lieu du fichier
     FProgress: Integer;
     FErrorMessage: string;
     FIsSucceeded: Boolean;
@@ -44,7 +45,8 @@ type
                        AMapper: TColorMapper; 
                        const ALocationText: RawByteString; 
                        AKernel: TEngineKernelType = ekDelphi;
-                       ABandRows: Integer = kHiResBandRows);
+                       ABandRows: Integer = kHiResBandRows;
+                       ATarget: TStream = nil);
     destructor Destroy; override;
     property Progress: Integer read FProgress;
     property ErrorMessage: string read FErrorMessage;
@@ -88,7 +90,7 @@ end;
 
 constructor THiResRenderer.Create(const ASettings: THiResSettings; const AViewport: TViewport;
   AFormula: TFractalFormula; AMapper: TColorMapper; const ALocationText: RawByteString; AKernel: TEngineKernelType;
-  ABandRows: Integer);
+  ABandRows: Integer; ATarget: TStream);
 begin
   FMapper := AMapper;  // en premier : possession toujours transférée, libérée par Destroy même si Clone échoue
   FSettings := ASettings;
@@ -98,6 +100,7 @@ begin
   FLocationText := ALocationText;
   FKernel := AKernel;
   FBandRows := Max(1, ABandRows);
+  FTarget := ATarget;
   inherited Create(False);
 end;
 
@@ -124,17 +127,22 @@ begin
         raise Exception.Create('Dimensions de rendu invalides.');
       if EstimateHiResBytes(FSettings, FMapper.HasRelief) > kMaxHiResBytes then
         raise Exception.Create('Mémoire insuffisante pour ce rendu : réduisez la taille ou le suréchantillonnage.');
-      Stream := TFileStream.Create(FSettings.FileName, fmCreate);
-      IsFileCreated := True;
-      try
-        IsComplete := RenderToStream(Stream);
-      finally
-        Stream.Free;
-      end;
-      if IsComplete then
-        FIsSucceeded := True
+      if FTarget <> nil then
+        FIsSucceeded := RenderToStream(FTarget)
       else
-        SysUtils.DeleteFile(FSettings.FileName);
+      begin
+        Stream := TFileStream.Create(FSettings.FileName, fmCreate);
+        IsFileCreated := True;
+        try
+          IsComplete := RenderToStream(Stream);
+        finally
+          Stream.Free;
+        end;
+        if IsComplete then
+          FIsSucceeded := True
+        else
+          SysUtils.DeleteFile(FSettings.FileName);
+      end;
     except
       on E: Exception do
       begin

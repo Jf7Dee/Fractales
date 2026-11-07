@@ -4,7 +4,8 @@ interface
 
 uses
   Windows, SysUtils, Classes, Math, TestFramework, Fractal.HighFloat, Fractal.Types, Fractal.Persistence,
-  Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder, TestUtils;
+  Fractal.Formulas, Fractal.Palette, Fractal.Engine, Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder,
+  Fractal.VideoRender, TestUtils;
 
 type
   TTestVideoPath = class(TTestCase)
@@ -48,6 +49,23 @@ type
     procedure TestFindFfmpeg;
     procedure TestMissingExe;
     procedure TestFailingEncoderReportsError;
+  end;
+
+  TTestVideoRender = class(TTestCase)
+  private
+    FFrames: TList;
+    procedure Collect(Png: TStream);
+    function SmallScenario: TVideoScenario;
+    function StartRender(Scenario: TVideoScenario; IsPreview: Boolean; Divisor: Integer): TVideoRenderer;
+    function FrameBytes(Index: Integer): RawByteString;
+  protected
+    procedure SetUp; override;
+    procedure TearDown; override;
+  published
+    procedure TestRendersEveryFrame;
+    procedure TestPauseFramesAreReused;
+    procedure TestCancel;
+    procedure TestHiResToStream;
   end;
 
 implementation
@@ -571,9 +589,223 @@ begin
   end;
 end;
 
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.SetUp;
+begin
+  FFrames := TList.Create;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TearDown;
+var
+  I: Integer;
+begin
+  for I := 0 to FFrames.Count - 1 do
+    TObject(FFrames[I]).Free;
+  FFrames.Free;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.Collect(Png: TStream);
+var
+  Copy: TMemoryStream;
+begin
+  Copy := TMemoryStream.Create;
+  Png.Position := 0;
+  Copy.CopyFrom(Png, Png.Size);
+  FFrames.Add(Copy);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestVideoRender.FrameBytes(Index: Integer): RawByteString;
+var
+  M: TMemoryStream;
+begin
+  M := TMemoryStream(FFrames[Index]);
+  SetLength(Result, M.Size);
+  if M.Size > 0 then
+    Move(M.Memory^, Result[1], M.Size);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Mandelbrot, deux étapes : trajet 0,5 s (15 images) puis pause 0,2 s (6 images), carré
+function TTestVideoRender.SmallScenario: TVideoScenario;
+var
+  L: TFractalLocation;
+  S: TVideoStep;
+begin
+  Result := TVideoScenario.Create;
+  L := TFractalLocation.Create;
+  try
+    L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'CenterX=-0.75'#13#10'CenterY=0.1'#13#10 +
+      'Width=2.5'#13#10);
+    Result.AddLocation('ensemble', L);
+    L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'CenterX=-0.745'#13#10'CenterY=0.113'#13#10 +
+      'Width=0.05'#13#10);
+    Result.AddLocation('vallée', L);
+  finally
+    L.Free;
+  end;
+  S := Result[1];
+  S.TravelSeconds := 0.5;
+  S.PauseSeconds := 0.2;
+  Result[1] := S;
+  Result.Format := vf1x1;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestVideoRender.StartRender(Scenario: TVideoScenario; IsPreview: Boolean; Divisor: Integer): TVideoRenderer;
+var
+  P: TGradientPalette;
+begin
+  P := TGradientPalette.Create;
+  try
+    P.SetDefault;
+    Result := TVideoRenderer.Create(Scenario, P, DefaultColorMapping, ekDelphi, '', '', IsPreview, Collect, Divisor);
+  finally
+    P.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TestRendersEveryFrame;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  I: Integer;
+begin
+  Sc := SmallScenario;
+  try
+    R := StartRender(Sc, True, 0);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(15, R.FramesTotal, 'aperçu : sans les pauses');
+      CheckEquals(15, R.FramesDone);
+      CheckEquals(15, FFrames.Count);
+      CheckEquals(270, R.FrameWidth, 'quart de 1080');
+      for I := 0 to FFrames.Count - 1 do
+        CheckTrue(Copy(FrameBytes(I), 1, 4) = #137'PNG', Format('image %d : pas un PNG', [I]));
+    finally
+      R.Free;
+    end;
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TestPauseFramesAreReused;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  I: Integer;
+begin
+  Sc := SmallScenario;
+  try
+    R := StartRender(Sc, False, 8);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(21, FFrames.Count, 'trajet + pause');
+      CheckEquals(15, R.RenderCount, 'la pause ne recalcule rien');
+      for I := 15 to 20 do
+        CheckTrue(FrameBytes(I) = FrameBytes(14), Format('image %d : différente de l''arrivée', [I]));
+      CheckFalse(FrameBytes(0) = FrameBytes(14), 'le trajet bouge');
+    finally
+      R.Free;
+    end;
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TestCancel;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  Deadline: Cardinal;
+begin
+  Sc := SmallScenario;
+  try
+    R := StartRender(Sc, False, 2);
+    try
+      Deadline := GetTickCount + 30000;
+      while (R.FramesDone = 0) and not R.IsDone and (GetTickCount < Deadline) do
+        Sleep(10);
+      R.Terminate;
+      R.WaitFor;
+      CheckFalse(R.IsSucceeded, 'annulé');
+      CheckEquals('', R.ErrorMessage);
+      CheckTrue(R.FramesDone < R.FramesTotal, 'arrêté avant la fin');
+    finally
+      R.Free;
+    end;
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TestHiResToStream;
+var
+  Settings: THiResSettings;
+  V: TViewport;
+  Formula: TFractalFormula;
+  P: TGradientPalette;
+  Target: TMemoryStream;
+  R: THiResRenderer;
+  Bytes: RawByteString;
+begin
+  Settings.Width := 64;
+  Settings.Height := 48;
+  Settings.Supersample := 1;
+  Settings.FileName := TestTempFolder + 'jamais-cree.png';
+  SysUtils.DeleteFile(Settings.FileName);
+  V.Width := 3;
+  V.PixelWidth := 64;
+  V.PixelHeight := 48;
+  V.SetCenter(THighFloat.FromFloat(-0.5, 4), THighFloat.FromFloat(0, 4));
+  Formula := FindFormulaClass('Mandelbrot').Create;
+  P := TGradientPalette.Create;
+  Target := TMemoryStream.Create;
+  try
+    P.SetDefault;
+    R := THiResRenderer.Create(Settings, V, Formula, TColorMapper.Create(P, DefaultColorMapping), '', ekDelphi,
+      kHiResBandRows, Target);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    CheckFalse(FileExists(Settings.FileName), 'fichier créé malgré le flux');
+    SetLength(Bytes, 4);
+    Target.Position := 0;
+    Target.ReadBuffer(Bytes[1], 4);
+    CheckTrue(Bytes = #137'PNG', 'pas un PNG');
+  finally
+    Target.Free;
+    P.Free;
+    Formula.Free;
+  end;
+end;
+
 initialization
   RegisterTest(TTestVideoPath.Suite);
   RegisterTest(TTestVideoScenario.Suite);
   RegisterTest(TTestVideoEncoder.Suite);
+  RegisterTest(TTestVideoRender.Suite);
 
 end.
