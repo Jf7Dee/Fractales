@@ -407,12 +407,16 @@ begin
     S.PauseSeconds := 1.5;
     A[1] := S;
     A.Format := vf9x16;
+    A.Smoothing := 3;
     A.SaveToFile(FileName);
     // relu par un autre scénario, sans aucun favori : le fichier se suffit à lui-même
     B.LoadFromFile(FileName);
     CheckEquals(2, B.Count);
     CheckEquals('BurningShip', B.FormulaName);
     CheckTrue(B.Format = vf9x16);
+    CheckEquals(3, B.Smoothing);
+    B.Smoothing := 9;
+    CheckEquals(kMaxSmoothing, B.Smoothing, 'lissage borné');
     for I := 0 to 1 do
     begin
       CheckEquals(A[I].Name, B[I].Name);

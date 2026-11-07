@@ -797,6 +797,10 @@ object MainForm: TMainForm
         Caption = '&Rendu en HD...'
         OnClick = HiResClick
       end
+      object MenuImageVideo: TMenuItem
+        Caption = '&Vid'#233'o...'
+        OnClick = MenuImageVideoClick
+      end
       object N2: TMenuItem
         Caption = '-'
       end

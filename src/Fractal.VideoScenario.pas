@@ -12,6 +12,7 @@ const
   kScenarioExtension = '.fscn';
   kVideoFps = 30;
   kMinTravelFrames = kVideoFps div 2;  // un trajet dure au moins une demi-seconde
+  kMaxSmoothing = 3;                   // lissage : chaque pixel calculé en N × N points
 
 type
   TVideoFormat = (vf1x1, vf4x5, vf9x16, vf16x9);
@@ -32,6 +33,8 @@ type
     FTemplate: TFractalLocation;  // formule et paramètres communs à toutes les étapes
     FHasFormula: Boolean;
     FFormat: TVideoFormat;
+    FSmoothing: Integer;
+    procedure SetSmoothing(Value: Integer);
     function GetStep(Index: Integer): TVideoStep;
     procedure SetStep(Index: Integer; const Value: TVideoStep);
     function GetFormulaName: string;
@@ -59,6 +62,7 @@ type
     property FormulaName: string read GetFormulaName;
     property Params: TStrings read GetParams;
     property Format: TVideoFormat read FFormat write FFormat;
+    property Smoothing: Integer read FSmoothing write SetSmoothing;  // 1 = aucun, 2 = 2×2, 3 = 3×3
   end;
 
 procedure VideoFormatSize(Format: TVideoFormat; out Width, Height: Integer);
@@ -100,6 +104,7 @@ begin
   inherited Create;
   FTemplate := TFractalLocation.Create;
   FFormat := vf16x9;
+  FSmoothing := 1;
 end;
 
 {------------------------------------------------------------------------------}
@@ -118,6 +123,14 @@ begin
   FTemplate.LoadFromText(Source.FTemplate.SaveToText);
   FHasFormula := Source.FHasFormula;
   FFormat := Source.FFormat;
+  FSmoothing := Source.FSmoothing;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.SetSmoothing(Value: Integer);
+begin
+  FSmoothing := EnsureRange(Value, 1, kMaxSmoothing);
 end;
 
 {------------------------------------------------------------------------------}
@@ -348,6 +361,7 @@ begin
     L.Add('Version=' + IntToStr(kFormatVersion));
     L.Add('Formula=' + FormulaName);
     L.Add('Format=' + kFormatKeys[FFormat]);
+    L.Add('Smoothing=' + IntToStr(FSmoothing));
     L.Add('Steps=' + IntToStr(Count));
     L.Add('');
     L.Add('[' + kSectionParams + ']');
@@ -408,6 +422,7 @@ begin
       for F := Low(TVideoFormat) to High(TVideoFormat) do
         if SameText(Key, kFormatKeys[F]) then
           Loaded.FFormat := F;
+      Loaded.Smoothing := Ini.ReadInteger(kSectionVideo, 'Smoothing', 1);
       SetLength(Loaded.FSteps, N);
       for I := 0 to N - 1 do
       begin

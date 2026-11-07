@@ -162,6 +162,7 @@ type
     procedure MenuAideGestesClick(Sender: TObject);
     procedure MenuAideEffetsClick(Sender: TObject);
     procedure MenuAideAProposClick(Sender: TObject);
+    procedure MenuImageVideoClick(Sender: TObject);
     procedure Fin1Click(Sender: TObject);
     procedure Action_RustEngineExecute(Sender: TObject);
     procedure ResetAllClick(Sender: TObject);
@@ -272,6 +273,7 @@ type
     procedure CheckResetAllSmoke;
     procedure CheckUpdateFormSmoke;
     procedure CheckAboutFormSmoke;
+    procedure CheckVideoFormSmoke;
     procedure SmokeException(Sender: TObject; E: Exception);
 
     procedure SelectKernel(Kernel: TEngineKernelType);
@@ -296,7 +298,7 @@ implementation
 {$R *.dfm}
 
 uses
-  PaletteEditorFrm, HiResFrm, UpdateFrm, AboutFrm;
+  PaletteEditorFrm, HiResFrm, UpdateFrm, AboutFrm, VideoFrm, Fractal.VideoScenario, Fractal.VideoEncoder;
 
 {------------------------------------------------------------------------------}
 
@@ -1021,6 +1023,62 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Aperçu d'un petit voyage (vue courante, puis 8 fois plus près) ; encodage réel si FFmpeg est là
+procedure TMainForm.CheckVideoFormSmoke;
+const
+  kVideoTimeoutMs = 120000;
+  kVideoDivisor = 8;
+var
+  Form: TVideoForm;
+  Location, Deeper: TFractalLocation;
+  V: TViewport;
+  S: TVideoStep;
+  Ffmpeg, VideoFile: string;
+begin
+  Ffmpeg := FindFfmpeg(ExtractFilePath(ParamStr(0)), FSettings.VideoFfmpegPath);
+  Location := CaptureLocation;
+  Deeper := TFractalLocation.Create;
+  Form := TVideoForm.Create(nil);
+  try
+    V := FNavigator.Viewport;
+    V.Width := V.Width / 8;
+    Deeper.CaptureFrom(FFormula, V, FIsAutoIter, FPalette, FMapping);
+    Form.Prepare(FFavorites, Location, FPalette, FMapping, FEngine.Kernel, Ffmpeg);
+    Form.AddCurrentView;
+    Form.Scenario.AddLocation('plus près', Deeper);
+    S := Form.Scenario[1];
+    S.TravelSeconds := 0.5;
+    S.PauseSeconds := 0.2;
+    Form.Scenario[1] := S;
+    Form.StartRender(True, '');
+    if not Form.WaitForRender(kVideoTimeoutMs) then
+      raise Exception.Create('aperçu vidéo : ' + Form.LastError);
+    if Form.PreviewImage.Picture.Graphic = nil then
+      raise Exception.Create('aperçu vidéo sans image');
+    if Ffmpeg = '' then
+      FSmokeLog.Add('FFmpeg absent : encodage vidéo non vérifié')
+    else
+    begin
+      VideoFile := ExtractFilePath(ParamStr(0)) + 'smoke.mp4';
+      SysUtils.DeleteFile(VideoFile);
+      Form.StartRender(False, VideoFile, kVideoDivisor);
+      if not Form.WaitForRender(kVideoTimeoutMs) then
+        raise Exception.Create('encodage vidéo : ' + Form.LastError);
+      if not FileExists(VideoFile) then
+        raise Exception.Create('vidéo absente');
+      SysUtils.DeleteFile(VideoFile);
+      FSmokeLog.Add('Vidéo encodée OK');
+    end;
+  finally
+    Form.Free;
+    Deeper.Free;
+    Location.Free;
+  end;
+  FSmokeLog.Add('Fenêtre Vidéo OK');
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.SmokeException(Sender: TObject; E: Exception);
 begin
   FSmokeLog.Add('ÉCHEC : exception non gérée : ' + E.Message);
@@ -1243,6 +1301,7 @@ begin
       CheckResetAllSmoke;
       CheckUpdateFormSmoke;
       CheckAboutFormSmoke;
+      CheckVideoFormSmoke;
       if not FHasSmokeFailure then
         Result := 0;
     except
@@ -2438,6 +2497,25 @@ begin
   end;
   if IsUpdateAvailable then
     ShowUpdateForm(Manifest);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.MenuImageVideoClick(Sender: TObject);
+var
+  Dlg: TVideoForm;
+  Location: TFractalLocation;
+begin
+  Location := CaptureLocation;
+  Dlg := TVideoForm.Create(Self);
+  try
+    Dlg.Prepare(FFavorites, Location, FPalette, FMapping, FEngine.Kernel,
+      FindFfmpeg(ExtractFilePath(ParamStr(0)), FSettings.VideoFfmpegPath));
+    Dlg.ShowModal;
+  finally
+    Dlg.Free;
+    Location.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}

@@ -147,7 +147,7 @@ begin
   Formula.MaxIter := AutoMaxIter(V);  // varie avec la profondeur, sans saut d'une image à l'autre
   Settings.Width := FWidth;
   Settings.Height := FHeight;
-  Settings.Supersample := 1;
+  Settings.Supersample := FScenario.Smoothing;
   Settings.FileName := '';
   Target.Size := 0;
   R := THiResRenderer.Create(Settings, V, Formula, TColorMapper.Create(FPalette, FMapping), '', FKernel,

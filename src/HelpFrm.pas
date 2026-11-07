@@ -75,7 +75,9 @@ const
       'cycle de la palette) ; le modelé éclaire la bande de son début à son bord. Le relief éclaire l''image ' +
       'comme un paysage dont l''altitude est la position dans la palette : la lumière vient du dessus, du ' +
       'côté où se trouve le curseur (gauche, haut ou droite), la hauteur amplifie la pente et l''intensité ' +
-      'dose l''effet (à zéro, lumière et hauteur ne changent rien).');
+      'dose l''effet (à zéro, lumière et hauteur ne changent rien). Image, Vidéo... compose un voyage entre des ' +
+      'favoris (survol ou glissement latéral, pauses), l''enregistre comme scénario et en tire une vidéo .mp4 ; ' +
+      'ffmpeg.exe doit se trouver à côté de Fractales.exe.');
 
 {------------------------------------------------------------------------------}
 

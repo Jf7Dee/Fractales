@@ -129,6 +129,13 @@
         <DCCReference Include="src\AboutFrm.pas">
             <Form>AboutForm</Form>
         </DCCReference>
+        <DCCReference Include="src\Fractal.VideoPath.pas"/>
+        <DCCReference Include="src\Fractal.VideoScenario.pas"/>
+        <DCCReference Include="src\Fractal.VideoEncoder.pas"/>
+        <DCCReference Include="src\Fractal.VideoRender.pas"/>
+        <DCCReference Include="src\VideoFrm.pas">
+            <Form>VideoForm</Form>
+        </DCCReference>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

@@ -27,7 +27,12 @@ uses
   HiResFrm in 'src\HiResFrm.pas' {HiResForm},
   UpdateFrm in 'src\UpdateFrm.pas' {UpdateForm},
   HelpFrm in 'src\HelpFrm.pas' {HelpForm},
-  AboutFrm in 'src\AboutFrm.pas' {AboutForm};
+  AboutFrm in 'src\AboutFrm.pas' {AboutForm},
+  Fractal.VideoPath in 'src\Fractal.VideoPath.pas',
+  Fractal.VideoScenario in 'src\Fractal.VideoScenario.pas',
+  Fractal.VideoEncoder in 'src\Fractal.VideoEncoder.pas',
+  Fractal.VideoRender in 'src\Fractal.VideoRender.pas',
+  VideoFrm in 'src\VideoFrm.pas' {VideoForm};
 
 {$R *.res}
 begin
