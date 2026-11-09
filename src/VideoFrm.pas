@@ -137,7 +137,10 @@ var
   Total: Integer;
 begin
   Total := Round(Seconds);
-  Result := Format('%d:%.2d', [Total div 60, Total mod 60]);
+  if Total >= 3600 then
+    Result := Format('%d:%d:%.2d', [Total div 3600, (Total div 60) mod 60, Total mod 60])
+  else
+    Result := Format('%d:%.2d', [Total div 60, Total mod 60]);
 end;
 
 {------------------------------------------------------------------------------}
