@@ -192,6 +192,7 @@ type
     FPalettes: TObjectList;
     FFavorites: TFavoriteStore;
     FHiResForm: TForm;  // THiResForm, déclaré dans l'implémentation pour éviter une dépendance d'interface
+    FVideoForm: TForm;  // TVideoForm, idem ; non modale, gardée pour conserver le scénario
     FSmokeLog: TStringList;
     FHasSmokeFailure: Boolean;
     FSettings: TAppSettings;
@@ -266,6 +267,7 @@ type
     procedure RefreshFavorites;
     procedure DeleteSelectedFavorite;
     procedure PrepareHiResForm(Sender: TObject);
+    procedure PrepareVideoForm(Sender: TObject);
     procedure ShowHelp(Topic: THelpTopic);
 
     procedure CheckSmokeStep(const StepName: string);
@@ -1080,6 +1082,24 @@ begin
     Form.Free;
     Deeper.Free;
     Location.Free;
+  end;
+  // non modale : « Ajouter la vue » suit la navigation, et le menu ramène la même fenêtre
+  MenuImageVideoClick(nil);
+  Form := TVideoForm(FVideoForm);
+  Form.AddCurrentView;
+  FNavigator.ZoomCenter(4);
+  try
+    Form.AddCurrentView;
+    if Form.Scenario.Count <> 2 then
+      raise Exception.CreateFmt('vue suivie : %d étapes au lieu de 2', [Form.Scenario.Count]);
+    if not (Form.Scenario[1].Pose.Width < Form.Scenario[0].Pose.Width) then
+      raise Exception.Create('vue suivie : « Ajouter la vue » a repris la vue de l''ouverture');
+    MenuImageVideoClick(nil);
+    if (FVideoForm <> Form) or (Form.Scenario.Count <> 2) then
+      raise Exception.Create('fenêtre Vidéo non conservée');
+  finally
+    FNavigator.ZoomCenter(1 / 4);
+    Form.Close;
   end;
   FSmokeLog.Add('Fenêtre Vidéo OK');
 end;
@@ -2444,6 +2464,8 @@ procedure TMainForm.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
 begin
   if (FHiResForm <> nil) and THiResForm(FHiResForm).IsRunning then
     THiResForm(FHiResForm).FormCloseQuery(Self, CanClose);
+  if CanClose and (FVideoForm <> nil) then
+    TVideoForm(FVideoForm).FormCloseQuery(Self, CanClose);
   if CanClose then
     SaveSession;
 end;
@@ -2509,18 +2531,27 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TMainForm.MenuImageVideoClick(Sender: TObject);
+begin
+  if FVideoForm = nil then
+  begin
+    FVideoForm := TVideoForm.Create(Self);
+    TVideoForm(FVideoForm).OnRequestSnapshot := PrepareVideoForm;
+  end;
+  PrepareVideoForm(nil);
+  FVideoForm.Show;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.PrepareVideoForm(Sender: TObject);
 var
-  Dlg: TVideoForm;
   Location: TFractalLocation;
 begin
   Location := CaptureLocation;
-  Dlg := TVideoForm.Create(Self);
   try
-    Dlg.Prepare(FFavorites, Location, FPalette, FMapping, FEngine.Kernel,
+    TVideoForm(FVideoForm).Prepare(FFavorites, Location, FPalette, FMapping, FEngine.Kernel,
       FindFfmpeg(ExtractFilePath(ParamStr(0)), FSettings.VideoFfmpegPath));
-    Dlg.ShowModal;
   finally
-    Dlg.Free;
     Location.Free;
   end;
 end;

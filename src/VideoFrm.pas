@@ -70,6 +70,7 @@ type
     procedure btnCloseClick(Sender: TObject);
     procedure tmrProgressTimer(Sender: TObject);
     procedure btnReplayClick(Sender: TObject);
+    procedure FormActivate(Sender: TObject);
   private
     FScenario: TVideoScenario;
     FFavorites: TFavoriteStore;
@@ -88,6 +89,8 @@ type
     FIsUpdating: Boolean;
     FScenarioFile: string;   // dernier scénario ouvert ou enregistré ; '' = pas encore de fichier
     FRenderedText: string;   // texte du scénario au lancement du rendu en cours
+    FOnRequestSnapshot: TNotifyEvent;
+    procedure RequestSnapshot;
     procedure PreviewSink(Png: TStream);
     function PreviewFileName: string;
     function PreviewStampFileName: string;
@@ -104,7 +107,7 @@ type
     function SelectedIndex: Integer;
     function IsRendering: Boolean;
   public
-    // Copie le lieu courant et la palette ; Favorites reste à l'appelant
+    // Copie le lieu courant et la palette ; Favorites reste à l'appelant. Peut être rappelé : garde les sélections
     procedure Prepare(Favorites: TFavoriteStore; CurrentLocation: TFractalLocation; Palette: TGradientPalette;
       const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string);
     procedure AddCurrentView;
@@ -114,6 +117,9 @@ type
     property LastError: string read FLastError;
     property PreviewImage: TImage read imgPreview;
     property ReplayButton: TButton read btnReplay;
+    // Fenêtre non modale : demande à la fenêtre principale d'appeler Prepare avec son état du moment
+    // (activation, « Ajouter la vue », lancement d'un rendu)
+    property OnRequestSnapshot: TNotifyEvent read FOnRequestSnapshot write FOnRequestSnapshot;
   end;
 
 implementation
@@ -211,6 +217,8 @@ end;
 
 procedure TVideoForm.Prepare(Favorites: TFavoriteStore; CurrentLocation: TFractalLocation; Palette: TGradientPalette;
   const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string);
+var
+  Favorite: string;
 begin
   if (Favorites = nil) or (CurrentLocation = nil) or (Palette = nil) then
     raise EArgumentException.Create('TVideoForm.Prepare : paramètre nil');
@@ -220,14 +228,32 @@ begin
   FMapping := Mapping;
   FKernel := Kernel;
   FFfmpegExe := FfmpegExe;
+  Favorite := cbFavorites.Text;
   FFavorites.List(cbFavorites.Items);
-  if cbFavorites.Items.Count > 0 then
+  cbFavorites.ItemIndex := cbFavorites.Items.IndexOf(Favorite);
+  if (cbFavorites.ItemIndex < 0) and (cbFavorites.Items.Count > 0) then
     cbFavorites.ItemIndex := 0;
   if FFfmpegExe = '' then
     lblFfmpeg.Caption := kFfmpegHelp + ' L''aperçu reste possible.'
   else
     lblFfmpeg.Caption := '';
-  RefreshList(-1);
+  RefreshList(SelectedIndex);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.RequestSnapshot;
+begin
+  if Assigned(FOnRequestSnapshot) then
+    FOnRequestSnapshot(Self);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Retour dans la fenêtre : les favoris ont pu changer entre-temps
+procedure TVideoForm.FormActivate(Sender: TObject);
+begin
+  RequestSnapshot;
 end;
 
 {------------------------------------------------------------------------------}
@@ -267,6 +293,7 @@ end;
 
 procedure TVideoForm.AddCurrentView;
 begin
+  RequestSnapshot;
   AddLocation(Format(kViewName, [FScenario.Count + 1]), FCurrent);
 end;
 
@@ -623,6 +650,7 @@ var
 begin
   if IsRendering then
     Exit;
+  RequestSnapshot;  // palette, coloration et moteur du moment
   FIsPreview := IsPreview;
   FOutputFile := FileName;
   FRenderedText := FScenario.SaveToText;
