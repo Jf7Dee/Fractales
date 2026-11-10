@@ -32,6 +32,7 @@ type
     FFramesTotal: Integer;
     FFramesDone: Integer;
     FRenderCount: Integer;
+    FFrameProgress: Integer;  // avancement de l'image en cours, 0..kProgressMax
     FStartTick: Cardinal;
     FCost: array of Double;  // coût prévu cumulé : FCost[I] = images 0..I-1 ; vide = pas de profil
     FIsProfiling: Boolean;
@@ -134,17 +135,27 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// L'image en cours compte pour sa part déjà calculée : sans elle, l'estimation monte pendant chaque image et
+// redescend d'un coup à la suivante
 function TVideoRenderer.GetSecondsLeft: Double;
 var
   Done: Integer;
+  Fraction, DoneCost, Elapsed: Double;
 begin
   Done := FFramesDone;
-  if Done = 0 then
-    Result := 0
-  else if (Length(FCost) > FFramesTotal) and (FCost[Done] > 0) then
-    Result := (GetTickCount - FStartTick) / 1000 * (FCost[FFramesTotal] - FCost[Done]) / FCost[Done]
-  else
-    Result := (GetTickCount - FStartTick) / 1000 / Done * (FFramesTotal - Done);
+  Fraction := Min(1, FFrameProgress / kProgressMax);
+  Elapsed := (GetTickCount - FStartTick) / 1000;
+  Result := 0;
+  if Length(FCost) > FFramesTotal then
+  begin
+    DoneCost := FCost[Done];
+    if Done < FFramesTotal then
+      DoneCost := DoneCost + (FCost[Done + 1] - FCost[Done]) * Fraction;
+    if DoneCost > 0 then
+      Result := Elapsed * (FCost[FFramesTotal] - DoneCost) / DoneCost;
+  end
+  else if Done + Fraction > 0 then
+    Result := Elapsed / (Done + Fraction) * (FFramesTotal - Done - Fraction);
 end;
 
 {------------------------------------------------------------------------------}
@@ -171,8 +182,11 @@ begin
     kHiResBandRows, Target);
   try
     while WaitForSingleObject(R.Handle, kPollMs) = WAIT_TIMEOUT do
+    begin
+      FFrameProgress := R.Progress;
       if Terminated then
         R.Terminate;
+    end;
     Result := R.IsSucceeded;
     if not Result and not Terminated then
       raise EVideoEncoderError.Create(R.ErrorMessage);
@@ -275,6 +289,7 @@ begin
       Formula := FScenario.CreateFormula;
       if not Profile(Formula, Frame) then
         Exit;
+      FFrameProgress := 0;  // la dernière image du profil ne compte pas
       FStartTick := GetTickCount;
       if FOutputFile <> '' then
       begin
@@ -301,6 +316,7 @@ begin
           FSink(Frame);
         if Pipe <> nil then
           Pipe.WriteFrame(Frame);
+        FFrameProgress := 0;
         Inc(FFramesDone);
       end;
       if Terminated then
