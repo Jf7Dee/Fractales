@@ -371,7 +371,7 @@ end;
 
 procedure TVideoForm.RefreshSummary;
 begin
-  lblDuration.Caption := Format('Durée : %s (%d images)', [ClockText(FScenario.TotalSeconds), FScenario.TotalFrames]);
+  lblDuration.Caption := Format('Durée : %s '+#13#10+'Nb images : %d ', [ClockText(FScenario.TotalSeconds), FScenario.TotalFrames]);
   UpdateControls;
 end;
 
