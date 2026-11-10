@@ -45,6 +45,7 @@ const
   kPipeBufferBytes = 1024 * 1024;
   kWriteChunkBytes = 64 * 1024;
   kLogTailChars = 800;
+  kBelowNormalPriority = $00004000;  // BELOW_NORMAL_PRIORITY_CLASS, absent de Windows.pas en D2010
 
 {------------------------------------------------------------------------------}
 
@@ -107,8 +108,9 @@ begin
     Startup.hStdError := Log;
     CommandLine := '"' + FfmpegExe + '" ' + FfmpegArguments(OutputFile, Fps);
     UniqueString(CommandLine);  // CreateProcess peut écrire dans la ligne de commande
-    IsStarted := CreateProcess(nil, PChar(CommandLine), nil, nil, True, CREATE_NO_WINDOW, nil, nil, Startup,
-      FProcess);
+    // priorité réduite : l'encodage prend tous les cœurs, Windows doit rester utilisable
+    IsStarted := CreateProcess(nil, PChar(CommandLine), nil, nil, True,
+      CREATE_NO_WINDOW or kBelowNormalPriority, nil, nil, Startup, FProcess);
     if not IsStarted then
       raise EVideoEncoderError.CreateFmt('FFmpeg n''a pas pu démarrer : %s', [SysErrorMessage(GetLastError)]);
   except

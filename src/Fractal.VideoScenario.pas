@@ -57,6 +57,7 @@ type
     function TotalSeconds: Double;
     function PoseAtFrame(Frame: Integer; out IsPause: Boolean): TCameraPose;
     function CreateFormula: TFractalFormula;
+    function SaveToText: string;
     procedure SaveToFile(const FileName: string);
     procedure LoadFromFile(const FileName: string);
     property Steps[Index: Integer]: TVideoStep read GetStep write SetStep; default;
@@ -371,7 +372,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TVideoScenario.SaveToFile(const FileName: string);
+function TVideoScenario.SaveToText: string;
 var
   L: TStringList;
   I: Integer;
@@ -401,6 +402,21 @@ begin
       L.Add('Travel=' + FloatToInvariant(S.TravelSeconds));
       L.Add('Pause=' + FloatToInvariant(S.PauseSeconds));
     end;
+    Result := L.Text;
+  finally
+    L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.SaveToFile(const FileName: string);
+var
+  L: TStringList;
+begin
+  L := TStringList.Create;
+  try
+    L.Text := SaveToText;
     try
       L.SaveToFile(FileName, TEncoding.UTF8);
     except

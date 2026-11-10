@@ -1068,6 +1068,13 @@ begin
         raise Exception.Create('vidéo absente');
       SysUtils.DeleteFile(VideoFile);
       FSmokeLog.Add('Vidéo encodée OK');
+      // aperçu encodé : il peut être revu tant que le scénario ne change pas
+      Form.btnPreviewClick(nil);
+      if not Form.WaitForRender(kVideoTimeoutMs) then
+        raise Exception.Create('aperçu encodé : ' + Form.LastError);
+      if not Form.ReplayButton.Enabled then
+        raise Exception.Create('aperçu encodé : « Revoir l''aperçu » grisé');
+      FSmokeLog.Add('Aperçu à revoir OK');
     end;
   finally
     Form.Free;

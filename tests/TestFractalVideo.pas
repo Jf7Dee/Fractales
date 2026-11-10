@@ -781,9 +781,10 @@ begin
     try
       R.WaitFor;
       CheckTrue(R.IsSucceeded, R.ErrorMessage);
-      CheckEquals(15, R.FramesTotal, 'aperçu : sans les pauses');
-      CheckEquals(15, R.FramesDone);
-      CheckEquals(15, FFrames.Count);
+      CheckEquals(21, R.FramesTotal, 'aperçu : trajet et pause, au vrai minutage');
+      CheckEquals(21, R.FramesDone);
+      CheckEquals(21, FFrames.Count);
+      CheckEquals(15, R.RenderCount, 'la pause de l''aperçu ne recalcule rien');
       CheckEquals(270, R.FrameWidth, 'quart de 1080');
       for I := 0 to FFrames.Count - 1 do
         CheckTrue(Copy(FrameBytes(I), 1, 4) = #137'PNG', Format('image %d : pas un PNG', [I]));
@@ -811,6 +812,9 @@ begin
       CheckTrue(R.IsSucceeded, R.ErrorMessage);
       CheckEquals(21, FFrames.Count, 'trajet + pause');
       CheckEquals(15, R.RenderCount, 'la pause ne recalcule rien');
+      CheckTrue(R.ProbesTotal > 0, 'profil de coût calculé');
+      CheckEquals(R.ProbesTotal, R.ProbesDone);
+      CheckFalse(R.IsProfiling);
       for I := 15 to 20 do
         CheckTrue(FrameBytes(I) = FrameBytes(14), Format('image %d : différente de l''arrivée', [I]));
       CheckFalse(FrameBytes(0) = FrameBytes(14), 'le trajet bouge');

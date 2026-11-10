@@ -7,7 +7,7 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Math, StrUtils, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls,
-  ExtCtrls, SyncObjs, {$IF CompilerVersion >= 23} UITypes,{$IFEND}
+  ExtCtrls, SyncObjs, ShellAPI, {$IF CompilerVersion >= 23} UITypes,{$IFEND}
   pngimage, Fractal.Types, Fractal.Palette, Fractal.Engine, Fractal.Persistence, Fractal.VideoPath,
   Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender;
 
@@ -50,6 +50,7 @@ type
     dlgOpen: TOpenDialog;
     dlgSave: TSaveDialog;
     dlgVideo: TSaveDialog;
+    btnReplay: TButton;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -68,6 +69,7 @@ type
     procedure btnSaveClick(Sender: TObject);
     procedure btnCloseClick(Sender: TObject);
     procedure tmrProgressTimer(Sender: TObject);
+    procedure btnReplayClick(Sender: TObject);
   private
     FScenario: TVideoScenario;
     FFavorites: TFavoriteStore;
@@ -84,7 +86,13 @@ type
     FPreviewPng: TMemoryStream;  // dernière image de l'aperçu, déposée par le fil de rendu
     FHasNewPreview: Boolean;
     FIsUpdating: Boolean;
+    FScenarioFile: string;   // dernier scénario ouvert ou enregistré ; '' = pas encore de fichier
+    FRenderedText: string;   // texte du scénario au lancement du rendu en cours
     procedure PreviewSink(Png: TStream);
+    function PreviewFileName: string;
+    function PreviewStampFileName: string;
+    function IsPreviewCurrent: Boolean;
+    procedure WritePreviewStamp;
     procedure AddLocation(const AName: string; Location: TFractalLocation);
     procedure RefreshList(SelectIndex: Integer);
     procedure RefreshStep;
@@ -105,6 +113,7 @@ type
     property Scenario: TVideoScenario read FScenario;
     property LastError: string read FLastError;
     property PreviewImage: TImage read imgPreview;
+    property ReplayButton: TButton read btnReplay;
   end;
 
 implementation
@@ -122,6 +131,10 @@ const
   kMsgDone = 'Vidéo enregistrée :'#13#10'%s';
   kMsgFailed = 'La vidéo n''a pas pu être créée :'#13#10'%s';
   kViewName = 'Vue %d';
+  kPreviewSuffix = '.apercu.mp4';
+  kPreviewTempName = 'Fractales apercu.mp4';
+  kStampExtension = '.scenario';  // scénario au moment de l'aperçu : l'aperçu ne vaut que pour lui
+  kMsgReplayFailed = 'Impossible d''ouvrir l''aperçu dans le lecteur vidéo de Windows.';
 
 {------------------------------------------------------------------------------}
 
@@ -359,6 +372,48 @@ end;
 procedure TVideoForm.RefreshSummary;
 begin
   lblDuration.Caption := Format('Durée : %s (%d images)', [ClockText(FScenario.TotalSeconds), FScenario.TotalFrames]);
+  UpdateControls;
+end;
+
+{------------------------------------------------------------------------------}
+
+// L'aperçu encodé vit à côté du scénario enregistré (il survit à la fermeture), sinon dans le dossier temporaire
+function TVideoForm.PreviewFileName: string;
+begin
+  if FScenarioFile <> '' then
+    Result := ChangeFileExt(FScenarioFile, '') + kPreviewSuffix
+  else
+    Result := IncludeTrailingPathDelimiter(GetEnvironmentVariable('TEMP')) + kPreviewTempName;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TVideoForm.PreviewStampFileName: string;
+begin
+  Result := PreviewFileName + kStampExtension;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TVideoForm.IsPreviewCurrent: Boolean;
+var
+  L: TStringList;
+begin
+  Result := False;
+  if (FScenario.Count < 2) or not FileExists(PreviewFileName) or not FileExists(PreviewStampFileName) then
+    Exit;
+  L := TStringList.Create;
+  try
+    try
+      L.LoadFromFile(PreviewStampFileName);
+      Result := L.Text = FScenario.SaveToText;
+    except
+      on E: EStreamError do
+        Result := False;
+    end;
+  finally
+    L.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -385,6 +440,7 @@ begin
   btnCancel.Enabled := not IsIdle;
   btnOpen.Enabled := IsIdle;
   btnSave.Enabled := IsIdle and (FScenario.Count > 0);
+  btnReplay.Enabled := IsIdle and IsPreviewCurrent;
 end;
 
 {------------------------------------------------------------------------------}
@@ -517,6 +573,7 @@ begin
     FScenario.Format := TVideoFormat(cbFormat.ItemIndex);
   if cbSmoothing.ItemIndex >= 0 then
     FScenario.Smoothing := cbSmoothing.ItemIndex + 1;
+  UpdateControls;
 end;
 
 {------------------------------------------------------------------------------}
@@ -568,6 +625,7 @@ begin
     Exit;
   FIsPreview := IsPreview;
   FOutputFile := FileName;
+  FRenderedText := FScenario.SaveToText;
   FLastError := '';
   Sink := nil;
   if IsPreview then
@@ -602,7 +660,15 @@ begin
     MessageDlg(Format(kMsgFailed, [FLastError]), mtError, [mbOK], 0);
   end
   else if FIsPreview then
-    lblProgress.Caption := 'Aperçu terminé.'
+  begin
+    lblProgress.Caption := 'Aperçu terminé.';
+    if FOutputFile <> '' then
+    begin
+      WritePreviewStamp;
+      lblProgress.Caption := 'Aperçu terminé : « Revoir l''aperçu » le rejoue.';
+      UpdateControls;
+    end;
+  end
   else
   begin
     lblProgress.Caption := 'Vidéo enregistrée.';
@@ -630,6 +696,8 @@ begin
     ShowPreviewFrame;
     FLastError := FRenderer.ErrorMessage;
     Result := FRenderer.IsSucceeded;
+    if Result and FIsPreview and (FOutputFile <> '') then
+      WritePreviewStamp;
     FreeAndNil(FRenderer);
     UpdateControls;
   end;
@@ -646,18 +714,59 @@ begin
   end;
   if FIsPreview then
     ShowPreviewFrame;
-  pbProgress.Position := FRenderer.FramesDone;
-  lblProgress.Caption := Format('Image %d sur %d, reste environ %s', [FRenderer.FramesDone, FRenderer.FramesTotal,
-    ClockText(FRenderer.SecondsLeft)]);
+  if FRenderer.IsProfiling then
+  begin
+    pbProgress.Max := Max(1, FRenderer.ProbesTotal);
+    pbProgress.Position := FRenderer.ProbesDone;
+    lblProgress.Caption := Format('Estimation de la durée : %d %%',
+      [FRenderer.ProbesDone * 100 div Max(1, FRenderer.ProbesTotal)]);
+  end
+  else
+  begin
+    pbProgress.Max := Max(1, FRenderer.FramesTotal);
+    pbProgress.Position := FRenderer.FramesDone;
+    lblProgress.Caption := Format('Image %d sur %d, reste environ %s', [FRenderer.FramesDone, FRenderer.FramesTotal,
+      ClockText(FRenderer.SecondsLeft)]);
+  end;
   if FRenderer.IsDone then
     FinishRender;
 end;
 
 {------------------------------------------------------------------------------}
 
+// Avec FFmpeg, l'aperçu est aussi encodé, pour être revu sans être recalculé
 procedure TVideoForm.btnPreviewClick(Sender: TObject);
 begin
-  StartRender(True, '');
+  if FFfmpegExe = '' then
+    StartRender(True, '')
+  else
+  begin
+    SysUtils.DeleteFile(PreviewStampFileName);
+    StartRender(True, PreviewFileName);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.WritePreviewStamp;
+var
+  L: TStringList;
+begin
+  L := TStringList.Create;
+  try
+    L.Text := FRenderedText;
+    L.SaveToFile(PreviewStampFileName, TEncoding.UTF8);
+  finally
+    L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.btnReplayClick(Sender: TObject);
+begin
+  if ShellExecute(Handle, 'open', PChar(PreviewFileName), nil, nil, SW_SHOWNORMAL) <= 32 then
+    MessageDlg(kMsgReplayFailed, mtWarning, [mbOK], 0);
 end;
 
 {------------------------------------------------------------------------------}
@@ -684,6 +793,7 @@ begin
     Exit;
   try
     FScenario.LoadFromFile(dlgOpen.FileName);
+    FScenarioFile := dlgOpen.FileName;
   except
     on E: EVideoScenarioError do
     begin
@@ -702,10 +812,12 @@ begin
     Exit;
   try
     FScenario.SaveToFile(dlgSave.FileName);
+    FScenarioFile := dlgSave.FileName;
   except
     on E: EVideoScenarioError do
       MessageDlg(E.Message, mtWarning, [mbOK], 0);
   end;
+  UpdateControls;
 end;
 
 {------------------------------------------------------------------------------}

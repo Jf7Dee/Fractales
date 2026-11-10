@@ -321,6 +321,15 @@ object VideoForm: TVideoForm
     OnClick = btnCloseClick
     Cancel = True
   end
+  object btnReplay: TButton
+    Left = 412
+    Top = 390
+    Width = 150
+    Height = 25
+    Caption = 'Revoir l''aper'#231'u'
+    TabOrder = 16
+    OnClick = btnReplayClick
+  end
   object tmrProgress: TTimer
     Enabled = False
     Interval = 250

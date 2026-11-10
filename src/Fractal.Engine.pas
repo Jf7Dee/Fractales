@@ -204,6 +204,7 @@ constructor TRenderWorker.Create(AEngine: TRenderEngine);
 begin
   FEngine := AEngine;
   inherited Create(False);
+  Priority := tpLower;  // le calcul prend tous les cœurs : Windows et l'interface doivent rester utilisables
 end;
 
 {------------------------------------------------------------------------------}
