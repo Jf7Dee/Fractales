@@ -28,6 +28,8 @@ type
     procedure Fail(const Text: string);
   public
     constructor Create(const FfmpegExe, OutputFile: string; Fps: Integer);
+    // FFmpeg avec ses propres arguments, sans images sur son entrée : Finish attend simplement sa fin
+    constructor CreateWithArguments(const FfmpegExe, OutputFile, Arguments: string);
     destructor Destroy; override;
     procedure WriteFrame(Png: TStream);
     procedure Finish;
@@ -37,6 +39,7 @@ type
 
 function FindFfmpeg(const ExeFolder, ConfiguredPath: string): string;
 function FfmpegArguments(const OutputFile: string; Fps: Integer): string;
+function FfmpegConcatArguments(const ListFile, OutputFile: string): string;
 
 implementation
 
@@ -72,7 +75,23 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Morceaux mis bout à bout sans réencodage : quelques secondes, même pour une longue vidéo
+function FfmpegConcatArguments(const ListFile, OutputFile: string): string;
+begin
+  Result := Format('-y -hide_banner -loglevel error -nostdin -f concat -safe 0 -i "%s" -c copy -movflags +faststart "%s"',
+    [ListFile, OutputFile]);
+end;
+
+{------------------------------------------------------------------------------}
+
 constructor TFfmpegPipe.Create(const FfmpegExe, OutputFile: string; Fps: Integer);
+begin
+  CreateWithArguments(FfmpegExe, OutputFile, FfmpegArguments(OutputFile, Fps));
+end;
+
+{------------------------------------------------------------------------------}
+
+constructor TFfmpegPipe.CreateWithArguments(const FfmpegExe, OutputFile, Arguments: string);
 var
   Security: TSecurityAttributes;
   StdInRead, Log: THandle;
@@ -106,7 +125,7 @@ begin
     Startup.hStdInput := StdInRead;
     Startup.hStdOutput := Log;
     Startup.hStdError := Log;
-    CommandLine := '"' + FfmpegExe + '" ' + FfmpegArguments(OutputFile, Fps);
+    CommandLine := '"' + FfmpegExe + '" ' + Arguments;
     UniqueString(CommandLine);  // CreateProcess peut écrire dans la ligne de commande
     // priorité réduite : l'encodage prend tous les cœurs, Windows doit rester utilisable
     IsStarted := CreateProcess(nil, PChar(CommandLine), nil, nil, True,

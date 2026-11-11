@@ -60,7 +60,10 @@ type
   TTestVideoRender = class(TTestCase)
   private
     FFrames: TList;
+    FCancelAfter: Integer;          // > 0 : annule le rendu après ce nombre d'images
+    FCancelTarget: TVideoRenderer;
     procedure Collect(Png: TStream);
+    function FindTestFfmpeg: string;
     function SmallScenario: TVideoScenario;
     function StartRender(Scenario: TVideoScenario; IsPreview: Boolean; Divisor: Integer): TVideoRenderer;
     function FrameBytes(Index: Integer): RawByteString;
@@ -72,6 +75,7 @@ type
     procedure TestPauseFramesAreReused;
     procedure TestCancel;
     procedure TestHiResToStream;
+    procedure TestResumeAfterCancel;
   end;
 
 implementation
@@ -711,6 +715,18 @@ begin
   Png.Position := 0;
   Copy.CopyFrom(Png, Png.Size);
   FFrames.Add(Copy);
+  if (FCancelAfter > 0) and (FFrames.Count = FCancelAfter) and (FCancelTarget <> nil) then
+    FCancelTarget.Cancel;
+end;
+
+{------------------------------------------------------------------------------}
+
+// FFmpeg à la racine du dépôt (les tests tournent depuis tests\) ou à côté de l'exe ; '' si absent
+function TTestVideoRender.FindTestFfmpeg: string;
+begin
+  Result := FindFfmpeg(ExtractFilePath(ParamStr(0)) + '..', '');
+  if Result = '' then
+    Result := FindFfmpeg(ExtractFilePath(ParamStr(0)), '');
 end;
 
 {------------------------------------------------------------------------------}
@@ -940,6 +956,79 @@ begin
   finally
     Pipe.Free;
     SysUtils.DeleteFile(OutFile + '.log');
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Morceaux de 5 images : annulé à la 12e, le rendu garde 2 morceaux (10 images) ; la relance reprend à la 10e,
+// et la vidéo assemblée laisse le dossier des morceaux supprimé
+procedure TTestVideoRender.TestResumeAfterCancel;
+var
+  Sc: TVideoScenario;
+  P: TGradientPalette;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile: string;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : reprise non vérifiée');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'reprise.mp4';
+  SysUtils.DeleteFile(OutFile);
+  Sc := SmallScenario;
+  P := TGradientPalette.Create;
+  try
+    P.SetDefault;
+    FCancelAfter := 12;
+    R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5);
+    try
+      FCancelTarget := R;
+      R.WaitFor;
+      CheckFalse(R.IsSucceeded, 'annulé');
+    finally
+      FCancelTarget := nil;
+      R.Free;
+    end;
+    CheckFalse(FileExists(OutFile), 'pas de vidéo après l''annulation');
+    CheckTrue(FileExists(OutFile + kPartsSuffix + '\morceau0001.mp4'), 'morceaux gardés');
+    FCancelAfter := 0;
+    R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(10, R.FirstFrame, 'reprise après les deux morceaux complets');
+      CheckEquals(21, R.FramesDone);
+    finally
+      R.Free;
+    end;
+    CheckTrue(FileExists(OutFile), 'vidéo assemblée');
+    CheckFalse(DirectoryExists(OutFile + kPartsSuffix), 'morceaux supprimés');
+    // scénario modifié : les morceaux d'avant ne valent plus rien
+    FCancelAfter := 4;
+    R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 3);
+    try
+      FCancelTarget := R;
+      R.WaitFor;
+    finally
+      FCancelTarget := nil;
+      R.Free;
+    end;
+    FCancelAfter := 0;
+    R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 4, 3);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(0, R.FirstFrame, 'autre taille : tout recommence');
+    finally
+      R.Free;
+    end;
+  finally
+    P.Free;
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
   end;
 end;
 

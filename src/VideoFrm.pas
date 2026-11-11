@@ -680,7 +680,9 @@ begin
   IsCancelled := not IsSucceeded and (FLastError = '');
   FreeAndNil(FRenderer);
   UpdateControls;
-  if IsCancelled then
+  if IsCancelled and (FOutputFile <> '') then
+    lblProgress.Caption := 'Interrompu : relancer la même vidéo reprendra où elle s''est arrêtée.'
+  else if IsCancelled then
     lblProgress.Caption := 'Interrompu.'
   else if not IsSucceeded then
   begin
@@ -755,6 +757,8 @@ begin
     pbProgress.Position := FRenderer.FramesDone;
     lblProgress.Caption := Format('Image %d sur %d, reste environ %s', [FRenderer.FramesDone, FRenderer.FramesTotal,
       ClockText(FRenderer.SecondsLeft)]);
+    if FRenderer.FirstFrame > 0 then
+      lblProgress.Caption := lblProgress.Caption + Format(' (reprise à l''image %d)', [FRenderer.FirstFrame]);
   end;
   if FRenderer.IsDone then
     FinishRender;

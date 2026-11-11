@@ -4,15 +4,19 @@
 // FFmpeg, à un récepteur (aperçu en direct, tests), ou aux deux. Les images d'une pause ne sont rendues qu'une fois.
 // Avant le rendu, une image sur kProbeEvery est calculée en petit : ce profil de coût guide l'estimation du temps
 // restant, car une image coûte très différemment selon la profondeur et la part d'intérieur à l'écran.
+// La vidéo est encodée par morceaux, dans un dossier à côté d'elle, puis assemblée : une génération interrompue
+// (mise à jour de Windows, panne, Interrompre) reprend au premier morceau manquant si rien n'a changé depuis.
 
 interface
 
 uses
   Windows, SysUtils, Classes, Math, Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine,
-  Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder, SyncObjs;
+  Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.Persistence, SyncObjs;
 
 const
   kPreviewDivisor = 4;  // l'aperçu est rendu au quart de la taille
+  kSegmentFrames = 300;  // un morceau = 10 s de vidéo ; une interruption en perd au plus un
+  kPartsSuffix = '.morceaux';
 
 type
   // Appelé dans le fil de rendu, une fois par image
@@ -33,6 +37,9 @@ type
     FFramesDone: Integer;
     FRenderCount: Integer;
     FFrameProgress: Integer;  // avancement de l'image en cours, 0..kProgressMax
+    FSegmentFrames: Integer;
+    FFirstFrame: Integer;     // première image calculée : les précédentes viennent des morceaux d'une génération interrompue
+    FPartsFolder: string;
     FStartTick: Cardinal;
     FCost: array of Double;  // coût prévu cumulé : FCost[I] = images 0..I-1 ; vide = pas de profil
     FIsProfiling: Boolean;
@@ -46,16 +53,25 @@ type
     function RenderFrame(const Pose: TCameraPose; Formula: TFractalFormula; Target: TStream;
       Width, Height, Supersample: Integer): Boolean;
     function Profile(Formula: TFractalFormula; Target: TStream): Boolean;
+    function PartFile(Index: Integer): string;
+    function PendingPartFile: string;
+    function StampText(Formula: TFractalFormula): string;
+    procedure PrepareParts(Formula: TFractalFormula);
+    procedure RemoveParts;
+    procedure SetPipe(Pipe: TFfmpegPipe);
+    procedure OpenPart(var Pipe: TFfmpegPipe);
+    procedure ClosePart(var Pipe: TFfmpegPipe; Index: Integer);
+    procedure JoinParts;
     function GetSecondsLeft: Double;
   protected
     procedure Execute; override;
   public
     // Le scénario et la palette sont copiés : le fil travaille sur ses propres instances.
     // OutputFile vide : pas de FFmpeg (le récepteur seul reçoit les images).
-    // Divisor : 0 = automatique (kPreviewDivisor en aperçu, 1 sinon)
+    // Divisor : 0 = automatique (kPreviewDivisor en aperçu, 1 sinon). SegmentFrames : 0 = kSegmentFrames
     constructor Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
       Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean;
-      Sink: TVideoFrameSink = nil; Divisor: Integer = 0);
+      Sink: TVideoFrameSink = nil; Divisor: Integer = 0; SegmentFrames: Integer = 0);
     destructor Destroy; override;
     procedure Cancel;  // à préférer à Terminate : arrête aussi FFmpeg, même pendant la finalisation de la vidéo
     property FramesTotal: Integer read FFramesTotal;
@@ -64,6 +80,7 @@ type
     property IsProfiling: Boolean read FIsProfiling;   // pré-calcul du profil de coût en cours
     property ProbesDone: Integer read FProbesDone;
     property ProbesTotal: Integer read FProbesTotal;
+    property FirstFrame: Integer read FFirstFrame;  // > 0 : génération reprise
     property SecondsLeft: Double read GetSecondsLeft;
     property FrameWidth: Integer read FWidth;
     property FrameHeight: Integer read FHeight;
@@ -78,12 +95,20 @@ const
   kPollMs = 50;
   kProbeEvery = 15;   // une image du profil par demi-seconde de trajet
   kProbeDivisor = 8;  // rapportée à la pleine taille, sans lissage
+  kStampName = 'scenario.txt';  // ce qui a produit les morceaux : s'il diffère, ils sont écartés
+  kListName = 'liste.txt';
+  kPartName = 'morceau%.4d.mp4';
+  kPendingPartName = 'morceau-en-cours.mp4';
+  kEsContinuous = $80000000;    // SetThreadExecutionState
+  kEsSystemRequired = $00000001;
+
+function SetThreadExecutionState(Flags: DWORD): DWORD; stdcall; external kernel32 name 'SetThreadExecutionState';
 
 {------------------------------------------------------------------------------}
 
 constructor TVideoRenderer.Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
   Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean; Sink: TVideoFrameSink;
-  Divisor: Integer);
+  Divisor, SegmentFrames: Integer);
 begin
   if (Scenario = nil) or (Palette = nil) then
     raise EArgumentException.Create('TVideoRenderer : scénario ou palette nil');
@@ -106,6 +131,9 @@ begin
   FWidth := Max(2, FWidth div Divisor);
   FHeight := Max(2, FHeight div Divisor);
   FFramesTotal := FScenario.TotalFrames;
+  FSegmentFrames := IfThen(SegmentFrames > 0, SegmentFrames, kSegmentFrames);
+  if OutputFile <> '' then
+    FPartsFolder := OutputFile + kPartsSuffix + PathDelim;
   inherited Create(False);
 end;
 
@@ -136,7 +164,7 @@ end;
 {------------------------------------------------------------------------------}
 
 // L'image en cours compte pour sa part déjà calculée : sans elle, l'estimation monte pendant chaque image et
-// redescend d'un coup à la suivante
+// redescend d'un coup à la suivante. Les images reprises d'une génération interrompue ne comptent pas
 function TVideoRenderer.GetSecondsLeft: Double;
 var
   Done: Integer;
@@ -146,16 +174,18 @@ begin
   Fraction := Min(1, FFrameProgress / kProgressMax);
   Elapsed := (GetTickCount - FStartTick) / 1000;
   Result := 0;
+  if Done < FFirstFrame then
+    Exit;
   if Length(FCost) > FFramesTotal then
   begin
     DoneCost := FCost[Done];
     if Done < FFramesTotal then
       DoneCost := DoneCost + (FCost[Done + 1] - FCost[Done]) * Fraction;
-    if DoneCost > 0 then
-      Result := Elapsed * (FCost[FFramesTotal] - DoneCost) / DoneCost;
+    if DoneCost > FCost[FFirstFrame] then
+      Result := Elapsed * (FCost[FFramesTotal] - DoneCost) / (DoneCost - FCost[FFirstFrame]);
   end
-  else if Done + Fraction > 0 then
-    Result := Elapsed / (Done + Fraction) * (FFramesTotal - Done - Fraction);
+  else if Done - FFirstFrame + Fraction > 0 then
+    Result := Elapsed / (Done - FFirstFrame + Fraction) * (FFramesTotal - Done - Fraction);
 end;
 
 {------------------------------------------------------------------------------}
@@ -211,7 +241,7 @@ var
 begin
   Result := True;
   LastMove := -1;
-  for I := 0 to FFramesTotal - 1 do
+  for I := FFirstFrame to FFramesTotal - 1 do
   begin
     FScenario.PoseAtFrame(I, IsPause);
     if not IsPause then
@@ -272,6 +302,164 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function TVideoRenderer.PartFile(Index: Integer): string;
+begin
+  Result := FPartsFolder + Format(kPartName, [Index]);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TVideoRenderer.PendingPartFile: string;
+begin
+  Result := FPartsFolder + kPendingPartName;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Tout ce qui change les images : scénario, palette, coloration, taille, découpage
+function TVideoRenderer.StampText(Formula: TFractalFormula): string;
+var
+  L: TFractalLocation;
+  S: TStringList;
+begin
+  L := TFractalLocation.Create;
+  S := TStringList.Create;
+  try
+    L.CaptureFrom(Formula, MakeViewport(0, 0, kDefaultWidth, 1, 1), False, FPalette, FMapping);
+    S.Text := FScenario.SaveToText + L.SaveToText + Format('Taille=%dx%d'#13#10'Morceau=%d'#13#10,
+      [FWidth, FHeight, FSegmentFrames]);
+    Result := S.Text;  // tel que TStringList le relira
+  finally
+    S.Free;
+    L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Reprend les morceaux d'une génération interrompue s'ils viennent du même rendu, sinon repart de zéro
+procedure TVideoRenderer.PrepareParts(Formula: TFractalFormula);
+var
+  Stamp: string;
+  S: TStringList;
+  IsSameRender: Boolean;
+  Count: Integer;
+begin
+  Stamp := StampText(Formula);
+  S := TStringList.Create;
+  try
+    IsSameRender := False;
+    if FileExists(FPartsFolder + kStampName) then
+    try
+      S.LoadFromFile(FPartsFolder + kStampName);
+      IsSameRender := S.Text = Stamp;
+    except
+      on E: EStreamError do
+        IsSameRender := False;
+    end;
+    if IsSameRender then
+    begin
+      Count := 0;
+      while FileExists(PartFile(Count)) do
+        Inc(Count);
+      FFirstFrame := Min(Count * FSegmentFrames, FFramesTotal);
+      FFramesDone := FFirstFrame;
+    end
+    else
+    begin
+      RemoveParts;
+      if not ForceDirectories(FPartsFolder) then
+        raise EVideoEncoderError.CreateFmt('Dossier des morceaux impossible à créer : %s', [FPartsFolder]);
+      S.Text := Stamp;
+      S.SaveToFile(FPartsFolder + kStampName, TEncoding.UTF8);
+    end;
+  finally
+    S.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoRenderer.RemoveParts;
+var
+  Found: TSearchRec;
+begin
+  if FindFirst(FPartsFolder + '*', faAnyFile and not faDirectory, Found) = 0 then
+  try
+    repeat
+      SysUtils.DeleteFile(FPartsFolder + Found.Name);
+    until FindNext(Found) <> 0;
+  finally
+    SysUtils.FindClose(Found);
+  end;
+  RemoveDir(ExcludeTrailingPathDelimiter(FPartsFolder));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Le FFmpeg en cours, que Cancel peut arrêter
+procedure TVideoRenderer.SetPipe(Pipe: TFfmpegPipe);
+begin
+  FPipeLock.Enter;
+  try
+    FPipe := Pipe;
+  finally
+    FPipeLock.Leave;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoRenderer.OpenPart(var Pipe: TFfmpegPipe);
+begin
+  SysUtils.DeleteFile(PendingPartFile);
+  Pipe := TFfmpegPipe.Create(FFfmpegExe, PendingPartFile, kVideoFps);
+  SetPipe(Pipe);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Un morceau ne prend son nom définitif qu'une fois complet : la reprise ne voit jamais un morceau tronqué
+procedure TVideoRenderer.ClosePart(var Pipe: TFfmpegPipe; Index: Integer);
+begin
+  Pipe.Finish;
+  SetPipe(nil);
+  FreeAndNil(Pipe);
+  SysUtils.DeleteFile(PartFile(Index));
+  if not RenameFile(PendingPartFile, PartFile(Index)) then
+    raise EVideoEncoderError.CreateFmt('Morceau %d impossible à renommer : %s', [Index, SysErrorMessage(GetLastError)]);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoRenderer.JoinParts;
+var
+  List: TStringList;
+  Pipe: TFfmpegPipe;
+  I: Integer;
+begin
+  List := TStringList.Create;
+  try
+    for I := 0 to (FFramesTotal - 1) div FSegmentFrames do
+      List.Add('file ''' + ExtractFileName(PartFile(I)) + '''');
+    List.SaveToFile(FPartsFolder + kListName, TEncoding.ASCII);
+  finally
+    List.Free;
+  end;
+  Pipe := TFfmpegPipe.CreateWithArguments(FFfmpegExe, FOutputFile,
+    FfmpegConcatArguments(FPartsFolder + kListName, FOutputFile));
+  try
+    SetPipe(Pipe);
+    Pipe.Finish;
+  finally
+    SetPipe(nil);
+    Pipe.Free;
+  end;
+  RemoveParts;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoRenderer.Execute;
 var
   Formula: TFractalFormula;
@@ -284,25 +472,27 @@ begin
   Formula := nil;
   Pipe := nil;
   Frame := TMemoryStream.Create;
+  SetThreadExecutionState(kEsContinuous or kEsSystemRequired);  // pas de mise en veille pendant le rendu
   try
     try
       Formula := FScenario.CreateFormula;
+      if FOutputFile <> '' then
+        PrepareParts(Formula);
       if not Profile(Formula, Frame) then
         Exit;
       FFrameProgress := 0;  // la dernière image du profil ne compte pas
       FStartTick := GetTickCount;
-      if FOutputFile <> '' then
-      begin
-        Pipe := TFfmpegPipe.Create(FFfmpegExe, FOutputFile, kVideoFps);
-        FPipeLock.Enter;
-        FPipe := Pipe;
-        FPipeLock.Leave;
-      end;
       HasFrame := False;
-      for I := 0 to FScenario.TotalFrames - 1 do
+      for I := FFirstFrame to FFramesTotal - 1 do
       begin
         if Terminated then
           Break;
+        if (FOutputFile <> '') and (I mod FSegmentFrames = 0) then
+        begin
+          if Pipe <> nil then
+            ClosePart(Pipe, I div FSegmentFrames - 1);
+          OpenPart(Pipe);
+        end;
         Pose := FScenario.PoseAtFrame(I, IsPause);
         // une pause montre l'étape, déjà rendue par l'image précédente (fin de trajet ou pause)
         if not (IsPause and HasFrame) then
@@ -319,6 +509,7 @@ begin
         FFrameProgress := 0;
         Inc(FFramesDone);
       end;
+      // interrompu : seul le morceau en cours est perdu, les autres attendent la reprise
       if Terminated then
       begin
         if Pipe <> nil then
@@ -327,7 +518,9 @@ begin
       else
       begin
         if Pipe <> nil then
-          Pipe.Finish;
+          ClosePart(Pipe, (FFramesTotal - 1) div FSegmentFrames);
+        if FOutputFile <> '' then
+          JoinParts;
         FIsSucceeded := True;  // la vidéo est complète, même si une annulation arrive maintenant
       end;
     except
@@ -340,9 +533,8 @@ begin
       end;
     end;
   finally
-    FPipeLock.Enter;
-    FPipe := nil;
-    FPipeLock.Leave;
+    SetThreadExecutionState(kEsContinuous);
+    SetPipe(nil);
     Pipe.Free;
     Formula.Free;
     Frame.Free;
