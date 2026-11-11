@@ -15,7 +15,7 @@ uses
 
 const
   kPreviewDivisor = 4;  // l'aperçu est rendu au quart de la taille
-  kSegmentFrames = 300;  // un morceau = 10 s de vidéo ; une interruption en perd au plus un
+  kSegmentFrames = 50;  // un morceau = 1,7 s de vidéo ; une interruption en perd au plus un
   kPartsSuffix = '.morceaux';
 
 type
