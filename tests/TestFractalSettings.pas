@@ -41,6 +41,8 @@ begin
   Result.LocationFolder := 'D:\Fractales\Lieux é\';
   Result.ImageFolder := 'D:\Images\';
   Result.HiResFolder := 'E:\Rendus HD\';
+  Result.VideoScenarioFolder := 'D:\Scénarios\';
+  Result.VideoFolder := 'E:\Vidéos\';
   Result.VideoFfmpegPath := 'C:\Outils\ffmpeg.exe';
   Result.HiResPreset := 4;
   Result.HiResWidth := 2000;
@@ -104,6 +106,8 @@ begin
   CheckEquals(S.LocationFolder, R.LocationFolder);
   CheckEquals(S.ImageFolder, R.ImageFolder);
   CheckEquals(S.HiResFolder, R.HiResFolder);
+  CheckEquals(S.VideoScenarioFolder, R.VideoScenarioFolder);
+  CheckEquals(S.VideoFolder, R.VideoFolder);
   CheckEquals(S.VideoFfmpegPath, R.VideoFfmpegPath);
   CheckEquals(4, R.HiResPreset);
   CheckEquals(2000, R.HiResWidth);

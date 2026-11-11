@@ -2165,6 +2165,11 @@ begin
   FSettings.NavModeIndex := cbNavMode.ItemIndex;
   if FHiResForm <> nil then
     THiResForm(FHiResForm).CaptureSettings(FSettings);
+  if FVideoForm <> nil then
+  begin
+    FSettings.VideoScenarioFolder := TVideoForm(FVideoForm).ScenarioFolder;
+    FSettings.VideoFolder := TVideoForm(FVideoForm).VideoFolder;
+  end;
   SaveAppSettings(SettingsFilePath, FSettings);
 end;
 
@@ -2536,6 +2541,8 @@ begin
   begin
     FVideoForm := TVideoForm.Create(Self);
     TVideoForm(FVideoForm).OnRequestSnapshot := PrepareVideoForm;
+    TVideoForm(FVideoForm).ScenarioFolder := FSettings.VideoScenarioFolder;
+    TVideoForm(FVideoForm).VideoFolder := FSettings.VideoFolder;
   end;
   PrepareVideoForm(nil);
   FVideoForm.Show;

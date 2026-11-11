@@ -26,6 +26,8 @@ type
     LocationFolder: string;    // derniers dossiers des enregistrements volontaires ; vide = choix de Windows
     ImageFolder: string;
     HiResFolder: string;
+    VideoScenarioFolder: string;  // fenêtre Vidéo : scénarios et vidéos vont chacun dans leur dossier
+    VideoFolder: string;
     HiResPreset: Integer;
     HiResWidth: Integer;       // taille personnalisée
     HiResHeight: Integer;
@@ -56,6 +58,8 @@ const
   kKeyLocations = 'Locations';
   kKeyImages = 'Images';
   kKeyHiRes = 'HiRes';
+  kKeyVideoScenarios = 'VideoScenarios';
+  kKeyVideos = 'Videos';
   kKeyPreset = 'Preset';
   kKeyWidth = 'Width';
   kKeyHeight = 'Height';
@@ -74,6 +78,8 @@ begin
   Result.LocationFolder := '';
   Result.ImageFolder := '';
   Result.HiResFolder := '';
+  Result.VideoScenarioFolder := '';
+  Result.VideoFolder := '';
   Result.HiResPreset := kDefaultHiResPreset;
   Result.HiResWidth := kDefaultHiResWidth;
   Result.HiResHeight := kDefaultHiResHeight;
@@ -109,6 +115,8 @@ begin
       Result.LocationFolder := Ini.ReadString(kSectionFolders, kKeyLocations, '');
       Result.ImageFolder := Ini.ReadString(kSectionFolders, kKeyImages, '');
       Result.HiResFolder := Ini.ReadString(kSectionFolders, kKeyHiRes, '');
+      Result.VideoScenarioFolder := Ini.ReadString(kSectionFolders, kKeyVideoScenarios, '');
+      Result.VideoFolder := Ini.ReadString(kSectionFolders, kKeyVideos, '');
       Result.VideoFfmpegPath := Ini.ReadString(kSectionVideo, kKeyFfmpegPath, '');
       Result.HiResPreset := ReadBounded(Ini, kSectionHiRes, kKeyPreset, D.HiResPreset, 0, kHiResPresetCount - 1);
       Result.HiResWidth := ReadBounded(Ini, kSectionHiRes, kKeyWidth, D.HiResWidth, kMinHiResSize, kMaxHiResSize);
@@ -145,6 +153,8 @@ begin
       Ini.WriteString(kSectionFolders, kKeyLocations, S.LocationFolder);
       Ini.WriteString(kSectionFolders, kKeyImages, S.ImageFolder);
       Ini.WriteString(kSectionFolders, kKeyHiRes, S.HiResFolder);
+      Ini.WriteString(kSectionFolders, kKeyVideoScenarios, S.VideoScenarioFolder);
+      Ini.WriteString(kSectionFolders, kKeyVideos, S.VideoFolder);
       Ini.WriteString(kSectionVideo, kKeyFfmpegPath, S.VideoFfmpegPath);
       Ini.WriteInteger(kSectionHiRes, kKeyPreset, S.HiResPreset);
       Ini.WriteInteger(kSectionHiRes, kKeyWidth, S.HiResWidth);

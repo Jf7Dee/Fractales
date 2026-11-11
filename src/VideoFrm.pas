@@ -90,6 +90,8 @@ type
     FScenarioFile: string;   // dernier scénario ouvert ou enregistré ; '' = pas encore de fichier
     FRenderedText: string;   // texte du scénario au lancement du rendu en cours
     FOnRequestSnapshot: TNotifyEvent;
+    FScenarioFolder: string;  // dossiers retenus séparément ; '' = choix de Windows
+    FVideoFolder: string;
     procedure RequestSnapshot;
     procedure PreviewSink(Png: TStream);
     function PreviewFileName: string;
@@ -116,6 +118,8 @@ type
     property Scenario: TVideoScenario read FScenario;
     property LastError: string read FLastError;
     property PreviewImage: TImage read imgPreview;
+    property ScenarioFolder: string read FScenarioFolder write FScenarioFolder;
+    property VideoFolder: string read FVideoFolder write FVideoFolder;
     property ReplayButton: TButton read btnReplay;
     // Fenêtre non modale : demande à la fenêtre principale d'appeler Prepare avec son état du moment
     // (activation, « Ajouter la vue », lancement d'un rendu)
@@ -803,9 +807,25 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Ouvre la boîte sur son propre dossier, sinon Windows reprend le dernier dossier de l'application ;
+// retient le dossier choisi dans Folder
+function ExecuteInFolder(Dlg: TOpenDialog; var Folder: string): Boolean;
+begin
+  if (Folder <> '') and DirectoryExists(Folder) then
+  begin
+    Dlg.InitialDir := Folder;
+    Dlg.FileName := ExtractFileName(Dlg.FileName);  // un chemin complet l'emporterait sur InitialDir
+  end;
+  Result := Dlg.Execute;
+  if Result then
+    Folder := ExtractFilePath(Dlg.FileName);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.btnRenderClick(Sender: TObject);
 begin
-  if dlgVideo.Execute then
+  if ExecuteInFolder(dlgVideo, FVideoFolder) then
     StartRender(False, dlgVideo.FileName);
 end;
 
@@ -821,7 +841,7 @@ end;
 
 procedure TVideoForm.btnOpenClick(Sender: TObject);
 begin
-  if not dlgOpen.Execute then
+  if not ExecuteInFolder(dlgOpen, FScenarioFolder) then
     Exit;
   try
     FScenario.LoadFromFile(dlgOpen.FileName);
@@ -840,7 +860,7 @@ end;
 
 procedure TVideoForm.btnSaveClick(Sender: TObject);
 begin
-  if not dlgSave.Execute then
+  if not ExecuteInFolder(dlgSave, FScenarioFolder) then
     Exit;
   try
     FScenario.SaveToFile(dlgSave.FileName);
