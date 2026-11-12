@@ -1,7 +1,8 @@
 object VideoForm: TVideoForm
   Left = 0
   Top = 0
-  BorderStyle = bsDialog
+  BorderIcons = [biSystemMenu, biMinimize]
+  BorderStyle = bsToolWindow
   Caption = 'Vid'#233'o'
   ClientHeight = 516
   ClientWidth = 760
@@ -23,9 +24,47 @@ object VideoForm: TVideoForm
   object lblSteps: TLabel
     Left = 8
     Top = 8
-    Width = 100
+    Width = 34
     Height = 15
     Caption = #201'tapes'
+  end
+  object lblPreview: TLabel
+    Left = 412
+    Top = 8
+    Width = 38
+    Height = 15
+    Caption = 'Aper'#231'u'
+  end
+  object imgPreview: TImage
+    Left = 412
+    Top = 26
+    Width = 340
+    Height = 192
+    Center = True
+    Proportional = True
+    Stretch = True
+  end
+  object lblProgress: TLabel
+    Left = 412
+    Top = 286
+    Width = 340
+    Height = 30
+    AutoSize = False
+    WordWrap = True
+  end
+  object lblFfmpeg: TLabel
+    Left = 412
+    Top = 322
+    Width = 340
+    Height = 60
+    AutoSize = False
+    Font.Charset = DEFAULT_CHARSET
+    Font.Color = clMaroon
+    Font.Height = -12
+    Font.Name = 'Segoe UI'
+    Font.Style = []
+    ParentFont = False
+    WordWrap = True
   end
   object lvSteps: TListView
     Left = 8
@@ -119,9 +158,31 @@ object VideoForm: TVideoForm
     object lblMode: TLabel
       Left = 12
       Top = 24
-      Width = 70
+      Width = 45
       Height = 15
       Caption = 'Trajet en'
+    end
+    object lblTravel: TLabel
+      Left = 12
+      Top = 54
+      Width = 47
+      Height = 15
+      Caption = 'Dur'#233'e (s)'
+    end
+    object lblPause: TLabel
+      Left = 210
+      Top = 54
+      Width = 47
+      Height = 15
+      Caption = 'Pause (s)'
+    end
+    object lblSpeed: TLabel
+      Left = 12
+      Top = 80
+      Width = 370
+      Height = 15
+      AutoSize = False
+      WordWrap = True
     end
     object cbMode: TComboBox
       Left = 90
@@ -132,13 +193,6 @@ object VideoForm: TVideoForm
       TabOrder = 0
       OnChange = StepChange
     end
-    object lblTravel: TLabel
-      Left = 12
-      Top = 54
-      Width = 70
-      Height = 15
-      Caption = 'Dur'#233'e (s)'
-    end
     object edTravel: TEdit
       Left = 90
       Top = 50
@@ -147,13 +201,6 @@ object VideoForm: TVideoForm
       TabOrder = 1
       OnChange = StepChange
     end
-    object lblPause: TLabel
-      Left = 210
-      Top = 54
-      Width = 60
-      Height = 15
-      Caption = 'Pause (s)'
-    end
     object edPause: TEdit
       Left = 280
       Top = 50
@@ -161,15 +208,6 @@ object VideoForm: TVideoForm
       Height = 23
       TabOrder = 2
       OnChange = StepChange
-    end
-    object lblSpeed: TLabel
-      Left = 12
-      Top = 80
-      Width = 370
-      Height = 15
-      AutoSize = False
-      Caption = ''
-      WordWrap = True
     end
   end
   object gbVideo: TGroupBox
@@ -182,9 +220,24 @@ object VideoForm: TVideoForm
     object lblFormat: TLabel
       Left = 12
       Top = 24
-      Width = 70
+      Width = 38
       Height = 15
       Caption = 'Format'
+    end
+    object lblSmoothing: TLabel
+      Left = 12
+      Top = 54
+      Width = 38
+      Height = 15
+      Caption = 'Lissage'
+    end
+    object lblDuration: TLabel
+      Left = 250
+      Top = 24
+      Width = 136
+      Height = 45
+      AutoSize = False
+      WordWrap = True
     end
     object cbFormat: TComboBox
       Left = 90
@@ -195,13 +248,6 @@ object VideoForm: TVideoForm
       TabOrder = 0
       OnChange = VideoSettingsChange
     end
-    object lblSmoothing: TLabel
-      Left = 12
-      Top = 54
-      Width = 70
-      Height = 15
-      Caption = 'Lissage'
-    end
     object cbSmoothing: TComboBox
       Left = 90
       Top = 50
@@ -211,31 +257,6 @@ object VideoForm: TVideoForm
       TabOrder = 1
       OnChange = VideoSettingsChange
     end
-    object lblDuration: TLabel
-      Left = 250
-      Top = 24
-      Width = 136
-      Height = 45
-      AutoSize = False
-      Caption = ''
-      WordWrap = True
-    end
-  end
-  object lblPreview: TLabel
-    Left = 412
-    Top = 8
-    Width = 100
-    Height = 15
-    Caption = 'Aper'#231'u'
-  end
-  object imgPreview: TImage
-    Left = 412
-    Top = 26
-    Width = 340
-    Height = 192
-    Center = True
-    Proportional = True
-    Stretch = True
   end
   object btnPreview: TButton
     Left = 412
@@ -271,38 +292,13 @@ object VideoForm: TVideoForm
     Height = 18
     TabOrder = 12
   end
-  object lblProgress: TLabel
-    Left = 412
-    Top = 286
-    Width = 340
-    Height = 30
-    AutoSize = False
-    Caption = ''
-    WordWrap = True
-  end
-  object lblFfmpeg: TLabel
-    Left = 412
-    Top = 322
-    Width = 340
-    Height = 60
-    AutoSize = False
-    Caption = ''
-    WordWrap = True
-    Font.Charset = DEFAULT_CHARSET
-    Font.Color = clMaroon
-    Font.Height = -12
-    Font.Name = 'Segoe UI'
-    Font.Style = []
-    ParentFont = False
-  end
-
   object btnReplay: TButton
     Left = 412
     Top = 390
     Width = 150
     Height = 25
-    Caption = 'Revoir l''aper'#231'u'
-    TabOrder = 16
+    Caption = 'Revoir l'#39'aper'#231'u'
+    TabOrder = 13
     OnClick = btnReplayClick
   end
   object tmrProgress: TTimer
@@ -338,7 +334,16 @@ object VideoForm: TVideoForm
       object Enregistrer1: TMenuItem
         Action = Action_SaveAs
       end
+      object Enregistrer2: TMenuItem
+        Action = Action_Save
+      end
       object N1: TMenuItem
+        Caption = '-'
+      end
+      object Nouveau1: TMenuItem
+        Action = Action_Reset
+      end
+      object N2: TMenuItem
         Caption = '-'
       end
       object ActionClose1: TMenuItem
@@ -353,6 +358,11 @@ object VideoForm: TVideoForm
       Caption = 'Ouvrir...'
       OnExecute = Action_OpenExecute
     end
+    object Action_Save: TAction
+      Caption = 'Enregistrer'
+      ShortCut = 16467
+      OnExecute = Action_SaveExecute
+    end
     object Action_SaveAs: TAction
       Caption = 'Enregistrer...'
       OnExecute = Action_SaveAsExecute
@@ -360,6 +370,10 @@ object VideoForm: TVideoForm
     object Action_Close: TAction
       Caption = 'Fermer'
       OnExecute = Action_CloseExecute
+    end
+    object Action_Reset: TAction
+      Caption = 'Nouveau'
+      OnExecute = Action_ResetExecute
     end
   end
 end

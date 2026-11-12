@@ -58,6 +58,11 @@ type
     N1: TMenuItem;
     Action_Close: TAction;
     ActionClose1: TMenuItem;
+    Action_Save: TAction;
+    Enregistrer2: TMenuItem;
+    Action_Reset: TAction;
+    Nouveau1: TMenuItem;
+    N2: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -78,6 +83,8 @@ type
     procedure Action_OpenExecute(Sender: TObject);
     procedure Action_SaveAsExecute(Sender: TObject);
     procedure Action_CloseExecute(Sender: TObject);
+    procedure Action_SaveExecute(Sender: TObject);
+    procedure Action_ResetExecute(Sender: TObject);
   private
     FScenario: TVideoScenario;
     FFavorites: TFavoriteStore;
@@ -334,6 +341,21 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TVideoForm.Action_SaveExecute(Sender: TObject);
+begin
+  if FScenarioFile = '' then
+    Exit;
+  try
+    FScenario.SaveToFile(FScenarioFile);
+  except
+    on E: EVideoScenarioError do
+      MessageDlg(E.Message, mtWarning, [mbOK], 0);
+  end;
+  UpdateControls;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.Action_CloseExecute(Sender: TObject);
 begin
   Close;
@@ -356,6 +378,19 @@ begin
     end;
   end;
   RefreshList(0);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.Action_ResetExecute(Sender: TObject);
+begin
+  FScenarioFile := '';
+  FScenario.Clear;
+  FScenario.Format := vf16x9;  // valeurs d'un scénario neuf (TVideoScenario.Create)
+  FScenario.Smoothing := 1;
+  imgPreview.Picture := nil;
+  RefreshList(0);
+  UpdateControls;
 end;
 
 {------------------------------------------------------------------------------}
@@ -534,9 +569,12 @@ begin
   btnPreview.Enabled := IsIdle and (FScenario.Count >= 2);
   btnRender.Enabled := IsIdle and (FScenario.Count >= 2) and (FFfmpegExe <> '');
   btnCancel.Enabled := not IsIdle;
+  btnReplay.Enabled := IsIdle and IsPreviewCurrent;
+
   Action_Open.Enabled := IsIdle;
   Action_SaveAs.Enabled := IsIdle and (FScenario.Count > 0);
-  btnReplay.Enabled := IsIdle and IsPreviewCurrent;
+  Action_Save.Enabled := Action_SaveAs.Enabled and (FScenarioFile <> '');
+  Action_Reset.Enabled := IsIdle;
 end;
 
 {------------------------------------------------------------------------------}
