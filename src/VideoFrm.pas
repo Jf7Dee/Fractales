@@ -7,10 +7,9 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Math, StrUtils, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls,
-  ExtCtrls, SyncObjs, ShellAPI, {$IF CompilerVersion >= 23} UITypes,{$IFEND}
+  ExtCtrls, SyncObjs, ShellAPI, Menus, ActnList, {$IF CompilerVersion >= 23} UITypes, System.Actions,{$IFEND}
   pngimage, Fractal.Types, Fractal.Palette, Fractal.Engine, Fractal.Persistence, Fractal.VideoPath,
-  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender, Vcl.Menus,
-  System.Actions, Vcl.ActnList;
+  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender;
 
 type
   TVideoForm = class(TForm)
@@ -73,9 +72,6 @@ type
     procedure btnPreviewClick(Sender: TObject);
     procedure btnRenderClick(Sender: TObject);
     procedure btnCancelClick(Sender: TObject);
-    procedure btnOpenClick(Sender: TObject);
-    procedure btnSaveClick(Sender: TObject);
-    procedure btnCloseClick(Sender: TObject);
     procedure tmrProgressTimer(Sender: TObject);
     procedure btnReplayClick(Sender: TObject);
     procedure FormActivate(Sender: TObject);
@@ -306,9 +302,25 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Ouvre la boîte sur son propre dossier, sinon Windows reprend le dernier dossier de l'application ;
+// retient le dossier choisi dans Folder
+function ExecuteInFolder(Dlg: TOpenDialog; var Folder: string): Boolean;
+begin
+  if (Folder <> '') and DirectoryExists(Folder) then
+  begin
+    Dlg.InitialDir := Folder;
+    Dlg.FileName := ExtractFileName(Dlg.FileName);  // un chemin complet l'emporterait sur InitialDir
+  end;
+  Result := Dlg.Execute;
+  if Result then
+    Folder := ExtractFilePath(Dlg.FileName);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.Action_SaveAsExecute(Sender: TObject);
 begin
-  if not dlgSave.Execute then
+  if not ExecuteInFolder(dlgSave, FScenarioFolder) then
     Exit;
   try
     FScenario.SaveToFile(dlgSave.FileName);
@@ -331,7 +343,7 @@ end;
 
 procedure TVideoForm.Action_OpenExecute(Sender: TObject);
 begin
-  if not dlgOpen.Execute then
+  if not ExecuteInFolder(dlgOpen, FScenarioFolder) then
     Exit;
   try
     FScenario.LoadFromFile(dlgOpen.FileName);
@@ -523,7 +535,7 @@ begin
   btnRender.Enabled := IsIdle and (FScenario.Count >= 2) and (FFfmpegExe <> '');
   btnCancel.Enabled := not IsIdle;
   Action_Open.Enabled := IsIdle;
-  ACtion_SaveAs.Enabled := IsIdle and (FScenario.Count > 0);
+  Action_SaveAs.Enabled := IsIdle and (FScenario.Count > 0);
   btnReplay.Enabled := IsIdle and IsPreviewCurrent;
 end;
 
@@ -860,22 +872,6 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Ouvre la boîte sur son propre dossier, sinon Windows reprend le dernier dossier de l'application ;
-// retient le dossier choisi dans Folder
-function ExecuteInFolder(Dlg: TOpenDialog; var Folder: string): Boolean;
-begin
-  if (Folder <> '') and DirectoryExists(Folder) then
-  begin
-    Dlg.InitialDir := Folder;
-    Dlg.FileName := ExtractFileName(Dlg.FileName);  // un chemin complet l'emporterait sur InitialDir
-  end;
-  Result := Dlg.Execute;
-  if Result then
-    Folder := ExtractFilePath(Dlg.FileName);
-end;
-
-{------------------------------------------------------------------------------}
-
 procedure TVideoForm.btnRenderClick(Sender: TObject);
 begin
   if ExecuteInFolder(dlgVideo, FVideoFolder) then
@@ -888,48 +884,6 @@ procedure TVideoForm.btnCancelClick(Sender: TObject);
 begin
   if FRenderer <> nil then
     FRenderer.Cancel;  // le minuteur constate la fin et remet la fenêtre en état
-end;
-
-{------------------------------------------------------------------------------}
-
-procedure TVideoForm.btnOpenClick(Sender: TObject);
-begin
-  if not ExecuteInFolder(dlgOpen, FScenarioFolder) then
-    Exit;
-  try
-    FScenario.LoadFromFile(dlgOpen.FileName);
-    FScenarioFile := dlgOpen.FileName;
-  except
-    on E: EVideoScenarioError do
-    begin
-      MessageDlg(E.Message, mtWarning, [mbOK], 0);
-      Exit;
-    end;
-  end;
-  RefreshList(0);
-end;
-
-{------------------------------------------------------------------------------}
-
-procedure TVideoForm.btnSaveClick(Sender: TObject);
-begin
-  if not ExecuteInFolder(dlgSave, FScenarioFolder) then
-    Exit;
-  try
-    FScenario.SaveToFile(dlgSave.FileName);
-    FScenarioFile := dlgSave.FileName;
-  except
-    on E: EVideoScenarioError do
-      MessageDlg(E.Message, mtWarning, [mbOK], 0);
-  end;
-  UpdateControls;
-end;
-
-{------------------------------------------------------------------------------}
-
-procedure TVideoForm.btnCloseClick(Sender: TObject);
-begin
-  Close;
 end;
 
 {------------------------------------------------------------------------------}
