@@ -9,7 +9,8 @@ uses
   Windows, Messages, SysUtils, Classes, Math, StrUtils, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls,
   ExtCtrls, SyncObjs, ShellAPI, {$IF CompilerVersion >= 23} UITypes,{$IFEND}
   pngimage, Fractal.Types, Fractal.Palette, Fractal.Engine, Fractal.Persistence, Fractal.VideoPath,
-  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender;
+  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender, Vcl.Menus,
+  System.Actions, Vcl.ActnList;
 
 type
   TVideoForm = class(TForm)
@@ -43,14 +44,21 @@ type
     pbProgress: TProgressBar;
     lblProgress: TLabel;
     lblFfmpeg: TLabel;
-    btnOpen: TButton;
-    btnSave: TButton;
-    btnClose: TButton;
     tmrProgress: TTimer;
     dlgOpen: TOpenDialog;
     dlgSave: TSaveDialog;
     dlgVideo: TSaveDialog;
     btnReplay: TButton;
+    MainMenu1: TMainMenu;
+    ActionList1: TActionList;
+    Action_Open: TAction;
+    Fichier1: TMenuItem;
+    Ouvrir1: TMenuItem;
+    Action_SaveAs: TAction;
+    Enregistrer1: TMenuItem;
+    N1: TMenuItem;
+    Action_Close: TAction;
+    ActionClose1: TMenuItem;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -71,6 +79,9 @@ type
     procedure tmrProgressTimer(Sender: TObject);
     procedure btnReplayClick(Sender: TObject);
     procedure FormActivate(Sender: TObject);
+    procedure Action_OpenExecute(Sender: TObject);
+    procedure Action_SaveAsExecute(Sender: TObject);
+    procedure Action_CloseExecute(Sender: TObject);
   private
     FScenario: TVideoScenario;
     FFavorites: TFavoriteStore;
@@ -295,6 +306,48 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TVideoForm.Action_SaveAsExecute(Sender: TObject);
+begin
+  if not dlgSave.Execute then
+    Exit;
+  try
+    FScenario.SaveToFile(dlgSave.FileName);
+    FScenarioFile := dlgSave.FileName;
+  except
+    on E: EVideoScenarioError do
+      MessageDlg(E.Message, mtWarning, [mbOK], 0);
+  end;
+  UpdateControls;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.Action_CloseExecute(Sender: TObject);
+begin
+  Close;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.Action_OpenExecute(Sender: TObject);
+begin
+  if not dlgOpen.Execute then
+    Exit;
+  try
+    FScenario.LoadFromFile(dlgOpen.FileName);
+    FScenarioFile := dlgOpen.FileName;
+  except
+    on E: EVideoScenarioError do
+    begin
+      MessageDlg(E.Message, mtWarning, [mbOK], 0);
+      Exit;
+    end;
+  end;
+  RefreshList(0);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.AddCurrentView;
 begin
   RequestSnapshot;
@@ -469,8 +522,8 @@ begin
   btnPreview.Enabled := IsIdle and (FScenario.Count >= 2);
   btnRender.Enabled := IsIdle and (FScenario.Count >= 2) and (FFfmpegExe <> '');
   btnCancel.Enabled := not IsIdle;
-  btnOpen.Enabled := IsIdle;
-  btnSave.Enabled := IsIdle and (FScenario.Count > 0);
+  Action_Open.Enabled := IsIdle;
+  ACtion_SaveAs.Enabled := IsIdle and (FScenario.Count > 0);
   btnReplay.Enabled := IsIdle and IsPreviewCurrent;
 end;
 

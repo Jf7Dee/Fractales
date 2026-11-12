@@ -11,6 +11,7 @@ object VideoForm: TVideoForm
   Font.Height = -12
   Font.Name = 'Segoe UI'
   Font.Style = []
+  Menu = MainMenu1
   OldCreateOrder = False
   Position = poMainFormCenter
   OnActivate = FormActivate
@@ -294,34 +295,7 @@ object VideoForm: TVideoForm
     Font.Style = []
     ParentFont = False
   end
-  object btnOpen: TButton
-    Left = 412
-    Top = 483
-    Width = 110
-    Height = 25
-    Caption = 'Ouvrir...'
-    TabOrder = 13
-    OnClick = btnOpenClick
-  end
-  object btnSave: TButton
-    Left = 528
-    Top = 483
-    Width = 110
-    Height = 25
-    Caption = 'Enregistrer...'
-    TabOrder = 14
-    OnClick = btnSaveClick
-  end
-  object btnClose: TButton
-    Left = 644
-    Top = 483
-    Width = 108
-    Height = 25
-    Caption = 'Fermer'
-    TabOrder = 15
-    OnClick = btnCloseClick
-    Cancel = True
-  end
+
   object btnReplay: TButton
     Left = 412
     Top = 390
@@ -352,5 +326,40 @@ object VideoForm: TVideoForm
     Options = [ofOverwritePrompt, ofHideReadOnly, ofEnableSizing]
     Left = 540
     Top = 400
+  end
+  object MainMenu1: TMainMenu
+    Left = 368
+    Top = 8
+    object Fichier1: TMenuItem
+      Caption = 'Fichier'
+      object Ouvrir1: TMenuItem
+        Action = Action_Open
+      end
+      object Enregistrer1: TMenuItem
+        Action = Action_SaveAs
+      end
+      object N1: TMenuItem
+        Caption = '-'
+      end
+      object ActionClose1: TMenuItem
+        Action = Action_Close
+      end
+    end
+  end
+  object ActionList1: TActionList
+    Left = 272
+    Top = 96
+    object Action_Open: TAction
+      Caption = 'Ouvrir...'
+      OnExecute = Action_OpenExecute
+    end
+    object Action_SaveAs: TAction
+      Caption = 'Enregistrer...'
+      OnExecute = Action_SaveAsExecute
+    end
+    object Action_Close: TAction
+      Caption = 'Fermer'
+      OnExecute = Action_CloseExecute
+    end
   end
 end
