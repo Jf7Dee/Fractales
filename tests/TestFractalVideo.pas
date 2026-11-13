@@ -40,6 +40,8 @@ type
     procedure TestTimeline;
     procedure TestRefusesOtherFormula;
     procedure TestSaveLoadRoundTrip;
+    procedure TestStopFlagRoundTrip;
+    procedure TestStopIsForced;
     procedure TestLoadGarbage;
     procedure TestMoveAndDelete;
     procedure TestDurationsAreBounded;
@@ -479,6 +481,7 @@ begin
       CheckTrue(A[I].Mode = B[I].Mode);
       CheckEquals(A[I].TravelSeconds, B[I].TravelSeconds, 1e-12);
       CheckEquals(A[I].PauseSeconds, B[I].PauseSeconds, 1e-12);
+      CheckTrue(B[I].IsStop, 'fichier sans Arret : arrêt');
     end;
     CheckEquals(A.TotalFrames, B.TotalFrames);
   finally
@@ -547,6 +550,74 @@ begin
     CheckEquals('', Sc.FormulaName, 'scénario vide : plus de formule');
   finally
     Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoScenario.TestStopFlagRoundTrip;
+var
+  A, B: TVideoScenario;
+  S: TVideoStep;
+  FileName, Text: string;
+  I: Integer;
+begin
+  FileName := TempFile('scenario' + kScenarioExtension);
+  A := TVideoScenario.Create;
+  B := TVideoScenario.Create;
+  try
+    for I := 0 to 3 do
+      Add(A, 'étape ' + IntToStr(I), 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    S := A[1];
+    S.IsStop := False;
+    A[1] := S;
+    CheckFalse(A[1].IsStop, 'SetStep conserve IsStop');
+    Text := A.SaveToText;
+    I := Pos('Arret=0', Text);
+    CheckTrue(I > 0, 'Arret=0 écrit');
+    CheckEquals(0, Pos('Arret=0', Copy(Text, I + 1, MaxInt)), 'une seule occurrence');
+    A.SaveToFile(FileName);
+    B.LoadFromFile(FileName);
+    CheckFalse(B[1].IsStop);
+    CheckTrue(B[2].IsStop);
+  finally
+    B.Free;
+    A.Free;
+    SysUtils.DeleteFile(FileName);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoScenario.TestStopIsForced;
+var
+  A: TVideoScenario;
+  S: TVideoStep;
+  I: Integer;
+begin
+  A := TVideoScenario.Create;
+  try
+    for I := 0 to 3 do
+      Add(A, 'étape ' + IntToStr(I), 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    for I in [0, 1, 3] do
+    begin
+      S := A[I];
+      S.IsStop := False;
+      if I = 1 then
+        S.PauseSeconds := 2;
+      A[I] := S;
+    end;
+    CheckTrue(A.IsStopAt(0), 'première');
+    CheckTrue(A.IsStopAt(1), 'pause non nulle');
+    CheckTrue(A.IsStopAt(3), 'dernière');
+    CheckTrue(A.IsStopAt(2), 'case cochée');
+    S := A[2];
+    S.IsStop := False;
+    A[2] := S;
+    CheckFalse(A.IsStopAt(2), 'simple passage');
+    CheckFalse(A[1].IsStop, 'la case reste décochée');
+  finally
+    A.Free;
   end;
 end;
 

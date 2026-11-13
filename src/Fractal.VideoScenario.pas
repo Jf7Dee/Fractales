@@ -26,6 +26,7 @@ type
     Mode: TVideoMoveMode;     // trajet qui arrive à cette étape (ignoré pour la première)
     TravelSeconds: Double;    // idem
     PauseSeconds: Double;     // arrêt sur cette étape ; pour la première, durée avant le départ
+    IsStop: Boolean;          // la caméra s'arrête ici (sinon simple passage) ; voir IsStopAt
   end;
 
   TVideoScenario = class
@@ -53,6 +54,7 @@ type
     procedure Delete(Index: Integer);
     procedure Move(FromIndex, ToIndex: Integer);
     function Count: Integer;
+    function IsStopAt(Index: Integer): Boolean;
     function TotalFrames: Integer;
     function TotalSeconds: Double;
     function PoseAtFrame(Frame: Integer; out IsPause: Boolean): TCameraPose;
@@ -229,6 +231,7 @@ begin
   Step.Pose.Width := Location.Width;
   Step.Mode := vmFlyover;
   Step.PauseSeconds := 0;
+  Step.IsStop := True;
   Step.TravelSeconds := kMinTravelSeconds;
   if Count > 0 then
     Step.TravelSeconds := SuggestedTravelSeconds(FSteps[Count - 1].Pose, Step.Pose, vmFlyover);
@@ -302,6 +305,15 @@ begin
   FSteps[Index] := Value;
   FSteps[Index].TravelSeconds := ClampTravelSeconds(Value.TravelSeconds);
   FSteps[Index].PauseSeconds := ClampPauseSeconds(Value.PauseSeconds);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Arrêt effectif : forcé pour la première étape, la dernière et toute étape avec une pause.
+function TVideoScenario.IsStopAt(Index: Integer): Boolean;
+begin
+  CheckIndex(Index);
+  Result := FSteps[Index].IsStop or (Index = 0) or (Index = Count - 1) or (FSteps[Index].PauseSeconds > 0);
 end;
 
 {------------------------------------------------------------------------------}
@@ -401,6 +413,8 @@ begin
       L.Add('Mode=' + kModeNames[S.Mode]);
       L.Add('Travel=' + FloatToInvariant(S.TravelSeconds));
       L.Add('Pause=' + FloatToInvariant(S.PauseSeconds));
+      if not S.IsStop then
+        L.Add('Arret=0');
     end;
     Result := L.Text;
   finally
@@ -481,6 +495,7 @@ begin
         S.TravelSeconds := ClampTravelSeconds(InvariantToFloat(Ini.ReadString(Section, 'Travel', ''),
           kMinTravelSeconds));
         S.PauseSeconds := ClampPauseSeconds(InvariantToFloat(Ini.ReadString(Section, 'Pause', ''), 0));
+        S.IsStop := Ini.ReadString(Section, 'Arret', '1') <> '0';
         Loaded.FSteps[I] := S;
       end;
     except
