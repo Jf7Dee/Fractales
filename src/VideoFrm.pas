@@ -24,6 +24,7 @@ type
     gbStep: TGroupBox;
     lblMode: TLabel;
     cbMode: TComboBox;
+    cbStop: TCheckBox;
     lblTravel: TLabel;
     edTravel: TEdit;
     lblPause: TLabel;
@@ -117,6 +118,7 @@ type
     procedure RefreshStep;
     procedure RefreshSummary;
     procedure RefreshSpeed(Index: Integer);
+    function ModeText(Index: Integer): string;
     procedure UpdateControls;
     procedure ShowPreviewFrame;
     procedure FinishRender;
@@ -135,6 +137,9 @@ type
     property ScenarioFolder: string read FScenarioFolder write FScenarioFolder;
     property VideoFolder: string read FVideoFolder write FVideoFolder;
     property ReplayButton: TButton read btnReplay;
+    property StopCheckBox: TCheckBox read cbStop;  // pour le test de fumée
+    property SpeedLabel: TLabel read lblSpeed;
+    procedure SelectStep(Index: Integer);
     // Fenêtre non modale : demande à la fenêtre principale d'appeler Prepare avec son état du moment
     // (activation, « Ajouter la vue », lancement d'un rendu)
     property OnRequestSnapshot: TNotifyEvent read FOnRequestSnapshot write FOnRequestSnapshot;
@@ -147,10 +152,13 @@ implementation
 const
   kSecondsFormat = '0.0';
   kModeNames: array[TVideoMoveMode] of string = ('Survol', 'Latéral');
+  kPassSuffix = ' ▸';  // étape de passage : la caméra ne s'y arrête pas
   kSmoothingNames: array[1..kMaxSmoothing] of string = ('Aucun (rapide)', '2 × 2 (× 4 en temps)',
     '3 × 3 (× 9 en temps)');
   kScenarioFilter = 'Scénarios vidéo (*.fscn)|*.fscn';
   kVideoFilter = 'Vidéos MP4 (*.mp4)|*.mp4';
+  kMsgChained = 'Enchaîné avec les étapes %d à %d : %s en tout, passage ici vers %s';
+  kMsgCruiseSpeed = 'Vitesse : %.1f écrans par seconde : trop rapide, allongez le trajet ou passez en survol';
   kMsgRendering = 'Un rendu est en cours : l''interrompre ?';
   kMsgDone = 'Vidéo enregistrée :'#13#10'%s';
   kMsgFailed = 'La vidéo n''a pas pu être créée :'#13#10'%s';
@@ -432,7 +440,7 @@ begin
         end
         else
         begin
-          Item.SubItems.Add(kModeNames[S.Mode]);
+          Item.SubItems.Add(ModeText(I));
           Item.SubItems.Add(SecondsText(S.TravelSeconds));
         end;
         Item.SubItems.Add(SecondsText(S.PauseSeconds));
@@ -456,6 +464,27 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Mode de l'étape dans la liste, avec la marque des passages
+function TVideoForm.ModeText(Index: Integer): string;
+begin
+  Result := kModeNames[FScenario[Index].Mode];
+  if not FScenario.IsStopAt(Index) then
+    Result := Result + kPassSuffix;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.SelectStep(Index: Integer);
+begin
+  if (Index >= 0) and (Index < lvSteps.Items.Count) then
+  begin
+    lvSteps.Items[Index].Selected := True;
+    RefreshStep;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.RefreshStep;
 var
   Index: Integer;
@@ -467,6 +496,7 @@ begin
     if Index < 0 then
     begin
       cbMode.ItemIndex := -1;
+      cbStop.Checked := False;
       edTravel.Text := '';
       edPause.Text := '';
       lblSpeed.Caption := '';
@@ -475,6 +505,7 @@ begin
     begin
       S := FScenario[Index];
       cbMode.ItemIndex := Ord(S.Mode);
+      cbStop.Checked := FScenario.IsStopAt(Index);
       edTravel.Text := FormatFloat(kSecondsFormat, S.TravelSeconds);
       edPause.Text := FormatFloat(kSecondsFormat, S.PauseSeconds);
       RefreshSpeed(Index);
@@ -490,12 +521,22 @@ end;
 procedure TVideoForm.RefreshSpeed(Index: Integer);
 var
   S: TVideoStep;
-  Speed: Double;
+  Speed, Seconds, PassAt, Cruise: Double;
+  First, Last: Integer;
 begin
   lblSpeed.Caption := '';
   if Index <= 0 then
     Exit;
   S := FScenario[Index];
+  FScenario.ChainInfo(Index, First, Last, Seconds, PassAt, Cruise);
+  if Last - First > 1 then
+  begin
+    lblSpeed.Caption := Format(kMsgChained, [First + 1, Last + 1, SecondsText(Seconds),
+      FormatFloat(kSecondsFormat, PassAt) + ' s']);
+    if (S.Mode = vmLateral) and (Cruise > kLateralSpeedWarning) then
+      lblSpeed.Caption := lblSpeed.Caption + #13#10 + Format(kMsgCruiseSpeed, [Cruise]);
+    Exit;
+  end;
   if S.Mode <> vmLateral then
     Exit;
   Speed := LateralScreensPerSecond(FScenario[Index - 1].Pose, S.Pose, S.TravelSeconds);
@@ -568,6 +609,7 @@ begin
   btnUp.Enabled := IsIdle and (Index > 0);
   btnDown.Enabled := IsIdle and (Index >= 0) and (Index < FScenario.Count - 1);
   cbMode.Enabled := IsIdle and (Index > 0);
+  cbStop.Enabled := IsIdle and (Index > 0) and (Index < FScenario.Count - 1) and (FScenario[Index].PauseSeconds <= 0);
   edTravel.Enabled := IsIdle and (Index > 0);
   edPause.Enabled := IsIdle and (Index >= 0);
   cbFormat.Enabled := IsIdle;
@@ -679,6 +721,8 @@ begin
   S := FScenario[Index];
   if (Sender = cbMode) and (cbMode.ItemIndex >= 0) then
     S.Mode := TVideoMoveMode(cbMode.ItemIndex)
+  else if Sender = cbStop then
+    S.IsStop := cbStop.Checked
   else if (Sender = edTravel) and TryParseSeconds(edTravel.Text, Value) then
     S.TravelSeconds := Value
   else if (Sender = edPause) and TryParseSeconds(edPause.Text, Value) then
@@ -689,14 +733,16 @@ begin
   S := FScenario[Index];
   FIsUpdating := True;
   try
-    lvSteps.Items[Index].SubItems[0] := IfThen(Index = 0, 'départ', kModeNames[S.Mode]);
+    lvSteps.Items[Index].SubItems[0] := IfThen(Index = 0, 'départ', ModeText(Index));
     if Index > 0 then
       lvSteps.Items[Index].SubItems[1] := SecondsText(S.TravelSeconds);
     lvSteps.Items[Index].SubItems[2] := SecondsText(S.PauseSeconds);
+    cbStop.Checked := FScenario.IsStopAt(Index);  // une pause non nulle force l'arrêt
   finally
     FIsUpdating := False;
   end;
-  if Sender = cbMode then
+  UpdateControls;
+  if (Sender = cbMode) or (Sender = cbStop) then
     RefreshStep
   else
     RefreshSpeed(Index);

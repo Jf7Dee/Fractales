@@ -1030,13 +1030,16 @@ procedure TMainForm.CheckVideoFormSmoke;
 const
   kVideoTimeoutMs = 120000;
   kVideoDivisor = 8;
+  kChainedPrefix = 'Enchaîné';
 var
   Form: TVideoForm;
   Location, Deeper: TFractalLocation;
   V: TViewport;
   S: TVideoStep;
   Ffmpeg, VideoFile: string;
+  IsDeeper: Boolean;
 begin
+  IsDeeper := False;
   Ffmpeg := FindFfmpeg(ExtractFilePath(ParamStr(0)), FSettings.VideoFfmpegPath);
   Location := CaptureLocation;
   Deeper := TFractalLocation.Create;
@@ -1097,8 +1100,22 @@ begin
     MenuImageVideoClick(nil);
     if (FVideoForm <> Form) or (Form.Scenario.Count <> 2) then
       raise Exception.Create('fenêtre Vidéo non conservée');
+    // trois étapes : décocher « Arrêt » sur celle du milieu en fait un passage, enchaîné avec les voisines
+    FNavigator.ZoomCenter(4);
+    IsDeeper := True;
+    Form.AddCurrentView;
+    Form.SelectStep(1);
+    if not Form.StopCheckBox.Enabled then
+      raise Exception.Create('passage : case « Arrêt » grisée sur une étape intermédiaire');
+    Form.StopCheckBox.Checked := False;
+    if Form.Scenario[1].IsStop then
+      raise Exception.Create('passage : la case « Arrêt » n''a pas été prise en compte');
+    if Copy(Form.SpeedLabel.Caption, 1, Length(kChainedPrefix)) <> kChainedPrefix then
+      raise Exception.Create('passage : enchaînement non annoncé : ' + Form.SpeedLabel.Caption);
   finally
     FNavigator.ZoomCenter(1 / 4);
+    if IsDeeper then
+      FNavigator.ZoomCenter(1 / 4);
     Form.Close;
   end;
   FSmokeLog.Add('Fenêtre Vidéo OK');

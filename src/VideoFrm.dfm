@@ -207,6 +207,15 @@ object VideoForm: TVideoForm
       TabOrder = 2
       OnChange = StepChange
     end
+    object cbStop: TCheckBox
+      Left = 210
+      Top = 22
+      Width = 80
+      Height = 19
+      Caption = 'Arr'#234't'
+      TabOrder = 3
+      OnClick = StepChange
+    end
   end
   object gbVideo: TGroupBox
     Left = 8
