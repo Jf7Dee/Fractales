@@ -25,6 +25,12 @@ function PoseBetween(const A, B: TCameraPose; Mode: TVideoMoveMode; Fraction: Do
 function EaseInOut(Fraction: Double): Double;
 function LateralScreensPerSecond(const A, B: TCameraPose; Seconds: Double): Double;
 function SuggestedTravelSeconds(const A, B: TCameraPose; Mode: TVideoMoveMode): Double;
+// Longueur perçue du survol (van Wijk et Nuij) entre deux largeurs distantes de D
+function FlyoverLength(W0, W1, D: TFloat): TFloat;
+// Longueur perçue d'un trajet : ds² = (du / w)² + (d ln w)² / ρ², sans adoucissement
+function PathLength(const A, B: TCameraPose; Mode: TVideoMoveMode): TFloat;
+// Pose après une longueur perçue S (bornée à 0..PathLength), sans adoucissement : A en 0, B à la longueur totale
+function PoseAtLength(const A, B: TCameraPose; Mode: TVideoMoveMode; S: TFloat): TCameraPose;
 
 implementation
 
@@ -34,6 +40,7 @@ const
   kRhoFourth = 4.0;
   kSamePointRatio = 1e-9;        // distance négligeable devant la largeur : zoom pur
   kCenterMarginRatio = 1e-4;     // précision du centre : bien plus fine qu'un pixel
+  kLengthSamples = 64;           // pas de l'intégration de la longueur d'un glissement latéral
 
 {------------------------------------------------------------------------------}
 
@@ -124,9 +131,42 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Glissement latéral, au paramètre E (0 à 1) : centre linéaire, largeur en progression géométrique
+function LateralPose(const A, B: TCameraPose; DX, DY: TFloat; E: Double): TCameraPose;
+var
+  Width: TFloat;
+begin
+  Width := LogLerp(A.Width, B.Width, E);
+  if E <= 0.5 then
+    Result := CenterFrom(A, DX, DY, E, Width)
+  else
+    Result := CenterFrom(B, -DX, -DY, 1 - E, Width);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Survol, après la longueur S (0 à Total) ; D est la distance des centres, non nulle
+function FlyoverPose(const A, B: TCameraPose; DX, DY, D, Total, S: TFloat): TCameraPose;
+var
+  Offset, Width: TFloat;
+begin
+  if S <= Total / 2 then
+  begin
+    FlyoverFrom(A.Width, B.Width, D, S, Offset, Width);
+    Result := CenterFrom(A, DX, DY, Offset / D, Width);
+  end
+  else
+  begin
+    FlyoverFrom(B.Width, A.Width, D, Total - S, Offset, Width);
+    Result := CenterFrom(B, -DX, -DY, Offset / D, Width);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 function PoseBetween(const A, B: TCameraPose; Mode: TVideoMoveMode; Fraction: Double): TCameraPose;
 var
-  DX, DY, D, Total, S, Offset, Width: TFloat;
+  DX, DY, D, Total: TFloat;
   E: Double;
 begin
   if (A.Width <= 0) or (B.Width <= 0) then
@@ -138,26 +178,105 @@ begin
   E := EaseInOut(Fraction);
   Distance(A, B, DX, DY, D);
   if (Mode = vmLateral) or IsSamePoint(D, A.Width, B.Width) then
-  begin
-    Width := LogLerp(A.Width, B.Width, E);
-    if E <= 0.5 then
-      Result := CenterFrom(A, DX, DY, E, Width)
-    else
-      Result := CenterFrom(B, -DX, -DY, 1 - E, Width);
-    Exit;
-  end;
-  Total := FlyoverLength(A.Width, B.Width, D);
-  S := E * Total;
-  if S <= Total / 2 then
-  begin
-    FlyoverFrom(A.Width, B.Width, D, S, Offset, Width);
-    Result := CenterFrom(A, DX, DY, Offset / D, Width);
-  end
+    Result := LateralPose(A, B, DX, DY, E)
   else
   begin
-    FlyoverFrom(B.Width, A.Width, D, Total - S, Offset, Width);
-    Result := CenterFrom(B, -DX, -DY, Offset / D, Width);
+    Total := FlyoverLength(A.Width, B.Width, D);
+    Result := FlyoverPose(A, B, DX, DY, D, Total, E * Total);
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vitesse perçue d'un glissement latéral au paramètre E : le centre avance de D par unité de E, la largeur suit
+// LogLerp (d ln w / dE = LnRatio)
+function LateralSpeed(W0, D, LnRatio: TFloat; E: Double): TFloat;
+var
+  W: TFloat;
+begin
+  W := LogLerp(W0, W0 * Exp(LnRatio), E);
+  Result := Sqrt(Sqr(D / W) + Sqr(LnRatio) / kRhoSquare);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Longueurs cumulées aux kLengthSamples + 1 bornes de E régulières (Simpson sur chaque pas)
+procedure LateralTable(const A, B: TCameraPose; D: TFloat; out Table: array of TFloat);
+var
+  I: Integer;
+  H, LnRatio: TFloat;
+begin
+  LnRatio := Ln(B.Width / A.Width);
+  H := 1 / kLengthSamples;
+  Table[0] := 0;
+  for I := 1 to kLengthSamples do
+    Table[I] := Table[I - 1] + H / 6 * (LateralSpeed(A.Width, D, LnRatio, (I - 1) * H)
+      + 4 * LateralSpeed(A.Width, D, LnRatio, (I - 0.5) * H) + LateralSpeed(A.Width, D, LnRatio, I * H));
+end;
+
+{------------------------------------------------------------------------------}
+
+function PathLength(const A, B: TCameraPose; Mode: TVideoMoveMode): TFloat;
+var
+  DX, DY, D: TFloat;
+  Table: array[0..kLengthSamples] of TFloat;
+begin
+  if (A.Width <= 0) or (B.Width <= 0) then
+    raise EArgumentException.Create('PathLength : largeur non positive');
+  Distance(A, B, DX, DY, D);
+  if IsSamePoint(D, A.Width, B.Width) then
+    Result := Abs(Ln(B.Width / A.Width)) / kRho
+  else if Mode = vmFlyover then
+    Result := FlyoverLength(A.Width, B.Width, D)
+  else
+  begin
+    LateralTable(A, B, D, Table);
+    Result := Table[kLengthSamples];
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Paramètre E d'un glissement latéral dont la longueur parcourue est S : inversion de la table cumulée
+function LateralParam(const A, B: TCameraPose; D, S: TFloat): Double;
+var
+  Table: array[0..kLengthSamples] of TFloat;
+  I: Integer;
+begin
+  LateralTable(A, B, D, Table);
+  I := 0;
+  while (I < kLengthSamples - 1) and (S >= Table[I + 1]) do
+    Inc(I);
+  if Table[I + 1] > Table[I] then
+    Result := (I + (S - Table[I]) / (Table[I + 1] - Table[I])) / kLengthSamples
+  else
+    Result := I / kLengthSamples;
+end;
+
+{------------------------------------------------------------------------------}
+
+function PoseAtLength(const A, B: TCameraPose; Mode: TVideoMoveMode; S: TFloat): TCameraPose;
+var
+  DX, DY, D, Total: TFloat;
+  E: Double;
+begin
+  if (A.Width <= 0) or (B.Width <= 0) then
+    raise EArgumentException.Create('PoseAtLength : largeur non positive');
+  Distance(A, B, DX, DY, D);
+  Total := PathLength(A, B, Mode);
+  if not (S > 0) then
+    Exit(A);
+  if S >= Total then
+    Exit(B);
+  if IsSamePoint(D, A.Width, B.Width) then
+    Result := LateralPose(A, B, DX, DY, S / Total)
+  else if Mode = vmLateral then
+  begin
+    E := LateralParam(A, B, D, S);
+    Result := LateralPose(A, B, DX, DY, E)
+  end
+  else
+    Result := FlyoverPose(A, B, DX, DY, D, Total, S);
 end;
 
 {------------------------------------------------------------------------------}

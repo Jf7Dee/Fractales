@@ -28,6 +28,8 @@ type
     procedure TestEaseInOut;
     procedure TestLateralSpeed;
     procedure TestSuggestedTravelBounds;
+    procedure TestPathLength;
+    procedure TestPoseAtLength;
   end;
 
   TTestVideoScenario = class(TTestCase)
@@ -283,6 +285,57 @@ begin
   CheckEquals(1e-5, P.Width, 1e-7);
   CheckEquals(0, P.CenterX.Sub(A.CenterX).ToFloat, 1e-20);
   CheckEquals(0, P.CenterY.Sub(A.CenterY).ToFloat, 1e-20);
+end;
+
+procedure TTestVideoPath.TestPathLength;
+var
+  A, B: TCameraPose;
+  M: TVideoMoveMode;
+  Expected: TFloat;
+begin
+  A := Pose('0', '0', 1e-6);
+  B := Shifted(A, 1, 0, 1e-6);
+  Expected := FlyoverLength(A.Width, B.Width, 1);
+  CheckEquals(1, PathLength(A, B, vmFlyover) / Expected, 1e-12, 'survol');
+  A := Pose('0', '0', 0.01);
+  B := Shifted(A, 0.03, 0, 0.01);
+  CheckEquals(3, PathLength(A, B, vmLateral), 1e-3, 'latéral');
+  A := Pose('-0.75', '0.1', 1e-3);
+  B := Pose('-0.75', '0.1', 1e-5);
+  for M := Low(TVideoMoveMode) to High(TVideoMoveMode) do
+    CheckEquals(Ln(100) / Sqrt(2), PathLength(A, B, M), 1e-9, 'zoom pur');
+  for M := Low(TVideoMoveMode) to High(TVideoMoveMode) do
+    CheckEquals(0, PathLength(A, A, M), 0, 'identiques');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoPath.TestPoseAtLength;
+var
+  A, B, P: TCameraPose;
+  M: TVideoMoveMode;
+  Len: TFloat;
+begin
+  A := Pose(kDeepX, kDeepY, 1e-13);
+  B := Shifted(A, 0.3, 0, 1e-12);
+  for M := Low(TVideoMoveMode) to High(TVideoMoveMode) do
+  begin
+    Len := PathLength(A, B, M);
+    CheckSamePose(A, PoseAtLength(A, B, M, 0), 'début');
+    CheckSamePose(A, PoseAtLength(A, B, M, -1), 'avant le début');
+    CheckSamePose(B, PoseAtLength(A, B, M, Len), 'fin');
+    CheckSamePose(B, PoseAtLength(A, B, M, Len * 2), 'après la fin');
+  end;
+  A := Pose('0', '0', 0.01);
+  B := Shifted(A, 0.03, 0, 0.01);
+  P := PoseAtLength(A, B, vmLateral, PathLength(A, B, vmLateral) / 2);
+  CheckEquals(0.015, P.CenterX.ToFloat, 1e-6 * 0.01, 'milieu');
+  CheckEquals(0.01, P.Width, 1e-9, 'largeur');
+  for M := Low(TVideoMoveMode) to High(TVideoMoveMode) do
+  begin
+    P := PoseAtLength(A, A, M, 0.5);
+    CheckSamePose(A, P, 'longueur nulle');
+  end;
 end;
 
 {------------------------------------------------------------------------------}
