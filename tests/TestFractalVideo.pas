@@ -8,6 +8,8 @@ uses
   Fractal.VideoRender, TestUtils;
 
 type
+  TDoubles = array of Double;
+
   TTestVideoPath = class(TTestCase)
   private
     function Pose(const X, Y: string; Width: TFloat): TCameraPose;
@@ -32,7 +34,7 @@ type
     procedure TestPoseAtLength;
     procedure TestLateralSpeedIsSteady;
     procedure TestChainDistance;
-    procedure TestRoundedCorner;
+    procedure TestCornerPose;
   end;
 
   TTestVideoScenario = class(TTestCase)
@@ -40,6 +42,13 @@ type
     function Location(const Formula, X, Y, Width: string): TFractalLocation;
     procedure Add(Scenario: TVideoScenario; const Name, Formula, X, Y, Width: string);
     function TempFile(const Name: string): string;
+    function Chain3(const X, Y, Widths: array of string; ModeIn, ModeOut: TVideoMoveMode): TVideoScenario;
+    function SameView(const A, B: TCameraPose): Boolean;
+    function FrameSteps(Sc: TVideoScenario): TDoubles;
+    procedure CheckNeverOnStep(Sc: TVideoScenario; const Msg: string);
+    procedure CheckSteadyTurn(const X, Y, Widths: array of string; ModeIn, ModeOut: TVideoMoveMode;
+      const Msg: string);
+    function CheckBounce(Sc: TVideoScenario; const Msg: string): TDoubles;
   published
     procedure TestFormatSizes;
     procedure TestTimeline;
@@ -50,6 +59,13 @@ type
     procedure TestLoadGarbage;
     procedure TestMoveAndDelete;
     procedure TestDurationsAreBounded;
+    procedure TestAllStopsUnchanged;
+    procedure TestChainKeepsSpeed;
+    procedure TestChainReversal;
+    procedure TestChainTurnsKeepSpeed;
+    procedure TestChainTotalFrames;
+    procedure TestChainZeroLength;
+    procedure TestChainInfo;
   end;
 
   TTestVideoEncoder = class(TTestCase)
@@ -100,6 +116,9 @@ const
   kUrchinWidth = '3.07321407518908409E-29';
   kInnerX = '-1.47428203549613083';
   kInnerY = '-1.94990625370902929E-5';
+  kChainFrames = 240;   // enchaînement de deux trajets de 4 s
+  kCruiseFirst = 62;    // partie à vitesse de croisière : hors des rampes d'un quart de l'enchaînement
+  kCruiseLast = 177;
 
 {------------------------------------------------------------------------------}
 
@@ -302,7 +321,7 @@ begin
   CheckEquals(1, PathLength(A, B, vmFlyover) / Expected, 1e-12, 'survol');
   A := Pose('0', '0', 0.01);
   B := Shifted(A, 0.03, 0, 0.01);
-  CheckEquals(3, PathLength(A, B, vmLateral), 1e-3, 'latéral');
+  CheckEquals(3 * Sqrt(2), PathLength(A, B, vmLateral), 1e-3, 'latéral (métrique de van Wijk)');
   A := Pose('-0.75', '0.1', 1e-3);
   B := Pose('-0.75', '0.1', 1e-5);
   for M := Low(TVideoMoveMode) to High(TVideoMoveMode) do
@@ -397,32 +416,44 @@ begin
   CheckEquals(kTotal, ChainDistance(1, kTotal, 0, 0), 1e-12, 'sans rampe, fin');
   CheckEquals(kTotal, ChainDistance(2, kTotal, 0.3, 0), 1e-12, 'T borné');
   CheckEquals(0, ChainDistance(-1, kTotal, 0, 0.3), 0, 'T négatif');
+  // rampes trop longues : ramenées à une somme de 1
+  CheckEquals(kTotal, ChainDistance(1, kTotal, 0.8, 0.8), 1e-12, 'rampes bornées, fin');
+  for I := 1 to 100 do
+    CheckTrue(ChainDistance(I / 100, kTotal, 0.8, 0.8) > ChainDistance((I - 1) / 100, kTotal, 0.8, 0.8),
+      Format('rampes bornées, point %d : non monotone', [I]));
 end;
 
 {------------------------------------------------------------------------------}
 
-procedure TTestVideoPath.TestRoundedCorner;
+// Arrondi d'un virage latéral à angle droit en zoom profond : bouts sur les trajets, longueur entre la corde et 2h
+procedure TTestVideoPath.TestCornerPose;
 var
-  P0, C, P2, M: TCameraPose;
-  DCorner, DMid: TFloat;
+  A, B, C, P0, P2, M: TCameraPose;
+  H, Len, LenIn, D: TFloat;
+  I: Integer;
 begin
-  P0 := Pose('0', '0', 1e-3);
-  C := Shifted(P0, 1, 0, 1e-3);
-  P2 := Shifted(C, 0, 1, 1e-3);
-  CheckSamePose(P0, RoundedCorner(P0, C, P2, 0), 'U = 0');
-  CheckSamePose(P2, RoundedCorner(P0, C, P2, 1), 'U = 1');
-  M := RoundedCorner(P0, C, P2, 0.5);
-  DCorner := Hypot(C.CenterX.Sub(P0.CenterX).ToFloat, C.CenterY.Sub(P0.CenterY).ToFloat);
-  DMid := Hypot(M.CenterX.Sub(C.CenterX).ToFloat, M.CenterY.Sub(C.CenterY).ToFloat);
-  CheckTrue(DMid > 0, 'passe par le coin');
-  CheckTrue(DMid < DCorner / 2, Format('trop loin du coin : %g', [DMid]));
-  // Zoom profond : largeurs 1e-13 et 1
-  P0 := Pose(kDeepX, kDeepY, 1e-13);
-  C := Shifted(P0, 0.1, 0, 1);
-  P2 := Shifted(C, 0, 0.1, 1e-13);
-  M := RoundedCorner(P0, C, P2, 0.5);
-  CheckFalse(IsNan(M.Width), 'largeur NaN');
-  CheckTrue((M.Width >= 1e-13 * 0.999) and (M.Width <= 1.001), Format('largeur hors bornes : %g', [M.Width]));
+  A := Pose(kDeepX, kDeepY, 1e-13);
+  B := Shifted(A, 3e-13, 0, 1e-13);
+  C := Shifted(B, 0, 3e-13, 1e-13);
+  LenIn := PathLength(A, B, vmLateral);
+  H := CornerWindow(LenIn, PathLength(B, C, vmLateral));
+  CheckEquals(0.25 * LenIn, H, 1e-12, 'fenêtre');
+  P0 := PoseAtLength(A, B, vmLateral, LenIn - H);
+  P2 := PoseAtLength(B, C, vmLateral, H);
+  Len := CornerLength(A, B, C, vmLateral, vmLateral);
+  CheckTrue((Len > PathLength(P0, P2, vmLateral)) and (Len < 2 * H), Format('longueur %g, fenêtre %g', [Len, H]));
+  CheckSamePose(P0, CornerPose(A, B, C, vmLateral, vmLateral, 0), 'entrée');
+  CheckSamePose(P2, CornerPose(A, B, C, vmLateral, vmLateral, Len), 'sortie');
+  for I := 1 to 9 do
+  begin
+    M := CornerPose(A, B, C, vmLateral, vmLateral, Len * I / 10);
+    CheckFalse(IsNan(M.Width), 'largeur NaN');
+    CheckEquals(1e-13, M.Width, 1e-19, 'profondeur constante');
+    D := Hypot(M.CenterX.Sub(B.CenterX).ToFloat, M.CenterY.Sub(B.CenterY).ToFloat);
+    CheckTrue((D > 0) and (D < 3e-13), Format('point %d : %g du coin', [I, D]));
+  end;
+  CheckEquals(0, CornerLength(A, A, C, vmLateral, vmLateral), 0, 'trajet nul : pas d''arrondi');
+  CheckSamePose(A, CornerPose(A, A, C, vmLateral, vmLateral, 0.1), 'trajet nul : l''étape');
 end;
 
 {------------------------------------------------------------------------------}
@@ -798,6 +829,350 @@ begin
   finally
     SysUtils.DeleteFile(FileName);
     L.Free;
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Trois étapes, la deuxième en passage, trajets de 4 s sans pause
+function TTestVideoScenario.Chain3(const X, Y, Widths: array of string; ModeIn, ModeOut: TVideoMoveMode):
+  TVideoScenario;
+var
+  I: Integer;
+  S: TVideoStep;
+begin
+  Result := TVideoScenario.Create;
+  try
+    for I := 0 to 2 do
+      Add(Result, 'étape ' + IntToStr(I), 'BurningShip', X[I], Y[I], Widths[I]);
+    for I := 1 to 2 do
+    begin
+      S := Result[I];
+      S.TravelSeconds := 4;
+      S.PauseSeconds := 0;
+      S.IsStop := I = 2;
+      if I = 1 then
+        S.Mode := ModeIn
+      else
+        S.Mode := ModeOut;
+      Result[I] := S;
+    end;
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestVideoScenario.SameView(const A, B: TCameraPose): Boolean;
+begin
+  Result := A.CenterX.IsEqual(B.CenterX) and A.CenterY.IsEqual(B.CenterY) and (A.Width = B.Width);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Pas perçu entre chaque image et la précédente (Result[0] = 0)
+function TTestVideoScenario.FrameSteps(Sc: TVideoScenario): TDoubles;
+var
+  I: Integer;
+  P, Q: TCameraPose;
+  IsPause: Boolean;
+begin
+  SetLength(Result, Sc.TotalFrames);
+  P := Sc.PoseAtFrame(0, IsPause);
+  Result[0] := 0;
+  for I := 1 to High(Result) do
+  begin
+    Q := Sc.PoseAtFrame(I, IsPause);
+    CheckTrue(Q.Width > 0, Format('image %d : largeur %g', [I, Q.Width]));
+    Result[I] := PathLength(P, Q, vmLateral);
+    P := Q;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Aucune image du tiers central sur l'étape de passage
+procedure TTestVideoScenario.CheckNeverOnStep(Sc: TVideoScenario; const Msg: string);
+var
+  I: Integer;
+  IsPause: Boolean;
+begin
+  for I := kChainFrames div 3 to 2 * kChainFrames div 3 do
+    CheckFalse(SameView(Sc[1].Pose, Sc.PoseAtFrame(I, IsPause)), Format('%s : image %d sur l''étape', [Msg, I]));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Virage sans retournement du zoom : pas perçus réguliers sur toute la partie à vitesse de croisière
+procedure TTestVideoScenario.CheckSteadyTurn(const X, Y, Widths: array of string; ModeIn, ModeOut: TVideoMoveMode;
+  const Msg: string);
+var
+  Sc: TVideoScenario;
+  Steps: TDoubles;
+  I: Integer;
+  MinStep, MaxStep: Double;
+begin
+  Sc := Chain3(X, Y, Widths, ModeIn, ModeOut);
+  try
+    CheckEquals(kChainFrames, Sc.TotalFrames, Msg);
+    Steps := FrameSteps(Sc);
+    MinStep := MaxDouble;
+    MaxStep := 0;
+    for I := kCruiseFirst to kCruiseLast do
+    begin
+      MinStep := Min(MinStep, Steps[I]);
+      MaxStep := Max(MaxStep, Steps[I]);
+    end;
+    Status(Format('%s : pas min/max %.4f', [Msg, MinStep / MaxStep]));
+    CheckTrue(MinStep / MaxStep > 0.8, Format('%s : pas perçus de %g à %g', [Msg, MinStep, MaxStep]));
+    CheckNeverOnStep(Sc, Msg);
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Retournement du zoom : jamais deux images identiques, creux de vitesse d'un seul tenant dans la partie à vitesse
+// de croisière, le reste au moins à 0,8 × la croisière ; renvoie les pas perçus
+function TTestVideoScenario.CheckBounce(Sc: TVideoScenario; const Msg: string): TDoubles;
+var
+  I, LowFirst, LowLast, LowCount: Integer;
+  MinStep, MaxStep: Double;
+begin
+  CheckEquals(kChainFrames, Sc.TotalFrames, Msg);
+  Result := FrameSteps(Sc);
+  MinStep := MaxDouble;
+  MaxStep := 0;
+  for I := 1 to High(Result) do
+    MinStep := Min(MinStep, Result[I]);
+  for I := kCruiseFirst to kCruiseLast do
+    MaxStep := Max(MaxStep, Result[I]);
+  CheckTrue(MinStep > 0, Format('%s : deux images identiques', [Msg]));
+  LowFirst := -1;
+  LowLast := -1;
+  LowCount := 0;
+  for I := kCruiseFirst to kCruiseLast do
+    if Result[I] < 0.8 * MaxStep then
+    begin
+      if LowFirst < 0 then
+        LowFirst := I;
+      LowLast := I;
+      Inc(LowCount);
+    end;
+  Status(Format('%s : pas min %.4f × croisière, creux de %d images (%d à %d)', [Msg, MinStep / MaxStep, LowCount,
+    LowFirst, LowLast]));
+  CheckTrue(LowCount > 0, Format('%s : pas de creux', [Msg]));
+  CheckEquals(LowLast - LowFirst + 1, LowCount, Format('%s : creux en plusieurs morceaux', [Msg]));
+  CheckTrue(LowCount <= kChainFrames div 8, Format('%s : creux de %d images', [Msg, LowCount]));
+  CheckNeverOnStep(Sc, Msg);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Tous arrêts : exactement les poses de l'ancien calcul, trajet par trajet (modes mêlés, pauses)
+procedure TTestVideoScenario.TestAllStopsUnchanged;
+var
+  Sc: TVideoScenario;
+  S: TVideoStep;
+  P, Expected: TCameraPose;
+  IsPause: Boolean;
+  I, K, N, Frame: Integer;
+begin
+  Sc := TVideoScenario.Create;
+  try
+    Add(Sc, 'intérieur', 'BurningShip', kInnerX, kInnerY, '2.8e-6');
+    Add(Sc, 'bord', 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    Add(Sc, 'oursin', 'BurningShip', kUrchinX, kUrchinY, kUrchinWidth);
+    Add(Sc, 'retour', 'BurningShip', kInnerX, kInnerY, '1e-5');
+    for I := 0 to 3 do
+    begin
+      S := Sc[I];
+      S.TravelSeconds := 1 + I / 2;
+      S.PauseSeconds := 0.5 * (I mod 2);
+      if I = 2 then
+        S.Mode := vmLateral;
+      if I = 1 then
+        S.IsStop := False;  // pause non nulle : arrêt forcé
+      Sc[I] := S;
+    end;
+    Frame := 0;
+    for I := 0 to Sc.Count - 1 do
+    begin
+      if I > 0 then
+      begin
+        N := Max(kMinTravelFrames, Round(Sc[I].TravelSeconds * kVideoFps));
+        for K := 0 to N - 1 do
+        begin
+          Expected := PoseBetween(Sc[I - 1].Pose, Sc[I].Pose, Sc[I].Mode, (K + 1) / N);
+          P := Sc.PoseAtFrame(Frame, IsPause);
+          CheckFalse(IsPause, Format('image %d', [Frame]));
+          CheckTrue(SameView(Expected, P), Format('image %d : pose différente', [Frame]));
+          Inc(Frame);
+        end;
+      end;
+      for K := 1 to Round(Sc[I].PauseSeconds * kVideoFps) do
+      begin
+        P := Sc.PoseAtFrame(Frame, IsPause);
+        CheckTrue(IsPause, Format('image %d : pause', [Frame]));
+        CheckTrue(SameView(Sc[I].Pose, P), Format('image %d : pause hors étape', [Frame]));
+        Inc(Frame);
+      end;
+    end;
+    CheckEquals(Sc.TotalFrames, Frame, 'images');
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Trois étapes alignées en survol (retournement du zoom au passage) : rebond doux et symétrique
+procedure TTestVideoScenario.TestChainKeepsSpeed;
+var
+  Sc: TVideoScenario;
+  Steps: TDoubles;
+  I: Integer;
+begin
+  Sc := Chain3(['-1.5', '-1.0', '-0.5'], ['0', '0', '0'], ['1e-4', '1e-4', '1e-4'], vmFlyover, vmFlyover);
+  try
+    Steps := CheckBounce(Sc, 'alignées');
+    for I := 1 to kChainFrames - 2 do
+      CheckEquals(Steps[I], Steps[kChainFrames - 1 - I], 1e-6 * Steps[kChainFrames div 2],
+        Format('symétrie, image %d', [I]));
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Retournement du zoom entre étapes à profondeurs différentes
+procedure TTestVideoScenario.TestChainReversal;
+var
+  Sc: TVideoScenario;
+begin
+  Sc := Chain3(['-1.5', '-1.0', '-0.6'], ['0', '0.02', '0.1'], ['0.5', '1e-4', '0.01'], vmFlyover, vmFlyover);
+  try
+    CheckBounce(Sc, 'profondeurs différentes');
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoScenario.TestChainTurnsKeepSpeed;
+begin
+  CheckSteadyTurn(['-1.0', '-0.97', '-0.9959807621135332'], ['0', '0', '0.015'], ['0.01', '0.01', '0.01'],
+    vmLateral, vmLateral, 'latéral, virage de 150°');
+  CheckSteadyTurn(['-1.0', '-0.5', '-0.497'], ['0', '0', '0.001'], ['1', '1e-3', '1e-3'], vmFlyover, vmLateral,
+    'survol puis latéral');
+  CheckSteadyTurn(['-1.0', '-0.7', '-0.69'], ['0', '0', '0.005'], ['1', '0.1', '1e-4'], vmFlyover, vmFlyover,
+    'survols sans retournement');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoScenario.TestChainTotalFrames;
+var
+  Sc: TVideoScenario;
+  S: TVideoStep;
+begin
+  Sc := Chain3(['-1.5', '-1.0', '-0.5'], ['0', '0', '0'], ['1e-4', '1e-4', '1e-4'], vmFlyover, vmLateral);
+  try
+    CheckEquals(kChainFrames, Sc.TotalFrames, 'avec passage');
+    S := Sc[1];
+    S.IsStop := True;
+    Sc[1] := S;
+    CheckEquals(kChainFrames, Sc.TotalFrames, 'tous arrêts');
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Deux étapes identiques au milieu d'un enchaînement : trajet de longueur nulle
+procedure TTestVideoScenario.TestChainZeroLength;
+var
+  Sc: TVideoScenario;
+  S: TVideoStep;
+  P: TCameraPose;
+  IsPause: Boolean;
+  I: Integer;
+begin
+  Sc := TVideoScenario.Create;
+  try
+    Add(Sc, 'a', 'BurningShip', kInnerX, kInnerY, '2.8e-6');
+    Add(Sc, 'b', 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    Add(Sc, 'b bis', 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    Add(Sc, 'c', 'BurningShip', kUrchinX, kUrchinY, kUrchinWidth);
+    for I := 1 to 3 do
+    begin
+      S := Sc[I];
+      S.TravelSeconds := 2;
+      S.IsStop := I = 3;
+      Sc[I] := S;
+    end;
+    for I := 0 to Sc.TotalFrames - 1 do
+    begin
+      P := Sc.PoseAtFrame(I, IsPause);
+      CheckFalse(IsNan(P.Width), Format('image %d : largeur NaN', [I]));
+      CheckTrue(P.Width > 0, Format('image %d : largeur %g', [I, P.Width]));
+    end;
+    CheckTrue(SameView(Sc[3].Pose, Sc.PoseAtFrame(Sc.TotalFrames - 1, IsPause)), 'dernière image');
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoScenario.TestChainInfo;
+var
+  Sc: TVideoScenario;
+  S: TVideoStep;
+  First, Last: Integer;
+  Seconds, PassAt, CruiseSpeed: Double;
+begin
+  Sc := Chain3(['-1.5', '-1.0', '-0.5'], ['0', '0', '0'], ['1e-4', '1e-4', '1e-4'], vmFlyover, vmFlyover);
+  try
+    Sc.ChainInfo(1, First, Last, Seconds, PassAt, CruiseSpeed);
+    CheckEquals(0, First, 'premier arrêt');
+    CheckEquals(2, Last, 'dernier arrêt');
+    CheckEquals(8, Seconds, 1e-12, 'durée');
+    CheckTrue((PassAt > 3) and (PassAt < 5), Format('passage à %g s', [PassAt]));
+    CheckEquals(4, PassAt, 1e-6, 'passage au milieu (géométrie symétrique)');
+    CheckTrue(CruiseSpeed > 0, 'vitesse de croisière');
+    Sc.ChainInfo(2, First, Last, Seconds, PassAt, CruiseSpeed);
+    CheckEquals(0, First, 'étape 2 : premier arrêt');
+    CheckEquals(8, PassAt, 1e-9, 'étape 2 : arrivée');
+    Sc.ChainInfo(0, First, Last, Seconds, PassAt, CruiseSpeed);
+    CheckEquals(0, First, 'étape 0');
+    CheckEquals(0, Last, 'étape 0');
+    CheckEquals(0, Seconds, 0, 'étape 0');
+    CheckEquals(0, PassAt, 0, 'étape 0');
+    CheckEquals(0, CruiseSpeed, 0, 'étape 0');
+    S := Sc[1];
+    S.IsStop := True;
+    Sc[1] := S;
+    Sc.ChainInfo(1, First, Last, Seconds, PassAt, CruiseSpeed);
+    CheckEquals(1, Last, 'arrêt : trajet seul');
+    CheckEquals(4, Seconds, 1e-12, 'arrêt : durée');
+    CheckEquals(4, PassAt, 1e-9, 'arrêt : arrivée');
+  finally
+    Sc.Free;
+  end;
+  // glissement en ligne droite, 3 + 3 largeurs d'écran en 8 s dont deux rampes d'un quart : 1 largeur par seconde
+  Sc := Chain3(['-1.0', '-0.97', '-0.94'], ['0', '0', '0'], ['0.01', '0.01', '0.01'], vmLateral, vmLateral);
+  try
+    Sc.ChainInfo(1, First, Last, Seconds, PassAt, CruiseSpeed);
+    CheckEquals(1, CruiseSpeed, 1e-3, 'largeurs d''écran par seconde');
+  finally
     Sc.Free;
   end;
 end;

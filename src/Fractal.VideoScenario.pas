@@ -45,6 +45,9 @@ type
     procedure SetFormula(const AFormulaName: string; AParams: TStrings);
     function TravelFrames(Index: Integer): Integer;
     function PauseFrames(Index: Integer): Integer;
+    function NextStop(Index: Integer): Integer;
+    procedure ChainRamps(First, Last: Integer; out Frames: Integer; out RampIn, RampOut: Double);
+    procedure ChainSteps(First, Last: Integer; out Poses: TCameraPoses; out Modes: TVideoMoveModes);
   public
     constructor Create;
     destructor Destroy; override;
@@ -58,6 +61,10 @@ type
     function TotalFrames: Integer;
     function TotalSeconds: Double;
     function PoseAtFrame(Frame: Integer; out IsPause: Boolean): TCameraPose;
+    // Enchaînement qui contient l'étape Index : arrêts First < Index <= Last, durée, instant du passage le plus près
+    // de l'étape compté depuis le départ de First, vitesse de croisière en largeurs d'écran par seconde (exacte pour
+    // un glissement pur ; pour un trajet seul, celle d'un palier aux rampes d'une demi-durée). Étape 0 : tout à 0.
+    procedure ChainInfo(Index: Integer; out First, Last: Integer; out Seconds, PassAt, CruiseSpeed: Double);
     function CreateFormula: TFractalFormula;
     function SaveToText: string;
     procedure SaveToFile(const FileName: string);
@@ -335,6 +342,45 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Premier arrêt à partir de l'étape Index (comprise) : la dernière étape en est toujours un
+function TVideoScenario.NextStop(Index: Integer): Integer;
+begin
+  Result := Index;
+  while not IsStopAt(Result) do
+    Inc(Result);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Images de l'enchaînement First → Last ; rampes : une demi-durée du premier trajet et du dernier
+procedure TVideoScenario.ChainRamps(First, Last: Integer; out Frames: Integer; out RampIn, RampOut: Double);
+var
+  I: Integer;
+begin
+  Frames := 0;
+  for I := First + 1 to Last do
+    Inc(Frames, TravelFrames(I));
+  RampIn := TravelFrames(First + 1) / (2 * Frames);
+  RampOut := TravelFrames(Last) / (2 * Frames);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.ChainSteps(First, Last: Integer; out Poses: TCameraPoses; out Modes: TVideoMoveModes);
+var
+  I: Integer;
+begin
+  SetLength(Poses, Last - First + 1);
+  SetLength(Modes, Last - First + 1);
+  for I := First to Last do
+  begin
+    Poses[I - First] := FSteps[I].Pose;
+    Modes[I - First] := FSteps[I].Mode;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 function TVideoScenario.TotalFrames: Integer;
 var
   I: Integer;
@@ -353,33 +399,92 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Image d'un trajet de N images : fraction (k + 1) / N, la dernière tombe exactement sur l'étape d'arrivée
+// Image d'un trajet ou d'un enchaînement de N images : fraction (k + 1) / N, la dernière tombe exactement sur
+// l'arrêt d'arrivée ; un trajet seul garde son calcul (PoseBetween), les étapes de passage n'ont pas de pause
 function TVideoScenario.PoseAtFrame(Frame: Integer; out IsPause: Boolean): TCameraPose;
 var
-  I, N: Integer;
+  I, Last, N: Integer;
+  RampIn, RampOut: Double;
+  Poses: TCameraPoses;
+  Modes: TVideoMoveModes;
 begin
   if Count = 0 then
     raise EVideoScenarioError.Create('Scénario vide.');
   Frame := Max(0, Frame);
-  for I := 0 to Count - 1 do
+  IsPause := True;
+  N := PauseFrames(0);
+  if Frame < N then
+    Exit(FSteps[0].Pose);
+  Dec(Frame, N);
+  I := 1;
+  while I < Count do
   begin
-    N := TravelFrames(I);
+    Last := NextStop(I);
+    ChainRamps(I - 1, Last, N, RampIn, RampOut);
     if Frame < N then
     begin
       IsPause := False;
-      Exit(PoseBetween(FSteps[I - 1].Pose, FSteps[I].Pose, FSteps[I].Mode, (Frame + 1) / N));
+      if Last = I then
+        Exit(PoseBetween(FSteps[I - 1].Pose, FSteps[I].Pose, FSteps[I].Mode, (Frame + 1) / N));
+      ChainSteps(I - 1, Last, Poses, Modes);
+      Exit(ChainPose(Poses, Modes, (Frame + 1) / N, RampIn, RampOut));
     end;
     Dec(Frame, N);
-    N := PauseFrames(I);
+    N := PauseFrames(Last);
     if Frame < N then
-    begin
-      IsPause := True;
-      Exit(FSteps[I].Pose);
-    end;
+      Exit(FSteps[Last].Pose);
     Dec(Frame, N);
+    I := Last + 1;
   end;
-  IsPause := True;  // au-delà de la fin : la dernière étape
-  Result := FSteps[Count - 1].Pose;
+  Result := FSteps[Count - 1].Pose;  // au-delà de la fin : la dernière étape
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.ChainInfo(Index: Integer; out First, Last: Integer; out Seconds, PassAt,
+  CruiseSpeed: Double);
+const
+  kPassIterations = 60;  // dichotomie sur la fraction de temps : bien en deçà d'une image
+var
+  Frames, Iter: Integer;
+  RampIn, RampOut, Lo, Hi, T: Double;
+  Total, PassLength: TFloat;
+  Poses: TCameraPoses;
+  Modes: TVideoMoveModes;
+begin
+  CheckIndex(Index);
+  First := 0;
+  Last := 0;
+  Seconds := 0;
+  PassAt := 0;
+  CruiseSpeed := 0;
+  if Index = 0 then
+    Exit;
+  First := Index - 1;
+  while not IsStopAt(First) do
+    Dec(First);
+  Last := NextStop(Index);
+  ChainRamps(First, Last, Frames, RampIn, RampOut);
+  Seconds := Frames / kVideoFps;
+  ChainSteps(First, Last, Poses, Modes);
+  ChainMeasure(Poses, Modes, Index - First, Total, PassLength);
+  CruiseSpeed := Total / (Seconds * (1 - RampIn / 2 - RampOut / 2)) / kRho;
+  if PassLength >= Total then
+  begin
+    PassAt := Seconds;  // arrivée : vitesse nulle en fin de rampe, la dichotomie n'y serait pas exacte
+    Exit;
+  end;
+  Lo := 0;
+  Hi := 1;
+  for Iter := 1 to kPassIterations do
+  begin
+    T := (Lo + Hi) / 2;
+    if ChainDistance(T, Total, RampIn, RampOut) < PassLength then
+      Lo := T
+    else
+      Hi := T;
+  end;
+  PassAt := Hi * Seconds;
 end;
 
 {------------------------------------------------------------------------------}
