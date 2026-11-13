@@ -157,8 +157,13 @@ const
     '3 × 3 (× 9 en temps)');
   kScenarioFilter = 'Scénarios vidéo (*.fscn)|*.fscn';
   kVideoFilter = 'Vidéos MP4 (*.mp4)|*.mp4';
-  kMsgChained = 'Enchaîné avec les étapes %d à %d : %s en tout, passage ici vers %s';
-  kMsgCruiseSpeed = 'Vitesse : %.1f écrans par seconde : trop rapide, allongez le trajet ou passez en survol';
+  kMsgChained = 'Enchaîné avec les étapes %d à %d : %s en tout, %s ici %s';
+  kMsgPassing = 'passage';
+  kMsgPassingAt = 'vers';
+  kMsgArriving = 'arrivée';
+  kMsgArrivingAt = 'à';
+  kMsgSpeed = 'Vitesse : %.1f écrans par seconde';
+  kMsgTooFast = ' : trop rapide, allongez le trajet ou passez en survol';
   kMsgRendering = 'Un rendu est en cours : l''interrompre ?';
   kMsgDone = 'Vidéo enregistrée :'#13#10'%s';
   kMsgFailed = 'La vidéo n''a pas pu être créée :'#13#10'%s';
@@ -531,18 +536,23 @@ begin
   FScenario.ChainInfo(Index, First, Last, Seconds, PassAt, Cruise);
   if Last - First > 1 then
   begin
-    lblSpeed.Caption := Format(kMsgChained, [First + 1, Last + 1, SecondsText(Seconds),
-      FormatFloat(kSecondsFormat, PassAt) + ' s']);
+    // une étape d'arrêt termine l'enchaînement : on y arrive à la fin, on n'y passe pas
+    if Index = Last then
+      lblSpeed.Caption := Format(kMsgChained, [First + 1, Last + 1, SecondsText(Seconds), kMsgArriving,
+        kMsgArrivingAt + ' ' + SecondsText(Seconds)])
+    else
+      lblSpeed.Caption := Format(kMsgChained, [First + 1, Last + 1, SecondsText(Seconds), kMsgPassing,
+        kMsgPassingAt + ' ' + FormatFloat(kSecondsFormat, PassAt) + ' s']);
     if (S.Mode = vmLateral) and (Cruise > kLateralSpeedWarning) then
-      lblSpeed.Caption := lblSpeed.Caption + #13#10 + Format(kMsgCruiseSpeed, [Cruise]);
+      lblSpeed.Caption := lblSpeed.Caption + #13#10 + Format(kMsgSpeed, [Cruise]) + kMsgTooFast;
     Exit;
   end;
   if S.Mode <> vmLateral then
     Exit;
   Speed := LateralScreensPerSecond(FScenario[Index - 1].Pose, S.Pose, S.TravelSeconds);
-  lblSpeed.Caption := Format('Vitesse : %.1f écrans par seconde', [Speed]);
+  lblSpeed.Caption := Format(kMsgSpeed, [Speed]);
   if Speed > kLateralSpeedWarning then
-    lblSpeed.Caption := lblSpeed.Caption + ' : trop rapide, allongez le trajet ou passez en survol';
+    lblSpeed.Caption := lblSpeed.Caption + kMsgTooFast;
 end;
 
 {------------------------------------------------------------------------------}

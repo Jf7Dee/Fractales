@@ -196,7 +196,7 @@ object VideoForm: TVideoForm
       Top = 50
       Width = 60
       Height = 23
-      TabOrder = 1
+      TabOrder = 2
       OnChange = StepChange
     end
     object edPause: TEdit
@@ -204,7 +204,7 @@ object VideoForm: TVideoForm
       Top = 50
       Width = 60
       Height = 23
-      TabOrder = 2
+      TabOrder = 3
       OnChange = StepChange
     end
     object cbStop: TCheckBox
@@ -213,7 +213,7 @@ object VideoForm: TVideoForm
       Width = 80
       Height = 19
       Caption = 'Arr'#234't'
-      TabOrder = 3
+      TabOrder = 1
       OnClick = StepChange
     end
   end

@@ -1112,6 +1112,9 @@ begin
       raise Exception.Create('passage : la case « Arrêt » n''a pas été prise en compte');
     if Copy(Form.SpeedLabel.Caption, 1, Length(kChainedPrefix)) <> kChainedPrefix then
       raise Exception.Create('passage : enchaînement non annoncé : ' + Form.SpeedLabel.Caption);
+    Form.SelectStep(2);
+    if Pos('arrivée', Form.SpeedLabel.Caption) = 0 then
+      raise Exception.Create('passage : arrivée non annoncée en fin d''enchaînement : ' + Form.SpeedLabel.Caption);
   finally
     FNavigator.ZoomCenter(1 / 4);
     if IsDeeper then
