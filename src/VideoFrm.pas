@@ -327,8 +327,9 @@ end;
 
 procedure TVideoForm.Action_SaveAsExecute(Sender: TObject);
 begin
-  if (fScenarioFile = '') and (fOutputFile <> '') then
-     dlgSave.Filename := ChangeFileExt( ExtractFileName(fOutputFile), kScenarioExtension );
+  // nom de la dernière vidéo (pas FOutputFile : l'aperçu y met un fichier temporaire)
+  if (fScenarioFile = '') and (dlgVideo.FileName <> '') then
+     dlgSave.Filename := ChangeFileExt( ExtractFileName(dlgVideo.FileName), kScenarioExtension );
 
   if not ExecuteInFolder(dlgSave, FScenarioFolder) then
     Exit;
@@ -392,6 +393,8 @@ begin
   FScenario.Format := vf16x9;  // valeurs d'un scénario neuf (TVideoScenario.Create)
   FScenario.Smoothing := 1;
   imgPreview.Picture := nil;
+  dlgSave.FileName := '';  // un scénario neuf n'hérite pas des noms du précédent
+  dlgVideo.FileName := '';
   RefreshList(0);
   UpdateControls;
 end;
@@ -916,7 +919,7 @@ end;
 procedure TVideoForm.btnRenderClick(Sender: TObject);
 begin
   if fScenarioFile <> '' then
-    dlgVideo.FileName := ChangeFileExt(ExtractFileName(fScenarioFile), ',mp4');
+    dlgVideo.FileName := ChangeFileExt(ExtractFileName(fScenarioFile), '.mp4');
 
   if ExecuteInFolder(dlgVideo, FVideoFolder) then
     StartRender(False, dlgVideo.FileName);
