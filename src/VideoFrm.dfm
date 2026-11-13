@@ -13,13 +13,11 @@ object VideoForm: TVideoForm
   Font.Name = 'Segoe UI'
   Font.Style = []
   Menu = MainMenu1
-  OldCreateOrder = False
   Position = poMainFormCenter
   OnActivate = FormActivate
   OnCloseQuery = FormCloseQuery
   OnCreate = FormCreate
   OnDestroy = FormDestroy
-  PixelsPerInch = 96
   TextHeight = 15
   object lblSteps: TLabel
     Left = 8
@@ -158,7 +156,7 @@ object VideoForm: TVideoForm
     object lblMode: TLabel
       Left = 12
       Top = 24
-      Width = 45
+      Width = 44
       Height = 15
       Caption = 'Trajet en'
     end

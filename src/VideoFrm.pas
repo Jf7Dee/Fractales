@@ -327,6 +327,9 @@ end;
 
 procedure TVideoForm.Action_SaveAsExecute(Sender: TObject);
 begin
+  if (fScenarioFile = '') and (fOutputFile <> '') then
+     dlgSave.Filename := ChangeFileExt( ExtractFileName(fOutputFile), kScenarioExtension );
+
   if not ExecuteInFolder(dlgSave, FScenarioFolder) then
     Exit;
   try
@@ -912,6 +915,9 @@ end;
 
 procedure TVideoForm.btnRenderClick(Sender: TObject);
 begin
+  if fScenarioFile <> '' then
+    dlgVideo.FileName := ChangeFileExt(ExtractFileName(fScenarioFile), ',mp4');
+
   if ExecuteInFolder(dlgVideo, FVideoFolder) then
     StartRender(False, dlgVideo.FileName);
 end;
