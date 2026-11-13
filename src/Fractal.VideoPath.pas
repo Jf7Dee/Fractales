@@ -68,6 +68,7 @@ const
   kCornerSamples = 64;           // pas de la table de parcours d'un arrondi
   kTangentStepRatio = 1e-4;      // pas des différences finies des tangentes : part de la fenêtre
   kBounceRatio = 0.5;            // retournement du zoom : plus grand, le creux de vitesse dure plus longtemps
+  kReversalApproach = 2.0;       // retournement du zoom : au plus profond, au plus 2 fois la largeur de l'étape
 
 type
   TCornerVector = array[0..2] of TFloat;  // décalage du centre par rapport à l'étape (X, Y), puis Ln(largeur)
@@ -75,6 +76,7 @@ type
   // Arrondi d'une étape de passage : courbe d'Hermite parcourue à vitesse perçue constante ; quand le zoom s'inverse,
   // une vitesse fictive Bounce, nulle aux bouts, s'ajoute à celle de la courbe : la caméra ralentit sans s'arrêter
   TCornerCurve = record
+    Window: TFloat;                 // de part et d'autre de l'étape, sur chacun des deux trajets
     Corner, Entry, Leave: TCameraPose;
     Q0, M0, Q2, M2: TCornerVector;  // bouts et tangentes
     Bounce: TFloat;
@@ -469,21 +471,17 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Arrondi du passage par B entre les trajets A → B (longueur LenIn) et B → C (LenOut) : courbe d'Hermite des
-// décalages par rapport à B et de Ln(largeur), tangente aux deux trajets ; False s'il n'y a pas d'arrondi
-function BuildCorner(const A, B, C: TCameraPose; ModeIn, ModeOut: TVideoMoveMode; LenIn, LenOut: TFloat;
-  out Curve: TCornerCurve): Boolean;
+// Bouts et tangentes de l'arrondi pour la fenêtre H ; renvoie la part de retournement du zoom (0 à 1) : parts de
+// zoom des deux directions de signes contraires, la courbe fait alors presque demi-tour
+function CornerEnds(const A, B, C: TCameraPose; ModeIn, ModeOut: TVideoMoveMode; LenIn, H: TFloat;
+  var Curve: TCornerCurve): TFloat;
 var
-  H, Step, Reversal: TFloat;
+  Step: TFloat;
   T0, T2: TCornerVector;
-  I, K: Integer;
+  K: Integer;
 begin
-  H := CornerWindow(LenIn, LenOut);
-  Result := H > 0;
-  if not Result then
-    Exit;
   Step := kTangentStepRatio * H;
-  Curve.Corner := B;
+  Curve.Window := H;
   Curve.Entry := PoseAtLength(A, B, ModeIn, LenIn - H);
   Curve.Leave := PoseAtLength(B, C, ModeOut, H);
   CornerCoords(B, Curve.Entry, Curve.Q0);
@@ -495,8 +493,37 @@ begin
     Curve.M0[K] := 2 * H * T0[K];
     Curve.M2[K] := 2 * H * T2[K];
   end;
-  // parts de zoom des deux directions de signes contraires : le zoom s'inverse, la courbe fait presque demi-tour
-  Reversal := Max(0, -(T0[2] / kRho) * (T2[2] / kRho));
+  Result := Max(0, -(T0[2] / kRho) * (T2[2] / kRho));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Arrondi du passage par B entre les trajets A → B (longueur LenIn) et B → C (LenOut) : courbe d'Hermite des
+// décalages par rapport à B et de Ln(largeur), tangente aux deux trajets ; False s'il n'y a pas d'arrondi
+function BuildCorner(const A, B, C: TCameraPose; ModeIn, ModeOut: TVideoMoveMode; LenIn, LenOut: TFloat;
+  out Curve: TCornerCurve): Boolean;
+var
+  H, Reversal, ReversalWindow: TFloat;
+  I: Integer;
+begin
+  H := CornerWindow(LenIn, LenOut);
+  Result := H > 0;
+  if not Result then
+    Exit;
+  Curve.Corner := B;
+  Reversal := CornerEnds(A, B, C, ModeIn, ModeOut, LenIn, H, Curve);
+  // Retournement : en zoom pur, l'entrée est à ρH au-dessus de B en Ln(largeur) et la courbe descend jusqu'à ρH / 2 ;
+  // la fenêtre est réduite pour que le point le plus profond reste à kReversalApproach fois la largeur de B (moins
+  // réduite à mesure que le retournement s'efface, pour rester continu)
+  if Reversal > 0 then
+  begin
+    ReversalWindow := 2 * Ln(kReversalApproach) / kRho / Reversal;
+    if H > ReversalWindow then
+    begin
+      H := ReversalWindow;
+      Reversal := CornerEnds(A, B, C, ModeIn, ModeOut, LenIn, H, Curve);
+    end;
+  end;
   Curve.Bounce := kBounceRatio * 2 * H * Reversal;
   Curve.Words := Max(Max(Max(B.CenterX.FracWords, B.CenterY.FracWords),
     Max(Curve.Entry.CenterX.FracWords, Curve.Entry.CenterY.FracWords)),
@@ -588,14 +615,21 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure CheckChain(const Poses: array of TCameraPose; const Modes: array of TVideoMoveMode);
+begin
+  if (Length(Poses) < 2) or (Length(Modes) <> Length(Poses)) then
+    raise EArgumentException.Create('Enchaînement : au moins deux étapes et un mode par étape');
+end;
+
+{------------------------------------------------------------------------------}
+
 // Longueurs des trajets, fenêtres et arrondis des étapes de passage, parcours total de l'enchaînement
 procedure LayoutChain(const Poses: array of TCameraPose; const Modes: array of TVideoMoveMode;
   out Layout: TChainLayout);
 var
   I, Last: Integer;
 begin
-  if (Length(Poses) < 2) or (Length(Modes) <> Length(Poses)) then
-    raise EArgumentException.Create('Enchaînement : au moins deux étapes et un mode par étape');
+  CheckChain(Poses, Modes);
   Last := High(Poses);
   SetLength(Layout.Lengths, Last + 1);
   SetLength(Layout.Windows, Last + 1);
@@ -611,7 +645,7 @@ begin
     if (I > 0) and (I < Last) and BuildCorner(Poses[I - 1], Poses[I], Poses[I + 1], Modes[I], Modes[I + 1],
       Layout.Lengths[I], Layout.Lengths[I + 1], Layout.Corners[I]) then
     begin
-      Layout.Windows[I] := CornerWindow(Layout.Lengths[I], Layout.Lengths[I + 1]);
+      Layout.Windows[I] := Layout.Corners[I].Window;
       Layout.CornerLengths[I] := Layout.Corners[I].Table[kCornerSamples];
     end;
   end;
@@ -629,12 +663,13 @@ var
   S, Acc, Piece: TFloat;
   I, Last: Integer;
 begin
-  LayoutChain(Poses, Modes, Layout);
+  CheckChain(Poses, Modes);
   Last := High(Poses);
   if T >= 1 then
     Exit(Poses[Last]);
   if not (T > 0) then
     Exit(Poses[0]);
+  LayoutChain(Poses, Modes, Layout);
   S := ChainDistance(T, Layout.Total, RampIn, RampOut);
   Acc := 0;
   for I := 1 to Last do

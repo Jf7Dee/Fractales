@@ -937,11 +937,13 @@ end;
 {------------------------------------------------------------------------------}
 
 // Retournement du zoom : jamais deux images identiques, creux de vitesse d'un seul tenant dans la partie à vitesse
-// de croisière, le reste au moins à 0,8 × la croisière ; renvoie les pas perçus
+// de croisière, le reste au moins à 0,8 × la croisière, point le plus profond à 2 fois au plus la largeur de l'étape
+// de passage ; renvoie les pas perçus
 function TTestVideoScenario.CheckBounce(Sc: TVideoScenario; const Msg: string): TDoubles;
 var
   I, LowFirst, LowLast, LowCount: Integer;
-  MinStep, MaxStep: Double;
+  MinStep, MaxStep, MinWidth: Double;
+  IsPause: Boolean;
 begin
   CheckEquals(kChainFrames, Sc.TotalFrames, Msg);
   Result := FrameSteps(Sc);
@@ -969,6 +971,12 @@ begin
   CheckEquals(LowLast - LowFirst + 1, LowCount, Format('%s : creux en plusieurs morceaux', [Msg]));
   CheckTrue(LowCount <= kChainFrames div 8, Format('%s : creux de %d images', [Msg, LowCount]));
   CheckNeverOnStep(Sc, Msg);
+  MinWidth := MaxDouble;
+  for I := kChainFrames div 3 to 2 * kChainFrames div 3 do  // autour du passage, hors des arrêts
+    MinWidth := Min(MinWidth, Sc.PoseAtFrame(I, IsPause).Width);
+  Status(Format('%s : au plus près, %.3f fois la largeur de l''étape', [Msg, MinWidth / Sc[1].Pose.Width]));
+  CheckTrue(MinWidth <= 2.0 * 1.01 * Sc[1].Pose.Width, Format('%s : au plus près, largeur %g pour %g', [Msg,
+    MinWidth, Sc[1].Pose.Width]));
 end;
 
 {------------------------------------------------------------------------------}
