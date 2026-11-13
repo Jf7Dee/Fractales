@@ -30,6 +30,7 @@ type
     procedure TestSuggestedTravelBounds;
     procedure TestPathLength;
     procedure TestPoseAtLength;
+    procedure TestLateralSpeedIsSteady;
   end;
 
   TTestVideoScenario = class(TTestCase)
@@ -336,6 +337,35 @@ begin
     P := PoseAtLength(A, A, M, 0.5);
     CheckSamePose(A, P, 'longueur nulle');
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Pas perçus réguliers le long d'un glissement qui change fortement de largeur (pas d'ondulation au rythme de la table)
+procedure TTestVideoPath.TestLateralSpeedIsSteady;
+const
+  kSteps = 200;
+var
+  A, B, P, Q: TCameraPose;
+  I: Integer;
+  Total, Step, MinStep, MaxStep: TFloat;
+begin
+  A := Pose('0', '0', 1);
+  B := Shifted(A, 3, 0, 1e-6);
+  Total := PathLength(A, B, vmLateral);
+  MinStep := 1e300;
+  MaxStep := 0;
+  P := A;
+  for I := 1 to kSteps do
+  begin
+    Q := PoseAtLength(A, B, vmLateral, Total * I / kSteps);
+    CheckTrue(Q.Width < P.Width, Format('image %d : largeur non décroissante', [I]));
+    Step := PathLength(P, Q, vmLateral);
+    MinStep := Min(MinStep, Step);
+    MaxStep := Max(MaxStep, Step);
+    P := Q;
+  end;
+  CheckTrue(MaxStep / MinStep < 1.02, Format('pas perçus de %g à %g', [MinStep, MaxStep]));
 end;
 
 {------------------------------------------------------------------------------}

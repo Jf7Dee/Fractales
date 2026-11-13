@@ -41,6 +41,8 @@ const
   kSamePointRatio = 1e-9;        // distance négligeable devant la largeur : zoom pur
   kCenterMarginRatio = 1e-4;     // précision du centre : bien plus fine qu'un pixel
   kLengthSamples = 64;           // pas de l'intégration de la longueur d'un glissement latéral
+  kNewtonIterations = 5;
+  kNewtonTolerance = 1e-12;      // part de la longueur totale
 
 {------------------------------------------------------------------------------}
 
@@ -237,20 +239,39 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Paramètre E d'un glissement latéral dont la longueur parcourue est S : inversion de la table cumulée
-function LateralParam(const A, B: TCameraPose; D, S: TFloat): Double;
-var
-  Table: array[0..kLengthSamples] of TFloat;
-  I: Integer;
+// Longueur perçue du glissement latéral entre les paramètres E0 et E1 (Simpson)
+function LateralSegment(W0, D, LnRatio: TFloat; E0, E1: Double): TFloat;
 begin
-  LateralTable(A, B, D, Table);
+  Result := (E1 - E0) / 6 * (LateralSpeed(W0, D, LnRatio, E0) + 4 * LateralSpeed(W0, D, LnRatio, (E0 + E1) / 2)
+    + LateralSpeed(W0, D, LnRatio, E1));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Paramètre E d'un glissement latéral dont la longueur parcourue est S : la table cumulée donne le pas, puis des
+// itérations de Newton (dérivée = vitesse perçue) l'affinent, sinon la vitesse ondulerait au rythme des pas
+function LateralParam(const A, B: TCameraPose; D, S: TFloat; const Table: array of TFloat): Double;
+var
+  I, Iter: Integer;
+  LnRatio, Delta, Tolerance, E0, E1: TFloat;
+begin
   I := 0;
   while (I < kLengthSamples - 1) and (S >= Table[I + 1]) do
     Inc(I);
-  if Table[I + 1] > Table[I] then
-    Result := (I + (S - Table[I]) / (Table[I + 1] - Table[I])) / kLengthSamples
-  else
-    Result := I / kLengthSamples;
+  E0 := I / kLengthSamples;
+  E1 := (I + 1) / kLengthSamples;
+  if Table[I + 1] <= Table[I] then
+    Exit(E0);
+  Result := E0 + (S - Table[I]) / (Table[I + 1] - Table[I]) / kLengthSamples;
+  LnRatio := Ln(B.Width / A.Width);
+  Tolerance := kNewtonTolerance * Table[kLengthSamples];
+  for Iter := 1 to kNewtonIterations do
+  begin
+    Delta := Table[I] + LateralSegment(A.Width, D, LnRatio, E0, Result) - S;
+    if Abs(Delta) < Tolerance then
+      Break;
+    Result := EnsureRange(Result - Delta / LateralSpeed(A.Width, D, LnRatio, Result), E0, E1);
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -258,23 +279,28 @@ end;
 function PoseAtLength(const A, B: TCameraPose; Mode: TVideoMoveMode; S: TFloat): TCameraPose;
 var
   DX, DY, D, Total: TFloat;
-  E: Double;
+  Table: array[0..kLengthSamples] of TFloat;
+  IsTabulated: Boolean;
 begin
   if (A.Width <= 0) or (B.Width <= 0) then
     raise EArgumentException.Create('PoseAtLength : largeur non positive');
   Distance(A, B, DX, DY, D);
-  Total := PathLength(A, B, Mode);
+  IsTabulated := (Mode = vmLateral) and not IsSamePoint(D, A.Width, B.Width);
+  if IsTabulated then
+  begin
+    LateralTable(A, B, D, Table);
+    Total := Table[kLengthSamples];
+  end
+  else
+    Total := PathLength(A, B, Mode);
   if not (S > 0) then
     Exit(A);
   if S >= Total then
     Exit(B);
   if IsSamePoint(D, A.Width, B.Width) then
     Result := LateralPose(A, B, DX, DY, S / Total)
-  else if Mode = vmLateral then
-  begin
-    E := LateralParam(A, B, D, S);
-    Result := LateralPose(A, B, DX, DY, E)
-  end
+  else if IsTabulated then
+    Result := LateralPose(A, B, DX, DY, LateralParam(A, B, D, S, Table))
   else
     Result := FlyoverPose(A, B, DX, DY, D, Total, S);
 end;
