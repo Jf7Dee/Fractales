@@ -17,6 +17,7 @@ type
     procedure CheckSamePose(const Expected, Actual: TCameraPose; const Msg: string);
     procedure CheckContinuous(const A, B: TCameraPose; Frames: Integer);
     procedure CheckTargetInView(const A, B: TCameraPose; Frames: Integer);
+    procedure CheckDeepDiveCorner(WidthB, WidthC: TFloat; const Msg: string);
   published
     procedure TestPoseEndsAreExact;
     procedure TestFlyoverZoomsOutBetweenFarSteps;
@@ -35,6 +36,7 @@ type
     procedure TestLateralSpeedIsSteady;
     procedure TestChainDistance;
     procedure TestCornerPose;
+    procedure TestDeepDiveCorner;
   end;
 
   TTestVideoScenario = class(TTestCase)
@@ -437,7 +439,7 @@ begin
   C := Shifted(B, 0, 3e-13, 1e-13);
   LenIn := PathLength(A, B, vmLateral);
   H := CornerWindow(LenIn, PathLength(B, C, vmLateral));
-  CheckEquals(0.25 * LenIn, H, 1e-12, 'fenêtre');
+  CheckEquals(Min(0.25 * LenIn, 1.0), H, 1e-12, 'fenêtre');
   P0 := PoseAtLength(A, B, vmLateral, LenIn - H);
   P2 := PoseAtLength(B, C, vmLateral, H);
   Len := CornerLength(A, B, C, vmLateral, vmLateral);
@@ -454,6 +456,42 @@ begin
   end;
   CheckEquals(0, CornerLength(A, A, C, vmLateral, vmLateral), 0, 'trajet nul : pas d''arrondi');
   CheckSamePose(A, CornerPose(A, A, C, vmLateral, vmLateral, 0.1), 'trajet nul : l''étape');
+end;
+
+{------------------------------------------------------------------------------}
+
+// Plongée profonde par une étape de passage, en survol : arrondi de longueur bornée, sans détour latéral
+procedure TTestVideoPath.CheckDeepDiveCorner(WidthB, WidthC: TFloat; const Msg: string);
+const
+  kSamples = 50;
+var
+  A, B, C, M: TCameraPose;
+  H, Len, MaxDetour: TFloat;
+  I: Integer;
+begin
+  A := Pose('-1.0', '0', 1);
+  B := Shifted(A, 0.3, 0.1, WidthB);
+  C := Shifted(B, WidthB, 0, WidthC);
+  H := CornerWindow(PathLength(A, B, vmFlyover), PathLength(B, C, vmFlyover));
+  Len := CornerLength(A, B, C, vmFlyover, vmFlyover);
+  MaxDetour := 0;
+  for I := 0 to kSamples do
+  begin
+    M := CornerPose(A, B, C, vmFlyover, vmFlyover, Len * I / kSamples);
+    CheckFalse(IsNan(M.Width), Format('%s : largeur NaN', [Msg]));
+    MaxDetour := Max(MaxDetour, Hypot(M.CenterX.Sub(B.CenterX).ToFloat, M.CenterY.Sub(B.CenterY).ToFloat) / M.Width);
+  end;
+  Status(Format('%s : arrondi %.3f pour 2h = %.3f, écart au plus %.3f largeurs', [Msg, Len, 2 * H, MaxDetour]));
+  CheckTrue(Len <= 1.1 * 2 * H, Format('%s : arrondi %g pour 2h = %g', [Msg, Len, 2 * H]));
+  CheckTrue(MaxDetour <= 2, Format('%s : écart à l''étape de %g largeurs', [Msg, MaxDetour]));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoPath.TestDeepDiveCorner;
+begin
+  CheckDeepDiveCorner(1e-20, 1e-40, 'largeurs 1e-20 puis 1e-40');
+  CheckDeepDiveCorner(1e-12, 1e-24, 'largeurs 1e-12 puis 1e-24');
 end;
 
 {------------------------------------------------------------------------------}

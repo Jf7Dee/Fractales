@@ -107,6 +107,7 @@ type
     FOnRequestSnapshot: TNotifyEvent;
     FScenarioFolder: string;  // dossiers retenus séparément ; '' = choix de Windows
     FVideoFolder: string;
+    FPreviewFolder: string;   // aperçu d'un scénario sans fichier ; '' = dossier temporaire
     procedure RequestSnapshot;
     procedure PreviewSink(Png: TStream);
     function PreviewFileName: string;
@@ -136,6 +137,7 @@ type
     property PreviewImage: TImage read imgPreview;
     property ScenarioFolder: string read FScenarioFolder write FScenarioFolder;
     property VideoFolder: string read FVideoFolder write FVideoFolder;
+    property PreviewFolder: string read FPreviewFolder write FPreviewFolder;  // pour le test de fumée
     property ReplayButton: TButton read btnReplay;
     property StopCheckBox: TCheckBox read cbStop;  // pour le test de fumée
     property SpeedLabel: TLabel read lblSpeed;
@@ -157,11 +159,8 @@ const
     '3 × 3 (× 9 en temps)');
   kScenarioFilter = 'Scénarios vidéo (*.fscn)|*.fscn';
   kVideoFilter = 'Vidéos MP4 (*.mp4)|*.mp4';
-  kMsgChained = 'Enchaîné avec les étapes %d à %d : %s en tout, %s ici %s';
-  kMsgPassing = 'passage';
-  kMsgPassingAt = 'vers';
-  kMsgArriving = 'arrivée';
-  kMsgArrivingAt = 'à';
+  kMsgChainedPassing = 'Enchaîné avec les étapes %d à %d : %s en tout, passage ici vers %s';
+  kMsgChainedArriving = 'Enchaîné avec les étapes %d à %d : %s en tout, arrivée ici à %s';
   kMsgSpeed = 'Vitesse : %.1f écrans par seconde';
   kMsgTooFast = ' : trop rapide, allongez le trajet ou passez en survol';
   kMsgRendering = 'Un rendu est en cours : l''interrompre ?';
@@ -538,11 +537,11 @@ begin
   begin
     // une étape d'arrêt termine l'enchaînement : on y arrive à la fin, on n'y passe pas
     if Index = Last then
-      lblSpeed.Caption := Format(kMsgChained, [First + 1, Last + 1, SecondsText(Seconds), kMsgArriving,
-        kMsgArrivingAt + ' ' + SecondsText(Seconds)])
+      lblSpeed.Caption := Format(kMsgChainedArriving, [First + 1, Last + 1, SecondsText(Seconds),
+        SecondsText(Seconds)])
     else
-      lblSpeed.Caption := Format(kMsgChained, [First + 1, Last + 1, SecondsText(Seconds), kMsgPassing,
-        kMsgPassingAt + ' ' + FormatFloat(kSecondsFormat, PassAt) + ' s']);
+      lblSpeed.Caption := Format(kMsgChainedPassing, [First + 1, Last + 1, SecondsText(Seconds),
+        FormatFloat(kSecondsFormat, PassAt) + ' s']);
     if (S.Mode = vmLateral) and (Cruise > kLateralSpeedWarning) then
       lblSpeed.Caption := lblSpeed.Caption + #13#10 + Format(kMsgSpeed, [Cruise]) + kMsgTooFast;
     Exit;
@@ -566,10 +565,13 @@ end;
 {------------------------------------------------------------------------------}
 
 // L'aperçu encodé vit à côté du scénario enregistré (il survit à la fermeture), sinon dans le dossier temporaire
+// (ou dans PreviewFolder, pour que le test de fumée ne touche pas à l'aperçu d'un Fractales ouvert)
 function TVideoForm.PreviewFileName: string;
 begin
   if FScenarioFile <> '' then
     Result := ChangeFileExt(FScenarioFile, '') + kPreviewSuffix
+  else if FPreviewFolder <> '' then
+    Result := IncludeTrailingPathDelimiter(FPreviewFolder) + kPreviewTempName
   else
     Result := IncludeTrailingPathDelimiter(GetEnvironmentVariable('TEMP')) + kPreviewTempName;
 end;

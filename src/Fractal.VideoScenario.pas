@@ -316,7 +316,9 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Arrêt effectif : forcé pour la première étape, la dernière et toute étape avec une pause.
+// Arrêt effectif : forcé pour la première étape, la dernière et toute étape avec une pause. Un IsStop faux sur un
+// arrêt forcé est gardé tel quel : il reprend effet si l'arrêt cesse d'être forcé (étape ajoutée après la dernière,
+// pause remise à 0).
 function TVideoScenario.IsStopAt(Index: Integer): Boolean;
 begin
   CheckIndex(Index);

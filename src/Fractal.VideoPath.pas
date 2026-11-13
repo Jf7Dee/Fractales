@@ -40,7 +40,8 @@ function PoseAtLength(const A, B: TCameraPose; Mode: TVideoMoveMode; S: TFloat):
 // RampIn, palier, rampe d'arrivée sur RampOut (fractions du temps, ramenées à une somme <= 1), vitesse en 3x² - 2x³
 // sur les rampes
 function ChainDistance(T, Total, RampIn, RampOut: Double): Double;
-// Fenêtre de l'arrondi autour d'une étape de passage, de part et d'autre, d'après les longueurs des deux trajets
+// Fenêtre de l'arrondi autour d'une étape de passage, de part et d'autre, d'après les longueurs des deux trajets,
+// bornée en longueur perçue
 function CornerWindow(LenIn, LenOut: TFloat): TFloat;
 // Parcours de l'arrondi du passage par B (trajet A → B en ModeIn, puis B → C en ModeOut) ; 0 sans arrondi
 function CornerLength(const A, B, C: TCameraPose; ModeIn, ModeOut: TVideoMoveMode): TFloat;
@@ -65,6 +66,8 @@ const
   kNewtonIterations = 5;
   kNewtonTolerance = 1e-12;      // part de la longueur totale
   kCornerRatio = 0.25;           // fenêtre d'un arrondi : part du plus court des deux trajets
+  kMaxCornerWindow = 1.0;        // et au plus cette longueur perçue : sur une plongée profonde, une fenêtre plus
+                                 // large couvrirait des largeurs très différentes et l'arrondi ferait un détour
   kCornerSamples = 64;           // pas de la table de parcours d'un arrondi
   kTangentStepRatio = 1e-4;      // pas des différences finies des tangentes : part de la fenêtre
   kBounceRatio = 0.5;            // retournement du zoom : plus grand, le creux de vitesse dure plus longtemps
@@ -386,7 +389,7 @@ end;
 
 function CornerWindow(LenIn, LenOut: TFloat): TFloat;
 begin
-  Result := kCornerRatio * Min(LenIn, LenOut);
+  Result := Min(kCornerRatio * Min(LenIn, LenOut), kMaxCornerWindow);
 end;
 
 {------------------------------------------------------------------------------}

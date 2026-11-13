@@ -1031,6 +1031,7 @@ const
   kVideoTimeoutMs = 120000;
   kVideoDivisor = 8;
   kChainedPrefix = 'Enchaîné';
+  kSmokePreviewFolder = 'smoke-apercu';
 var
   Form: TVideoForm;
   Location, Deeper: TFractalLocation;
@@ -1049,6 +1050,10 @@ begin
     V.Width := V.Width / 8;
     Deeper.CaptureFrom(FFormula, V, FIsAutoIter, FPalette, FMapping);
     Form.Prepare(FFavorites, Location, FPalette, FMapping, FEngine.Kernel, Ffmpeg);
+    // aperçu à part : celui du dossier temporaire peut appartenir à un Fractales ouvert
+    Form.PreviewFolder := ExtractFilePath(ParamStr(0)) + kSmokePreviewFolder;
+    if not ForceDirectories(Form.PreviewFolder) then
+      raise Exception.Create('dossier de l''aperçu impossible à créer : ' + Form.PreviewFolder);
     Form.AddCurrentView;
     Form.Scenario.AddLocation('plus près', Deeper);
     S := Form.Scenario[1];
