@@ -31,6 +31,11 @@ function FlyoverLength(W0, W1, D: TFloat): TFloat;
 function PathLength(const A, B: TCameraPose; Mode: TVideoMoveMode): TFloat;
 // Pose après une longueur perçue S (bornée à 0..PathLength), sans adoucissement : A en 0, B à la longueur totale
 function PoseAtLength(const A, B: TCameraPose; Mode: TVideoMoveMode; S: TFloat): TCameraPose;
+// Longueur parcourue après la fraction de temps T (0 à 1) d'un enchaînement de longueur Total : rampe de départ sur
+// RampIn, palier, rampe d'arrivée sur RampOut (fractions du temps, somme <= 1), vitesse en 3x² - 2x³ sur les rampes
+function ChainDistance(T, Total, RampIn, RampOut: Double): Double;
+// Bézier quadratique de P0 (U = 0) à P2 (U = 1) de point de contrôle Corner : le trajet arrondit le passage en Corner
+function RoundedCorner(const P0, Corner, P2: TCameraPose; U: Double): TCameraPose;
 
 implementation
 
@@ -303,6 +308,65 @@ begin
     Result := LateralPose(A, B, DX, DY, LateralParam(A, B, D, S, Table))
   else
     Result := FlyoverPose(A, B, DX, DY, D, Total, S);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Primitive de la vitesse adoucie 3x² - 2x³ sur 0..X
+function SmoothArea(X: Double): Double;
+begin
+  Result := X * X * X * (1 - X / 2);
+end;
+
+{------------------------------------------------------------------------------}
+
+function ChainDistance(T, Total, RampIn, RampOut: Double): Double;
+var
+  Cruise, Speed, X: Double;
+begin
+  T := EnsureRange(T, 0, 1);
+  Cruise := 1 - RampIn / 2 - RampOut / 2;
+  if Cruise <= 0 then
+    Exit(T * Total);
+  Speed := Total / Cruise;
+  if (RampIn > 0) and (T < RampIn) then
+    Result := Speed * RampIn * SmoothArea(T / RampIn)
+  else if (RampOut > 0) and (T > 1 - RampOut) then
+  begin
+    X := Max(1 - T, 0) / RampOut;
+    Result := Total - Speed * RampOut * SmoothArea(X);
+  end
+  else
+    Result := Speed * (RampIn / 2 + T - RampIn);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Point de la Bézier quadratique en offsets relatifs au coin (celui du coin est nul) : (1-U)²·Q0 + U²·Q2
+function RoundedCorner(const P0, Corner, P2: TCameraPose; U: Double): TCameraPose;
+var
+  Q0X, Q0Y, Q2X, Q2Y, W0, W2, Width: TFloat;
+  Words: Integer;
+begin
+  if (P0.Width <= 0) or (Corner.Width <= 0) or (P2.Width <= 0) then
+    raise EArgumentException.Create('RoundedCorner : largeur non positive');
+  if U <= 0 then
+    Exit(P0);
+  if U >= 1 then
+    Exit(P2);
+  W0 := (1 - U) * (1 - U);
+  W2 := U * U;
+  Width := Exp(W0 * Ln(P0.Width) + (1 - W0 - W2) * Ln(Corner.Width) + W2 * Ln(P2.Width));
+  Q0X := P0.CenterX.Sub(Corner.CenterX).ToFloat;
+  Q0Y := P0.CenterY.Sub(Corner.CenterY).ToFloat;
+  Q2X := P2.CenterX.Sub(Corner.CenterX).ToFloat;
+  Q2Y := P2.CenterY.Sub(Corner.CenterY).ToFloat;
+  Words := Max(Max(Max(P0.CenterX.FracWords, P0.CenterY.FracWords), Max(P2.CenterX.FracWords, P2.CenterY.FracWords)),
+    Max(Max(Corner.CenterX.FracWords, Corner.CenterY.FracWords),
+      FracWordsForPixelSize(Width * kCenterMarginRatio)));
+  Result.CenterX := Corner.CenterX.WithFracWords(Words).AddFloat(W0 * Q0X + W2 * Q2X, Words);
+  Result.CenterY := Corner.CenterY.WithFracWords(Words).AddFloat(W0 * Q0Y + W2 * Q2Y, Words);
+  Result.Width := Width;
 end;
 
 {------------------------------------------------------------------------------}

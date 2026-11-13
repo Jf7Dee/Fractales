@@ -31,6 +31,8 @@ type
     procedure TestPathLength;
     procedure TestPoseAtLength;
     procedure TestLateralSpeedIsSteady;
+    procedure TestChainDistance;
+    procedure TestRoundedCorner;
   end;
 
   TTestVideoScenario = class(TTestCase)
@@ -366,6 +368,61 @@ begin
     P := Q;
   end;
   CheckTrue(MaxStep / MinStep < 1.02, Format('pas perçus de %g à %g', [MinStep, MaxStep]));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Profil de vitesse : bornes exactes, monotone, palier uniforme, vitesse nulle aux bouts
+procedure TTestVideoPath.TestChainDistance;
+const
+  kTotal = 7.5;
+var
+  I: Integer;
+  D: array[0..100] of Double;
+  Ref: Double;
+begin
+  CheckEquals(0, ChainDistance(0, kTotal, 0.2, 0.2), 0, 'début');
+  CheckEquals(kTotal, ChainDistance(1, kTotal, 0.2, 0.2), 1e-12, 'fin');
+  for I := 0 to 100 do
+    D[I] := ChainDistance(I / 100, kTotal, 0.2, 0.2);
+  for I := 1 to 100 do
+    CheckTrue(D[I] > D[I - 1], Format('point %d : non monotone', [I]));
+  Ref := D[31] - D[30];
+  for I := 31 to 70 do
+    CheckEquals(Ref, D[I] - D[I - 1], 1e-9, Format('palier, point %d', [I]));
+  CheckTrue(D[1] - D[0] < 1e-4 * kTotal, 'vitesse non nulle au début');
+  CheckTrue(D[100] - D[99] < 1e-4 * kTotal, 'vitesse non nulle à la fin');
+  CheckEquals(0, ChainDistance(0, kTotal, 0, 0), 0, 'sans rampe, début');
+  CheckEquals(kTotal / 2, ChainDistance(0.5, kTotal, 0, 0), 1e-12, 'sans rampe, milieu');
+  CheckEquals(kTotal, ChainDistance(1, kTotal, 0, 0), 1e-12, 'sans rampe, fin');
+  CheckEquals(kTotal, ChainDistance(2, kTotal, 0.3, 0), 1e-12, 'T borné');
+  CheckEquals(0, ChainDistance(-1, kTotal, 0, 0.3), 0, 'T négatif');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoPath.TestRoundedCorner;
+var
+  P0, C, P2, M: TCameraPose;
+  DCorner, DMid: TFloat;
+begin
+  P0 := Pose('0', '0', 1e-3);
+  C := Shifted(P0, 1, 0, 1e-3);
+  P2 := Shifted(C, 0, 1, 1e-3);
+  CheckSamePose(P0, RoundedCorner(P0, C, P2, 0), 'U = 0');
+  CheckSamePose(P2, RoundedCorner(P0, C, P2, 1), 'U = 1');
+  M := RoundedCorner(P0, C, P2, 0.5);
+  DCorner := Hypot(C.CenterX.Sub(P0.CenterX).ToFloat, C.CenterY.Sub(P0.CenterY).ToFloat);
+  DMid := Hypot(M.CenterX.Sub(C.CenterX).ToFloat, M.CenterY.Sub(C.CenterY).ToFloat);
+  CheckTrue(DMid > 0, 'passe par le coin');
+  CheckTrue(DMid < DCorner / 2, Format('trop loin du coin : %g', [DMid]));
+  // Zoom profond : largeurs 1e-13 et 1
+  P0 := Pose(kDeepX, kDeepY, 1e-13);
+  C := Shifted(P0, 0.1, 0, 1);
+  P2 := Shifted(C, 0, 0.1, 1e-13);
+  M := RoundedCorner(P0, C, P2, 0.5);
+  CheckFalse(IsNan(M.Width), 'largeur NaN');
+  CheckTrue((M.Width >= 1e-13 * 0.999) and (M.Width <= 1.001), Format('largeur hors bornes : %g', [M.Width]));
 end;
 
 {------------------------------------------------------------------------------}
