@@ -7,9 +7,10 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Math, StrUtils, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls,
-  ExtCtrls, SyncObjs, ShellAPI, Menus, ActnList, {$IF CompilerVersion >= 23} UITypes, System.Actions,{$IFEND}
+  ExtCtrls, SyncObjs, ShellAPI, Menus, ActnList, {$IF CompilerVersion >= 23} UITypes, {$IFEND}
   pngimage, Fractal.Types, Fractal.Palette, Fractal.Engine, Fractal.Persistence, Fractal.VideoPath,
-  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender;
+  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender,
+  System.Actions;
 
 type
   TVideoForm = class(TForm)
@@ -171,6 +172,7 @@ const
   kPreviewTempName = 'Fractales apercu.mp4';
   kStampExtension = '.scenario';  // scénario au moment de l'aperçu : l'aperçu ne vaut que pour lui
   kMsgReplayFailed = 'Impossible d''ouvrir l''aperçu dans le lecteur vidéo de Windows.';
+  kFORM_CAPTION = 'Vidéo';
 
 {------------------------------------------------------------------------------}
 
@@ -827,8 +829,7 @@ begin
   FRenderedText := FScenario.SaveToText;
   FLastError := '';
   Sink := nil;
-  if IsPreview then
-    Sink := PreviewSink;
+
   FRenderer := TVideoRenderer.Create(FScenario, FPalette, FMapping, FKernel, FFfmpegExe, FileName, IsPreview, Sink,
     Divisor);
   pbProgress.Max := Max(1, FRenderer.FramesTotal);
@@ -875,6 +876,9 @@ begin
     lblProgress.Caption := 'Vidéo enregistrée.';
     MessageDlg(Format(kMsgDone, [FOutputFile]), mtInformation, [mbOK], 0);
   end;
+
+  Caption := kFORM_CAPTION;
+
 end;
 
 {------------------------------------------------------------------------------}
@@ -907,14 +911,18 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TVideoForm.tmrProgressTimer(Sender: TObject);
+var
+  sStatus : string;
 begin
   if FRenderer = nil then
   begin
     tmrProgress.Enabled := False;
     Exit;
   end;
+
   if FIsPreview then
     ShowPreviewFrame;
+
   if FRenderer.IsProfiling then
   begin
     pbProgress.Max := Max(1, FRenderer.ProbesTotal);
@@ -930,7 +938,15 @@ begin
       ClockText(FRenderer.SecondsLeft)]);
     if FRenderer.FirstFrame > 0 then
       lblProgress.Caption := lblProgress.Caption + Format(' (reprise à l''image %d)', [FRenderer.FirstFrame]);
+
+    if FIsPreview then
+      sStatus :=  '  : aperçu en cours'
+    else
+      sStatus :=  '  : génération de '+FRenderedText;
+
+    Caption := kFORM_CAPTION + sStatus +  Format(' ( %d %%)', [FRenderer.FramesDone * 100 div Max(1, FRenderer.FramesTotal)]);
   end;
+
   if FRenderer.IsDone then
     FinishRender;
 end;
