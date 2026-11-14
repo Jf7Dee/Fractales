@@ -101,6 +101,7 @@ type
     procedure TestCancel;
     procedure TestHiResToStream;
     procedure TestResumeAfterCancel;
+    procedure TestReadInterruptedRender;
   end;
 
 implementation
@@ -1663,6 +1664,67 @@ begin
     SysUtils.DeleteFile(OutFile);
   end;
 end;
+
+// Relu depuis les morceaux, le rendu se rebâtit à l'identique : la relance reprend au lieu de tout recommencer
+procedure TTestVideoRender.TestReadInterruptedRender;
+var
+  Sc, Read: TVideoScenario;
+  P: TGradientPalette;
+  M: TColorMapping;
+  L: TFractalLocation;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile: string;
+  Done: Integer;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : relecture non vérifiée');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'relecture.mp4';
+  SysUtils.DeleteFile(OutFile);
+  Sc := SmallScenario;
+  Read := TVideoScenario.Create;
+  L := TFractalLocation.Create;
+  P := TGradientPalette.Create;
+  try
+    CheckFalse(ReadInterruptedRender(OutFile, Read, L, Done), 'pas de morceaux');
+    P.SetDefault;
+    M := DefaultColorMapping;
+    M.Repeats := 3.25;
+    M.HasRelief := True;
+    FCancelAfter := 12;
+    R := TVideoRenderer.Create(Sc, P, M, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5);
+    try
+      FCancelTarget := R;
+      R.WaitFor;
+    finally
+      FCancelTarget := nil;
+      R.Free;
+    end;
+    CheckTrue(ReadInterruptedRender(OutFile, Read, L, Done), 'morceaux relus');
+    CheckEquals(10, Done, 'deux morceaux de 5 images');
+    CheckEquals(Sc.SaveToText, Read.SaveToText, 'scénario');
+    FCancelAfter := 0;
+    R := TVideoRenderer.Create(Read, L.Palette, L.Mapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(10, R.FirstFrame, 'palette et coloration relues : reprise');
+    finally
+      R.Free;
+    end;
+  finally
+    P.Free;
+    L.Free;
+    Read.Free;
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 initialization
   RegisterTest(TTestVideoPath.Suite);

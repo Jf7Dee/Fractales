@@ -89,6 +89,11 @@ type
     property IsDone: Boolean read FIsDone;
   end;
 
+// Rendu interrompu vers OutputFile : scénario, palette et coloration relus dans le dossier des morceaux, et nombre
+// d'images déjà faites. Faux si le dossier ou son scénario manque ou est illisible
+function ReadInterruptedRender(const OutputFile: string; Scenario: TVideoScenario; Location: TFractalLocation;
+  out FramesDone: Integer): Boolean;
+
 implementation
 
 const
@@ -539,6 +544,66 @@ begin
     Formula.Free;
     Frame.Free;
     FIsDone := True;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Le scénario des morceaux (StampText) : celui du scénario, puis le lieu à partir de [Fractal], puis la taille et le
+// découpage, sur les deux dernières lignes
+function ReadInterruptedRender(const OutputFile: string; Scenario: TVideoScenario; Location: TFractalLocation;
+  out FramesDone: Integer): Boolean;
+const
+  kSizeKey = 'Taille=';
+  kSegmentKey = 'Morceau=';
+var
+  Folder: string;
+  S, Part: TStringList;
+  I, LocationLine, Segment, Count: Integer;
+begin
+  if (Scenario = nil) or (Location = nil) then
+    raise EArgumentException.Create('ReadInterruptedRender : scénario ou lieu nil');
+  Result := False;
+  FramesDone := 0;
+  Folder := OutputFile + kPartsSuffix + PathDelim;
+  if (OutputFile = '') or not FileExists(Folder + kStampName) then
+    Exit;
+  S := TStringList.Create;
+  Part := TStringList.Create;
+  try
+    try
+      S.LoadFromFile(Folder + kStampName, TEncoding.UTF8);
+      LocationLine := S.IndexOf('[Fractal]');
+      if (LocationLine < 1) or (S.Count < LocationLine + 3) or
+        (Copy(S[S.Count - 2], 1, Length(kSizeKey)) <> kSizeKey) or
+        (Copy(S[S.Count - 1], 1, Length(kSegmentKey)) <> kSegmentKey) then
+        Exit;
+      Segment := StrToIntDef(Copy(S[S.Count - 1], Length(kSegmentKey) + 1, MaxInt), 0);
+      if Segment <= 0 then
+        Exit;
+      for I := 0 to LocationLine - 1 do
+        Part.Add(S[I]);
+      Scenario.LoadFromText(Part.Text);
+      Part.Clear;
+      for I := LocationLine to S.Count - 3 do
+        Part.Add(S[I]);
+      Location.LoadFromText(Part.Text);
+      // une palette sans nom est relue « Sans nom » : le rendu rebâti doit redonner le même texte
+      I := Part.IndexOf('[Palette]');
+      if (I >= 0) and (Part.IndexOf('Name=') > I) then
+        Location.Palette.Name := '';
+    except
+      on E: Exception do
+        Exit;  // illisible : rien à reprendre
+    end;
+    Count := 0;
+    while FileExists(Folder + Format(kPartName, [Count])) do
+      Inc(Count);
+    FramesDone := Min(Count * Segment, Scenario.TotalFrames);
+    Result := True;
+  finally
+    Part.Free;
+    S.Free;
   end;
 end;
 

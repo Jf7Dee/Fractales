@@ -48,6 +48,7 @@ type
     function NextStop(Index: Integer): Integer;
     procedure ChainRamps(First, Last: Integer; out Frames: Integer; out RampIn, RampOut: Double);
     procedure ChainSteps(First, Last: Integer; out Poses: TCameraPoses; out Modes: TVideoMoveModes);
+    procedure LoadFromSource(const FileName, AText: string);
   public
     constructor Create;
     destructor Destroy; override;
@@ -69,6 +70,7 @@ type
     function SaveToText: string;
     procedure SaveToFile(const FileName: string);
     procedure LoadFromFile(const FileName: string);
+    procedure LoadFromText(const AText: string);
     property Steps[Index: Integer]: TVideoStep read GetStep write SetStep; default;
     property FormulaName: string read GetFormulaName;
     property Params: TStrings read GetParams;
@@ -553,6 +555,21 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TVideoScenario.LoadFromFile(const FileName: string);
+begin
+  LoadFromSource(FileName, '');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.LoadFromText(const AText: string);
+begin
+  LoadFromSource('', AText);
+end;
+
+{------------------------------------------------------------------------------}
+
+// FileName vide : lu depuis AText
+procedure TVideoScenario.LoadFromSource(const FileName, AText: string);
 var
   L, P: TStringList;
   Ini: TMemIniFile;
@@ -569,7 +586,10 @@ begin
   Loaded := TVideoScenario.Create;
   try
     try
-      L.LoadFromFile(FileName);
+      if FileName <> '' then
+        L.LoadFromFile(FileName)
+      else
+        L.Text := AText;
       Ini.SetStrings(L);
       if not Ini.SectionExists(kSectionVideo) then
         raise EVideoScenarioError.Create(kNoScenarioMessage);
@@ -609,7 +629,10 @@ begin
       on E: EVideoScenarioError do
         raise;
       on E: Exception do
-        raise EVideoScenarioError.CreateFmt('Fichier illisible (%s) : %s', [ExtractFileName(FileName), E.Message]);
+        if FileName = '' then
+          raise EVideoScenarioError.CreateFmt('Scénario illisible : %s', [E.Message])
+        else
+          raise EVideoScenarioError.CreateFmt('Fichier illisible (%s) : %s', [ExtractFileName(FileName), E.Message]);
     end;
     Assign(Loaded);
   finally

@@ -50,6 +50,7 @@ const
   kUpdateAvailableFormat = 'Version %s disponible.';
   // résultat de la vérification, traité hors du OnTerminate du fil (une exception y tuerait le programme)
   WM_UPDATE_CHECKED = WM_USER + 1;
+  WM_OFFER_RESUME = WM_USER + 2;
 
 type
   TMainForm = class(TForm)
@@ -213,6 +214,7 @@ type
     FShouldRestart: Boolean;
     FIsAboutShowing: Boolean;  // la fenêtre « À propos » fait sa propre recherche : pas de seconde proposition
     procedure WMUpdateChecked(var Message: TMessage); message WM_UPDATE_CHECKED;
+    procedure WMOfferResume(var Message: TMessage); message WM_OFFER_RESUME;
     procedure InitNavigation;
     procedure AppMessage(var Msg: TMsg; var Handled: Boolean);
     procedure ViewMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -295,6 +297,7 @@ type
     function RunSmokeTest(const OutputFile: string): Integer;
     procedure RestoreSession;
     procedure StartUpdateCheck;
+    procedure OfferInterruptedRenders;  // une fois la fenêtre affichée
     property ShouldRestart: Boolean read FShouldRestart;
   end;
 
@@ -2227,6 +2230,27 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Appelé par le .dpr après RestoreSession ; la question attend que la fenêtre principale soit affichée
+procedure TMainForm.OfferInterruptedRenders;
+begin
+  PostMessage(Handle, WM_OFFER_RESUME, 0, 0);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TMainForm.WMOfferResume(var Message: TMessage);
+var
+  R: TInterruptedRender;
+begin
+  if not ChooseInterruptedRender(SettingsFilePath, R) then
+    Exit;
+  MenuImageVideoClick(nil);
+  if not TVideoForm(FVideoForm).ResumeRender(R) then
+    MessageDlg('Ce rendu ne peut plus être repris.', mtWarning, [mbOK], 0);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.UpdateCheckDone(Sender: TObject);
 begin
   // Fil principal, dans le OnTerminate du fil : ne pas le libérer ici (FormDestroy s'en charge). Une exception
@@ -2574,6 +2598,7 @@ begin
     TVideoForm(FVideoForm).OnRequestSnapshot := PrepareVideoForm;
     TVideoForm(FVideoForm).ScenarioFolder := FSettings.VideoScenarioFolder;
     TVideoForm(FVideoForm).VideoFolder := FSettings.VideoFolder;
+    TVideoForm(FVideoForm).InterruptedFile := SettingsFilePath;
   end;
   PrepareVideoForm(nil);
   FVideoForm.Show;

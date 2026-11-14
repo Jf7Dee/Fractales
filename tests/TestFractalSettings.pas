@@ -22,6 +22,7 @@ type
     procedure TestMissingSessionNotLoaded;
     procedure TestCorruptSessionNotLoaded;
     procedure TestSaveSessionToMissingFolderFailsSilently;
+    procedure TestInterruptedRenders;
   end;
 
 implementation
@@ -255,6 +256,52 @@ begin
     Location.Free;
   end;
 end;
+
+// Ajout, remplacement de la même sortie, retrait ; SaveAppSettings les garde ; ligne abîmée oubliée
+procedure TTestSettings.TestInterruptedRenders;
+var
+  FileName: string;
+  R: TInterruptedRender;
+  L: TInterruptedRenders;
+begin
+  FileName := TestTempFolder + 'settings-interrupted.ini';
+  SysUtils.DeleteFile(FileName);
+  CheckEquals(0, Length(LoadInterruptedRenders(FileName)), 'fichier absent');
+  R.OutputFile := 'E:\Vidéos\Plongée.mp4';
+  R.IsPreview := False;
+  R.Divisor := 0;
+  R.ScenarioFile := 'D:\Scénarios\Plongée.fscn';
+  AddInterruptedRender(FileName, R);
+  R.OutputFile := 'C:\Temp\Fractales apercu.mp4';
+  R.IsPreview := True;
+  R.Divisor := 4;
+  R.ScenarioFile := '';
+  AddInterruptedRender(FileName, R);
+  R.Divisor := 2;
+  AddInterruptedRender(FileName, R);  // même sortie : remplace
+  CheckTrue(SaveAppSettings(FileName, SampleSettings));
+  L := LoadInterruptedRenders(FileName);
+  CheckEquals(2, Length(L));
+  CheckEquals('E:\Vidéos\Plongée.mp4', L[0].OutputFile);
+  CheckFalse(L[0].IsPreview);
+  CheckEquals('D:\Scénarios\Plongée.fscn', L[0].ScenarioFile);
+  CheckEquals('C:\Temp\Fractales apercu.mp4', L[1].OutputFile);
+  CheckTrue(L[1].IsPreview);
+  CheckEquals(2, L[1].Divisor);
+  CheckEquals('', L[1].ScenarioFile);
+  CheckEquals('E:\Rendus HD\', LoadAppSettings(FileName, kNavModeCount).HiResFolder, 'réglages intacts');
+  RemoveInterruptedRender(FileName, 'e:\vidéos\plongée.mp4');
+  L := LoadInterruptedRenders(FileName);
+  CheckEquals(1, Length(L));
+  CheckEquals('C:\Temp\Fractales apercu.mp4', L[0].OutputFile);
+  WriteText(FileName, '[RendusInterrompus]'#13#10'Rendu1=abîmé'#13#10'Rendu2=E:\a.mp4|0|0|'#13#10);
+  L := LoadInterruptedRenders(FileName);
+  CheckEquals(1, Length(L), 'ligne abîmée oubliée');
+  CheckEquals('E:\a.mp4', L[0].OutputFile);
+  SysUtils.DeleteFile(FileName);
+end;
+
+{------------------------------------------------------------------------------}
 
 initialization
   RegisterTest(TTestSettings.Suite);

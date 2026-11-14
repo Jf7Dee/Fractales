@@ -9,7 +9,7 @@ uses
   Windows, Messages, SysUtils, Classes, Math, StrUtils, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls,
   ExtCtrls, SyncObjs, ShellAPI, Menus, ActnList,
   pngimage, Fractal.Types, Fractal.Palette, Fractal.Engine, Fractal.Persistence, Fractal.VideoPath,
-  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender
+  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender, Fractal.Settings
   {$IFDEF VER210} // Delphi 2010,
   ;
   {$ELSE}         // Delphi XE2 et plus récent (incluant Delphi 13)
@@ -113,6 +113,7 @@ type
     FScenarioFolder: string;  // dossiers retenus séparément ; '' = choix de Windows
     FVideoFolder: string;
     FPreviewFolder: string;   // aperçu d'un scénario sans fichier ; '' = dossier temporaire
+    FInterruptedFile: string; // Fractales.ini : rendus lancés et pas terminés ; '' = non suivis
     procedure RequestSnapshot;
     procedure PreviewSink(Png: TStream);
     function PreviewFileName: string;
@@ -130,12 +131,16 @@ type
     procedure FinishRender;
     function SelectedIndex: Integer;
     function IsRendering: Boolean;
+    procedure LaunchRender(IsPreview: Boolean; const FileName: string; Divisor: Integer; Palette: TGradientPalette;
+      const Mapping: TColorMapping);
   public
     // Copie le lieu courant et la palette ; Favorites reste à l'appelant. Peut être rappelé : garde les sélections
     procedure Prepare(Favorites: TFavoriteStore; CurrentLocation: TFractalLocation; Palette: TGradientPalette;
       const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string);
     procedure AddCurrentView;
     procedure StartRender(IsPreview: Boolean; const FileName: string; Divisor: Integer = 0);
+    // Relance un rendu interrompu avec le scénario, la palette et la coloration gardés dans ses morceaux
+    function ResumeRender(const R: TInterruptedRender): Boolean;
     function WaitForRender(TimeoutMs: Cardinal): Boolean;  // pour le test de fumée
     property Scenario: TVideoScenario read FScenario;
     property LastError: string read FLastError;
@@ -143,6 +148,7 @@ type
     property ScenarioFolder: string read FScenarioFolder write FScenarioFolder;
     property VideoFolder: string read FVideoFolder write FVideoFolder;
     property PreviewFolder: string read FPreviewFolder write FPreviewFolder;  // pour le test de fumée
+    property InterruptedFile: string read FInterruptedFile write FInterruptedFile;
     property ReplayButton: TButton read btnReplay;
     property StopCheckBox: TCheckBox read cbStop;  // pour le test de fumée
     property SpeedLabel: TLabel read lblSpeed;
@@ -151,6 +157,10 @@ type
     // (activation, « Ajouter la vue », lancement d'un rendu)
     property OnRequestSnapshot: TNotifyEvent read FOnRequestSnapshot write FOnRequestSnapshot;
   end;
+
+// Au démarrage : rendus interrompus encore repris possibles (les autres sont oubliés), proposés à l'utilisateur ;
+// vrai s'il en choisit un
+function ChooseInterruptedRender(const SettingsFile: string; out Chosen: TInterruptedRender): Boolean;
 
 implementation
 
@@ -168,6 +178,9 @@ const
   kMsgChainedArriving = 'Enchaîné avec les étapes %d à %d : %s en tout, arrivée ici à %s';
   kMsgSpeed = 'Vitesse : %.1f écrans par seconde';
   kMsgTooFast = ' : trop rapide, allongez le trajet ou passez en survol';
+  kMsgResumeOne = 'Un rendu a été interrompu à %d %% : %s.'#13#10#13#10'Le reprendre maintenant ?';
+  kMsgResumeMany = 'Ces rendus ont été interrompus. Choisissez celui à reprendre maintenant ; les autres seront ' +
+    'proposés au prochain démarrage.';
   kMsgRendering = 'Un rendu est en cours : l''interrompre ?';
   kMsgDone = 'Vidéo enregistrée :'#13#10'%s';
   kMsgFailed = 'La vidéo n''a pas pu être créée :'#13#10'%s';
@@ -822,12 +835,53 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TVideoForm.StartRender(IsPreview: Boolean; const FileName: string; Divisor: Integer);
-var
-  Sink: TVideoFrameSink;
 begin
   if IsRendering then
     Exit;
   RequestSnapshot;  // palette, coloration et moteur du moment
+  LaunchRender(IsPreview, FileName, Divisor, FPalette, FMapping);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TVideoForm.ResumeRender(const R: TInterruptedRender): Boolean;
+var
+  Read: TVideoScenario;
+  L: TFractalLocation;
+  Done: Integer;
+begin
+  Result := False;
+  if IsRendering then
+    Exit;
+  RequestSnapshot;  // moteur et FFmpeg du moment
+  Read := TVideoScenario.Create;
+  L := TFractalLocation.Create;
+  try
+    if not ReadInterruptedRender(R.OutputFile, Read, L, Done) then
+      Exit;
+    FScenario.Assign(Read);
+    FScenarioFile := R.ScenarioFile;
+    if R.IsPreview then
+      SysUtils.DeleteFile(R.OutputFile + kStampExtension)
+    else
+      dlgVideo.FileName := R.OutputFile;
+    RefreshList(0);
+    LaunchRender(R.IsPreview, R.OutputFile, R.Divisor, L.Palette, L.Mapping);
+    Result := True;
+  finally
+    L.Free;
+    Read.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.LaunchRender(IsPreview: Boolean; const FileName: string; Divisor: Integer;
+  Palette: TGradientPalette; const Mapping: TColorMapping);
+var
+  Sink: TVideoFrameSink;
+  R: TInterruptedRender;
+begin
   FIsPreview := IsPreview;
   FOutputFile := FileName;
   FRenderedText := FScenario.SaveToText;
@@ -835,8 +889,16 @@ begin
   Sink := nil;
   if IsPreview then
     Sink := PreviewSink;
-  FRenderer := TVideoRenderer.Create(FScenario, FPalette, FMapping, FKernel, FFfmpegExe, FileName, IsPreview, Sink,
+  FRenderer := TVideoRenderer.Create(FScenario, Palette, Mapping, FKernel, FFfmpegExe, FileName, IsPreview, Sink,
     Divisor);
+  if (FileName <> '') and (FInterruptedFile <> '') then
+  begin
+    R.OutputFile := FileName;
+    R.IsPreview := IsPreview;
+    R.Divisor := Divisor;
+    R.ScenarioFile := FScenarioFile;
+    AddInterruptedRender(FInterruptedFile, R);  // retiré quand le rendu aboutit
+  end;
   pbProgress.Max := Max(1, FRenderer.FramesTotal);
   pbProgress.Position := 0;
   lblProgress.Caption := '';
@@ -856,6 +918,8 @@ begin
   FLastError := FRenderer.ErrorMessage;
   IsCancelled := not IsSucceeded and (FLastError = '');
   FreeAndNil(FRenderer);
+  if IsSucceeded and (FOutputFile <> '') and (FInterruptedFile <> '') then
+    RemoveInterruptedRender(FInterruptedFile, FOutputFile);
   UpdateControls;
   if IsCancelled and (FOutputFile <> '') then
     lblProgress.Caption := 'Interrompu : relancer la même vidéo reprendra où elle s''est arrêtée.'
@@ -1029,6 +1093,127 @@ begin
   end
   else
     tmrProgress.Enabled := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+function InterruptedRenderName(const R: TInterruptedRender): string;
+begin
+  if not R.IsPreview then
+    Result := 'vidéo ' + ExtractFileName(R.OutputFile)
+  else if R.ScenarioFile <> '' then
+    Result := 'aperçu de ' + ChangeFileExt(ExtractFileName(R.ScenarioFile), '')
+  else
+    Result := 'aperçu d''un scénario sans nom';
+end;
+
+{------------------------------------------------------------------------------}
+
+// Liste à choix ; -1 = plus tard
+function PickFromList(Items: TStrings): Integer;
+var
+  Dlg: TForm;
+  Prompt: TLabel;
+  List: TListBox;
+  Ok, Later: TButton;
+begin
+  Dlg := TForm.Create(nil);
+  try
+    Dlg.Caption := 'Rendus interrompus';
+    Dlg.BorderStyle := bsDialog;
+    Dlg.Position := poMainFormCenter;
+    Dlg.Font.Name := 'Segoe UI';
+    Dlg.Font.Size := 9;
+    Dlg.ClientWidth := 480;
+    Dlg.ClientHeight := 260;
+    Prompt := TLabel.Create(Dlg);
+    Prompt.Parent := Dlg;
+    Prompt.SetBounds(12, 12, 456, 36);
+    Prompt.AutoSize := False;
+    Prompt.WordWrap := True;
+    Prompt.Caption := kMsgResumeMany;
+    List := TListBox.Create(Dlg);
+    List.Parent := Dlg;
+    List.SetBounds(12, 52, 456, 160);
+    List.Items.Assign(Items);
+    List.ItemIndex := 0;
+    Ok := TButton.Create(Dlg);
+    Ok.Parent := Dlg;
+    Ok.SetBounds(292, 222, 85, 27);
+    Ok.Caption := 'Reprendre';
+    Ok.Default := True;
+    Ok.ModalResult := mrOk;
+    Later := TButton.Create(Dlg);
+    Later.Parent := Dlg;
+    Later.SetBounds(383, 222, 85, 27);
+    Later.Caption := 'Plus tard';
+    Later.Cancel := True;
+    Later.ModalResult := mrCancel;
+    if Dlg.ShowModal = mrOk then
+      Result := List.ItemIndex
+    else
+      Result := -1;
+  finally
+    Dlg.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ChooseInterruptedRender(const SettingsFile: string; out Chosen: TInterruptedRender): Boolean;
+var
+  Renders, Kept: TInterruptedRenders;
+  Percents: array of Integer;
+  Items: TStringList;
+  Read: TVideoScenario;
+  L: TFractalLocation;
+  I, N, Done, Index: Integer;
+begin
+  Result := False;
+  Renders := LoadInterruptedRenders(SettingsFile);
+  SetLength(Kept, 0);
+  Read := TVideoScenario.Create;
+  L := TFractalLocation.Create;
+  try
+    for I := 0 to High(Renders) do
+      if ReadInterruptedRender(Renders[I].OutputFile, Read, L, Done) then
+      begin
+        N := Length(Kept);
+        SetLength(Kept, N + 1);
+        SetLength(Percents, N + 1);
+        Kept[N] := Renders[I];
+        Percents[N] := Done * 100 div Max(1, Read.TotalFrames);
+      end
+      else
+        RemoveInterruptedRender(SettingsFile, Renders[I].OutputFile);  // morceaux effacés ou illisibles
+  finally
+    L.Free;
+    Read.Free;
+  end;
+  if Length(Kept) = 0 then
+    Exit;
+  if Length(Kept) = 1 then
+  begin
+    if MessageDlg(Format(kMsgResumeOne, [Percents[0], InterruptedRenderName(Kept[0])]), mtConfirmation,
+      [mbYes, mbNo], 0) <> mrYes then
+      Exit;
+    Index := 0;
+  end
+  else
+  begin
+    Items := TStringList.Create;
+    try
+      for I := 0 to High(Kept) do
+        Items.Add(Format('%d %% : %s', [Percents[I], InterruptedRenderName(Kept[I])]));
+      Index := PickFromList(Items);
+    finally
+      Items.Free;
+    end;
+    if Index < 0 then
+      Exit;
+  end;
+  Chosen := Kept[Index];
+  Result := True;
 end;
 
 end.
