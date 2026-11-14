@@ -58,6 +58,7 @@ type
     procedure TestSaveLoadRoundTrip;
     procedure TestStopFlagRoundTrip;
     procedure TestStopIsForced;
+    procedure TestIterLimit;
     procedure TestLoadGarbage;
     procedure TestMoveAndDelete;
     procedure TestDurationsAreBounded;
@@ -102,6 +103,7 @@ type
     procedure TestHiResToStream;
     procedure TestResumeAfterCancel;
     procedure TestReadInterruptedRender;
+    procedure TestVideoMaxIter;
   end;
 
 implementation
@@ -799,6 +801,37 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TTestVideoScenario.TestIterLimit;
+var
+  A, B: TVideoScenario;
+begin
+  A := TVideoScenario.Create;
+  B := TVideoScenario.Create;
+  try
+    Add(A, 'bord gauche', 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    Add(A, 'oursin', 'BurningShip', kUrchinX, kUrchinY, kUrchinWidth);
+    CheckEquals(0, A.IterLimit, 'sans plafond par défaut');
+    CheckEquals(0, Pos('MaxIter=', A.SaveToText), 'clé écrite seulement avec un plafond');
+    A.IterLimit := 1000;
+    CheckTrue(Pos('MaxIter=1000', A.SaveToText) > 0);
+    B.LoadFromText(A.SaveToText);
+    CheckEquals(1000, B.IterLimit, 'relu');
+    B.Clear;
+    B.IterLimit := 0;
+    B.Assign(A);
+    CheckEquals(1000, B.IterLimit, 'copié');
+    A.IterLimit := -5;
+    CheckEquals(0, A.IterLimit, 'négatif = pas de plafond');
+    A.IterLimit := kAutoIterMax + 1;
+    CheckEquals(kAutoIterMax, A.IterLimit, 'borné');
+  finally
+    B.Free;
+    A.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TTestVideoScenario.TestStopIsForced;
 var
   A: TVideoScenario;
@@ -1414,6 +1447,19 @@ begin
   finally
     P.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TestVideoMaxIter;
+var
+  V: TViewport;
+begin
+  V.Width := 2.33e-55;  // MultiBroth_1 : environ 41 000 itérations automatiques
+  CheckEquals(AutoMaxIter(V), VideoMaxIter(V, 0), 'sans plafond');
+  CheckEquals(1000, VideoMaxIter(V, 1000), 'plafonné');
+  V.Width := kDefaultWidth;
+  CheckEquals(AutoMaxIter(V), VideoMaxIter(V, 1000), 'peu profond : sous le plafond, inchangé');
 end;
 
 {------------------------------------------------------------------------------}

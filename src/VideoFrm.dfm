@@ -4,7 +4,7 @@ object VideoForm: TVideoForm
   BorderIcons = [biSystemMenu, biMinimize]
   BorderStyle = bsToolWindow
   Caption = 'Vid'#233'o'
-  ClientHeight = 516
+  ClientHeight = 546
   ClientWidth = 760
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
@@ -221,7 +221,7 @@ object VideoForm: TVideoForm
     Left = 8
     Top = 424
     Width = 392
-    Height = 84
+    Height = 114
     Caption = 'Vid'#233'o'
     TabOrder = 8
     object lblFormat: TLabel
@@ -263,6 +263,29 @@ object VideoForm: TVideoForm
       Style = csDropDownList
       TabOrder = 1
       OnChange = VideoSettingsChange
+    end
+    object lblIterLimit: TLabel
+      Left = 12
+      Top = 84
+      Width = 73
+      Height = 15
+      Caption = 'It'#233'rations max'
+    end
+    object edIterLimit: TEdit
+      Left = 100
+      Top = 80
+      Width = 60
+      Height = 23
+      NumbersOnly = True
+      TabOrder = 2
+      OnChange = VideoSettingsChange
+    end
+    object lblIterLimitHint: TLabel
+      Left = 168
+      Top = 84
+      Width = 110
+      Height = 15
+      Caption = 'vide = automatique'
     end
   end
   object btnPreview: TButton

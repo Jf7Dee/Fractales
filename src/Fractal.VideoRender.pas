@@ -89,6 +89,9 @@ type
     property IsDone: Boolean read FIsDone;
   end;
 
+// Itérations d'une image : automatiques selon la profondeur, plafonnées par Limit s'il est positif
+function VideoMaxIter(const V: TViewport; Limit: Integer): Integer;
+
 // Rendu interrompu vers OutputFile : scénario, palette et coloration relus dans le dossier des morceaux, et nombre
 // d'images déjà faites. Faux si le dossier ou son scénario manque ou est illisible
 function ReadInterruptedRender(const OutputFile: string; Scenario: TVideoScenario; Location: TFractalLocation;
@@ -207,7 +210,7 @@ begin
   V.PixelWidth := Width;
   V.PixelHeight := Height;
   V.SetCenter(Pose.CenterX, Pose.CenterY);
-  Formula.MaxIter := AutoMaxIter(V);  // varie avec la profondeur, sans saut d'une image à l'autre
+  Formula.MaxIter := VideoMaxIter(V, FScenario.IterLimit);  // varie avec la profondeur, sans saut d'une image à l'autre
   Settings.Width := Width;
   Settings.Height := Height;
   Settings.Supersample := Supersample;
@@ -545,6 +548,15 @@ begin
     Frame.Free;
     FIsDone := True;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function VideoMaxIter(const V: TViewport; Limit: Integer): Integer;
+begin
+  Result := AutoMaxIter(V);
+  if Limit > 0 then
+    Result := Min(Result, Limit);  // plafond constant : pas de saut, seules les images profondes sont touchées
 end;
 
 {------------------------------------------------------------------------------}

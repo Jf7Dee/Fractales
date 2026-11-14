@@ -40,6 +40,9 @@ type
     cbFormat: TComboBox;
     lblSmoothing: TLabel;
     cbSmoothing: TComboBox;
+    lblIterLimit: TLabel;
+    edIterLimit: TEdit;
+    lblIterLimitHint: TLabel;
     lblDuration: TLabel;
     lblPreview: TLabel;
     imgPreview: TImage;
@@ -475,6 +478,7 @@ begin
   FScenario.Clear;
   FScenario.Format := vf16x9;  // valeurs d'un scénario neuf (TVideoScenario.Create)
   FScenario.Smoothing := 1;
+  FScenario.IterLimit := 0;
   imgPreview.Picture := nil;
   dlgSave.FileName := '';  // un scénario neuf n'hérite pas des noms du précédent
   dlgVideo.FileName := '';
@@ -531,6 +535,10 @@ begin
     end;
     cbFormat.ItemIndex := Ord(FScenario.Format);
     cbSmoothing.ItemIndex := FScenario.Smoothing - 1;
+    if FScenario.IterLimit > 0 then
+      edIterLimit.Text := IntToStr(FScenario.IterLimit)
+    else
+      edIterLimit.Text := '';
   finally
     FIsUpdating := False;
   end;
@@ -698,6 +706,7 @@ begin
   edPause.Enabled := IsIdle and (Index >= 0);
   cbFormat.Enabled := IsIdle;
   cbSmoothing.Enabled := IsIdle;
+  edIterLimit.Enabled := IsIdle;
   btnPreview.Enabled := IsIdle and (FScenario.Count >= 2);
   btnRender.Enabled := IsIdle and (FScenario.Count >= 2) and (FFfmpegExe <> '');
   btnCancel.Enabled := not IsIdle;
@@ -843,6 +852,10 @@ begin
     FScenario.Format := TVideoFormat(cbFormat.ItemIndex);
   if cbSmoothing.ItemIndex >= 0 then
     FScenario.Smoothing := cbSmoothing.ItemIndex + 1;
+  if Trim(edIterLimit.Text) = '' then
+    FScenario.IterLimit := 0
+  else if StrToIntDef(Trim(edIterLimit.Text), -1) >= 0 then  // saisie invalide : on garde la valeur
+    FScenario.IterLimit := StrToInt(Trim(edIterLimit.Text));
   UpdateControls;
 end;
 

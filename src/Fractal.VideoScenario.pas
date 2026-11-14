@@ -36,7 +36,9 @@ type
     FHasFormula: Boolean;
     FFormat: TVideoFormat;
     FSmoothing: Integer;
+    FIterLimit: Integer;
     procedure SetSmoothing(Value: Integer);
+    procedure SetIterLimit(Value: Integer);
     function GetStep(Index: Integer): TVideoStep;
     procedure SetStep(Index: Integer; const Value: TVideoStep);
     function GetFormulaName: string;
@@ -76,6 +78,8 @@ type
     property Params: TStrings read GetParams;
     property Format: TVideoFormat read FFormat write FFormat;
     property Smoothing: Integer read FSmoothing write SetSmoothing;  // 1 = aucun, 2 = 2×2, 3 = 3×3
+    // plafond des itérations automatiques de chaque image ; 0 = pas de plafond
+    property IterLimit: Integer read FIterLimit write SetIterLimit;
   end;
 
 procedure VideoFormatSize(Format: TVideoFormat; out Width, Height: Integer);
@@ -158,6 +162,7 @@ begin
   FHasFormula := Source.FHasFormula;
   FFormat := Source.FFormat;
   FSmoothing := Source.FSmoothing;
+  FIterLimit := Source.FIterLimit;
 end;
 
 {------------------------------------------------------------------------------}
@@ -165,6 +170,13 @@ end;
 procedure TVideoScenario.SetSmoothing(Value: Integer);
 begin
   FSmoothing := EnsureRange(Value, 1, kMaxSmoothing);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.SetIterLimit(Value: Integer);
+begin
+  FIterLimit := EnsureRange(Value, 0, kAutoIterMax);
 end;
 
 {------------------------------------------------------------------------------}
@@ -506,6 +518,8 @@ begin
     L.Add('Formula=' + FormulaName);
     L.Add('Format=' + kFormatKeys[FFormat]);
     L.Add('Smoothing=' + IntToStr(FSmoothing));
+    if FIterLimit > 0 then
+      L.Add('MaxIter=' + IntToStr(FIterLimit));
     L.Add('Steps=' + IntToStr(Count));
     L.Add('');
     L.Add('[' + kSectionParams + ']');
@@ -602,6 +616,7 @@ begin
         if SameText(Key, kFormatKeys[F]) then
           Loaded.FFormat := F;
       Loaded.Smoothing := Ini.ReadInteger(kSectionVideo, 'Smoothing', 1);
+      Loaded.IterLimit := Ini.ReadInteger(kSectionVideo, 'MaxIter', 0);
       SetLength(Loaded.FSteps, N);
       for I := 0 to N - 1 do
       begin

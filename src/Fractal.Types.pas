@@ -61,6 +61,7 @@ const
   kInside = -1.0;
   kNotComputed = -2.0;
   kDefaultWidth = 4.0;
+  kAutoIterMax = 1000000;  // plafond d'AutoMaxIter
 
 function ClampCenter(Value: TFloat): TFloat;   // borne à kMaxCenterCoordinate ; NaN devient 0
 function MakeViewport(ACenterX, ACenterY, AWidth: TFloat; APixelWidth, APixelHeight: Integer): TViewport;
@@ -84,7 +85,6 @@ const
   kAutoIterBase = 250;
   kAutoIterScale = 150;
   kAutoIterExponent = 1.4;
-  kAutoIterMax = 1000000;
   kEnglishLocale = 1033;
   kMinCoordDigits = 3;
   kMaxCoordDigits = 320;
