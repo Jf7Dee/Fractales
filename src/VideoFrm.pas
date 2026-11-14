@@ -7,10 +7,14 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Math, StrUtils, Graphics, Controls, Forms, Dialogs, StdCtrls, ComCtrls,
-  ExtCtrls, SyncObjs, ShellAPI, Menus, ActnList, {$IF CompilerVersion >= 23} UITypes, {$IFEND}
+  ExtCtrls, SyncObjs, ShellAPI, Menus, ActnList,
   pngimage, Fractal.Types, Fractal.Palette, Fractal.Engine, Fractal.Persistence, Fractal.VideoPath,
-  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender,
-  System.Actions;
+  Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.VideoRender
+  {$IFDEF VER210} // Delphi 2010,
+  ;
+  {$ELSE}         // Delphi XE2 et plus récent (incluant Delphi 13)
+    ,UITypes,System.Actions;
+  {$ENDIF}
 
 type
   TVideoForm = class(TForm)
@@ -829,7 +833,8 @@ begin
   FRenderedText := FScenario.SaveToText;
   FLastError := '';
   Sink := nil;
-
+  if IsPreview then
+    Sink := PreviewSink;
   FRenderer := TVideoRenderer.Create(FScenario, FPalette, FMapping, FKernel, FFfmpegExe, FileName, IsPreview, Sink,
     Divisor);
   pbProgress.Max := Max(1, FRenderer.FramesTotal);
@@ -940,11 +945,11 @@ begin
       lblProgress.Caption := lblProgress.Caption + Format(' (reprise à l''image %d)', [FRenderer.FirstFrame]);
 
     if FIsPreview then
-      sStatus :=  '  : aperçu en cours'
+      sStatus := ' : aperçu en cours'
     else
-      sStatus :=  '  : génération de '+FRenderedText;
+      sStatus := ' : génération de ' + ExtractFileName(FOutputFile);
 
-    Caption := kFORM_CAPTION + sStatus +  Format(' ( %d %%)', [FRenderer.FramesDone * 100 div Max(1, FRenderer.FramesTotal)]);
+    Caption := kFORM_CAPTION + sStatus +  Format(' (%d %%)', [FRenderer.FramesDone * 100 div Max(1, FRenderer.FramesTotal)]);
   end;
 
   if FRenderer.IsDone then

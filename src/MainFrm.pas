@@ -6,9 +6,15 @@ uses
   Windows, Messages, SysUtils, Classes, Types, Graphics, Controls, Forms, Dialogs, StdCtrls, ExtCtrls, ComCtrls, Buttons,
   AppEvnts, Math, Contnrs, Fractal.Types, Fractal.HighFloat, Fractal.Formulas, Fractal.Engine, Fractal.Palette,
   Fractal.Navigation,
-  {$IF CompilerVersion >= 23} UITypes,{$IFEND} 
+
   Fractal.Persistence, Fractal.Png, Fractal.View, Fractal.RustKernel, Fractal.Settings, ImgList, Menus, ToolWin,
-  HelpFrm, ActnList, Fractal.Update;
+  HelpFrm, ActnList, Fractal.Update
+  {$IFDEF VER210} // Delphi 2010,
+  //Action,ImageList;
+  ;
+  {$ELSE}         // Delphi XE2 et plus récent (incluant Delphi 13)
+    ,UITypes,System.Actions, System.ImageList;
+  {$ENDIF}
 
 const
   kJuliaPreviewWidth = 240;
