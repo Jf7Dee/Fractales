@@ -1063,7 +1063,11 @@ begin
     Form.PreviewFolder := ExtractFilePath(ParamStr(0)) + kSmokePreviewFolder;
     if not ForceDirectories(Form.PreviewFolder) then
       raise Exception.Create('dossier de l''aperçu impossible à créer : ' + Form.PreviewFolder);
+    if Form.IsModified then
+      raise Exception.Create('scénario neuf vu comme modifié');
     Form.AddCurrentView;
+    if not Form.IsModified then
+      raise Exception.Create('étape ajoutée sans que le scénario soit vu comme modifié');
     Form.Scenario.AddLocation('plus près', Deeper);
     S := Form.Scenario[1];
     S.TravelSeconds := 0.5;

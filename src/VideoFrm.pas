@@ -109,6 +109,7 @@ type
     FIsUpdating: Boolean;
     FScenarioFile: string;   // dernier scénario ouvert ou enregistré ; '' = pas encore de fichier
     FRenderedText: string;   // texte du scénario au lancement du rendu en cours
+    FSavedText: string;      // texte du scénario au dernier enregistrement ou à l'ouverture ; sert à IsModified
     FOnRequestSnapshot: TNotifyEvent;
     FScenarioFolder: string;  // dossiers retenus séparément ; '' = choix de Windows
     FVideoFolder: string;
@@ -131,6 +132,8 @@ type
     procedure FinishRender;
     function SelectedIndex: Integer;
     function IsRendering: Boolean;
+    procedure MarkSaved;
+    function ConfirmDiscard: Boolean;
     procedure LaunchRender(IsPreview: Boolean; const FileName: string; Divisor: Integer; Palette: TGradientPalette;
       const Mapping: TColorMapping);
   public
@@ -142,6 +145,8 @@ type
     // Relance un rendu interrompu avec le scénario, la palette et la coloration gardés dans ses morceaux
     function ResumeRender(const R: TInterruptedRender): Boolean;
     function WaitForRender(TimeoutMs: Cardinal): Boolean;  // pour le test de fumée
+    // Vrai si le scénario a des étapes et diffère de son dernier enregistrement (ou de son ouverture)
+    function IsModified: Boolean;
     property Scenario: TVideoScenario read FScenario;
     property LastError: string read FLastError;
     property PreviewImage: TImage read imgPreview;
@@ -182,6 +187,7 @@ const
   kMsgResumeMany = 'Ces rendus ont été interrompus. Choisissez celui à reprendre maintenant ; les autres seront ' +
     'proposés au prochain démarrage.';
   kMsgRendering = 'Un rendu est en cours : l''interrompre ?';
+  kMsgModified = 'Le scénario a été modifié. Enregistrer les modifications ?';
   kMsgDone = 'Vidéo enregistrée :'#13#10'%s';
   kMsgFailed = 'La vidéo n''a pas pu être créée :'#13#10'%s';
   kViewName = 'Vue %d';
@@ -244,6 +250,7 @@ begin
   dlgSave.DefaultExt := Copy(kScenarioExtension, 2, MaxInt);
   dlgVideo.Filter := kVideoFilter;
   dlgVideo.DefaultExt := 'mp4';
+  MarkSaved;
 end;
 
 {------------------------------------------------------------------------------}
@@ -324,6 +331,44 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function TVideoForm.IsModified: Boolean;
+begin
+  Result := (FScenario.Count > 0) and (FScenario.SaveToText <> FSavedText);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.MarkSaved;
+begin
+  FSavedText := FScenario.SaveToText;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Avant de remplacer le scénario : propose d'enregistrer ses modifications ; faux = l'utilisateur renonce
+function TVideoForm.ConfirmDiscard: Boolean;
+begin
+  Result := True;
+  if not IsModified then
+    Exit;
+  case MessageDlg(kMsgModified, mtConfirmation, [mbYes, mbNo, mbCancel], 0) of
+    mrYes:
+      begin
+        if FScenarioFile <> '' then
+          Action_SaveExecute(nil)
+        else
+          Action_SaveAsExecute(nil);
+        Result := not IsModified;  // enregistrement annulé ou en échec : on ne perd rien
+      end;
+    mrNo:
+      Result := True;
+  else
+    Result := False;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.AddLocation(const AName: string; Location: TFractalLocation);
 begin
   try
@@ -367,6 +412,7 @@ begin
   try
     FScenario.SaveToFile(dlgSave.FileName);
     FScenarioFile := dlgSave.FileName;
+    MarkSaved;
   except
     on E: EVideoScenarioError do
       MessageDlg(E.Message, mtWarning, [mbOK], 0);
@@ -382,6 +428,7 @@ begin
     Exit;
   try
     FScenario.SaveToFile(FScenarioFile);
+    MarkSaved;
   except
     on E: EVideoScenarioError do
       MessageDlg(E.Message, mtWarning, [mbOK], 0);
@@ -400,11 +447,14 @@ end;
 
 procedure TVideoForm.Action_OpenExecute(Sender: TObject);
 begin
+  if not ConfirmDiscard then
+    Exit;
   if not ExecuteInFolder(dlgOpen, FScenarioFolder) then
     Exit;
   try
     FScenario.LoadFromFile(dlgOpen.FileName);
     FScenarioFile := dlgOpen.FileName;
+    MarkSaved;
   except
     on E: EVideoScenarioError do
     begin
@@ -419,6 +469,8 @@ end;
 
 procedure TVideoForm.Action_ResetExecute(Sender: TObject);
 begin
+  if not ConfirmDiscard then
+    Exit;
   FScenarioFile := '';
   FScenario.Clear;
   FScenario.Format := vf16x9;  // valeurs d'un scénario neuf (TVideoScenario.Create)
@@ -426,6 +478,7 @@ begin
   imgPreview.Picture := nil;
   dlgSave.FileName := '';  // un scénario neuf n'hérite pas des noms du précédent
   dlgVideo.FileName := '';
+  MarkSaved;
   RefreshList(0);
   UpdateControls;
 end;
@@ -861,6 +914,16 @@ begin
       Exit;
     FScenario.Assign(Read);
     FScenarioFile := R.ScenarioFile;
+    // comparé au fichier tel qu'il est sur le disque ; sans fichier lisible, le scénario repris compte comme modifié
+    FSavedText := '';
+    if (FScenarioFile <> '') and FileExists(FScenarioFile) then
+    try
+      Read.LoadFromFile(FScenarioFile);
+      FSavedText := Read.SaveToText;
+    except
+      on EVideoScenarioError do
+        FSavedText := '';
+    end;
     if R.IsPreview then
       SysUtils.DeleteFile(R.OutputFile + kStampExtension)
     else
@@ -1081,7 +1144,10 @@ end;
 procedure TVideoForm.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
 begin
   CanClose := True;
-  if not IsRendering then
+  // la fenêtre fermée seule est gardée avec son scénario : la question ne vient qu'à la sortie du programme
+  if Sender <> Self then
+    CanClose := ConfirmDiscard;
+  if not CanClose or not IsRendering then
     Exit;
   // minuteur arrêté pendant la question : il ne doit pas libérer le rendu sous nos pieds
   tmrProgress.Enabled := False;
