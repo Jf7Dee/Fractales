@@ -59,6 +59,7 @@ type
     procedure TestStopFlagRoundTrip;
     procedure TestStopIsForced;
     procedure TestIterLimit;
+    procedure TestReplaceLocation;
     procedure TestLoadGarbage;
     procedure TestMoveAndDelete;
     procedure TestDurationsAreBounded;
@@ -826,6 +827,56 @@ begin
     CheckEquals(kAutoIterMax, A.IterLimit, 'borné');
   finally
     B.Free;
+    A.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoScenario.TestReplaceLocation;
+var
+  A: TVideoScenario;
+  S: TVideoStep;
+  L: TFractalLocation;
+begin
+  A := TVideoScenario.Create;
+  try
+    Add(A, 'bord gauche', 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    Add(A, 'oursin', 'BurningShip', kUrchinX, kUrchinY, kUrchinWidth);
+    Add(A, 'fin', 'BurningShip', kEdgeX, kEdgeY, '1e-3');
+    S := A[1];
+    S.Mode := vmLateral;
+    S.TravelSeconds := 4.25;
+    S.PauseSeconds := 1.5;
+    S.IsStop := False;
+    A[1] := S;
+    L := Location('BurningShip', kEdgeX, kEdgeY, '2.5E-7');
+    try
+      A.ReplaceLocation(1, L);
+      CheckTrue(A[1].Pose.CenterX.IsEqual(L.CenterX), 'X remplacé');
+      CheckTrue(A[1].Pose.CenterY.IsEqual(L.CenterY), 'Y remplacé');
+      CheckEquals(2.5E-7, A[1].Pose.Width, 1e-20, 'largeur remplacée');
+    finally
+      L.Free;
+    end;
+    CheckEquals('oursin', A[1].Name, 'nom gardé');
+    CheckTrue(A[1].Mode = vmLateral, 'mode gardé');
+    CheckEquals(4.25, A[1].TravelSeconds, 1e-12, 'trajet gardé');
+    CheckEquals(1.5, A[1].PauseSeconds, 1e-12, 'pause gardée');
+    CheckFalse(A[1].IsStop, 'arrêt gardé');
+    L := Location('Mandelbrot', '0', '0', '3');
+    try
+      try
+        A.ReplaceLocation(1, L);
+        Fail('autre fractale acceptée');
+      except
+        on EVideoScenarioError do
+          CheckEquals(2.5E-7, A[1].Pose.Width, 1e-20, 'étape intacte après refus');
+      end;
+    finally
+      L.Free;
+    end;
+  finally
     A.Free;
   end;
 end;

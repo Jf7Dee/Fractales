@@ -13,11 +13,13 @@ object VideoForm: TVideoForm
   Font.Name = 'Segoe UI'
   Font.Style = []
   Menu = MainMenu1
+  OldCreateOrder = True
   Position = poMainFormCenter
   OnActivate = FormActivate
   OnCloseQuery = FormCloseQuery
   OnCreate = FormCreate
   OnDestroy = FormDestroy
+  PixelsPerInch = 96
   TextHeight = 15
   object lblSteps: TLabel
     Left = 8
@@ -68,7 +70,7 @@ object VideoForm: TVideoForm
     Left = 8
     Top = 26
     Width = 392
-    Height = 216
+    Height = 186
     Columns = <
       item
         Caption = #201'tape'
@@ -91,11 +93,12 @@ object VideoForm: TVideoForm
     RowSelect = True
     TabOrder = 0
     ViewStyle = vsReport
+    OnDblClick = lvStepsDblClick
     OnSelectItem = lvStepsSelectItem
   end
   object cbFavorites: TComboBox
     Left = 8
-    Top = 250
+    Top = 220
     Width = 250
     Height = 23
     Style = csDropDownList
@@ -103,7 +106,7 @@ object VideoForm: TVideoForm
   end
   object btnAddFavorite: TButton
     Left = 264
-    Top = 249
+    Top = 219
     Width = 136
     Height = 25
     Caption = 'Ajouter le favori'
@@ -112,7 +115,7 @@ object VideoForm: TVideoForm
   end
   object btnAddView: TButton
     Left = 8
-    Top = 280
+    Top = 250
     Width = 130
     Height = 25
     Caption = 'Ajouter la vue'
@@ -121,7 +124,7 @@ object VideoForm: TVideoForm
   end
   object btnRemove: TButton
     Left = 144
-    Top = 280
+    Top = 250
     Width = 80
     Height = 25
     Caption = 'Retirer'
@@ -130,7 +133,7 @@ object VideoForm: TVideoForm
   end
   object btnUp: TButton
     Left = 230
-    Top = 280
+    Top = 250
     Width = 80
     Height = 25
     Caption = 'Monter'
@@ -139,12 +142,30 @@ object VideoForm: TVideoForm
   end
   object btnDown: TButton
     Left = 316
-    Top = 280
+    Top = 250
     Width = 84
     Height = 25
     Caption = 'Descendre'
     TabOrder = 6
     OnClick = btnDownClick
+  end
+  object btnShowStep: TButton
+    Left = 8
+    Top = 280
+    Width = 216
+    Height = 25
+    Caption = 'Voir dans la fen'#234'tre principale'
+    TabOrder = 7
+    OnClick = btnShowStepClick
+  end
+  object btnReplaceStep: TButton
+    Left = 230
+    Top = 280
+    Width = 170
+    Height = 25
+    Caption = 'Remplacer par la vue'
+    TabOrder = 8
+    OnClick = btnReplaceStepClick
   end
   object gbStep: TGroupBox
     Left = 8
@@ -152,11 +173,11 @@ object VideoForm: TVideoForm
     Width = 392
     Height = 104
     Caption = #201'tape choisie'
-    TabOrder = 7
+    TabOrder = 9
     object lblMode: TLabel
       Left = 12
       Top = 24
-      Width = 44
+      Width = 45
       Height = 15
       Caption = 'Trajet en'
     end
@@ -223,7 +244,7 @@ object VideoForm: TVideoForm
     Width = 392
     Height = 114
     Caption = 'Vid'#233'o'
-    TabOrder = 8
+    TabOrder = 10
     object lblFormat: TLabel
       Left = 12
       Top = 24
@@ -246,6 +267,20 @@ object VideoForm: TVideoForm
       AutoSize = False
       WordWrap = True
     end
+    object lblIterLimit: TLabel
+      Left = 12
+      Top = 84
+      Width = 74
+      Height = 15
+      Caption = 'It'#233'rations max'
+    end
+    object lblIterLimitHint: TLabel
+      Left = 168
+      Top = 84
+      Width = 104
+      Height = 15
+      Caption = 'vide = automatique'
+    end
     object cbFormat: TComboBox
       Left = 90
       Top = 20
@@ -264,13 +299,6 @@ object VideoForm: TVideoForm
       TabOrder = 1
       OnChange = VideoSettingsChange
     end
-    object lblIterLimit: TLabel
-      Left = 12
-      Top = 84
-      Width = 73
-      Height = 15
-      Caption = 'It'#233'rations max'
-    end
     object edIterLimit: TEdit
       Left = 100
       Top = 80
@@ -280,13 +308,6 @@ object VideoForm: TVideoForm
       TabOrder = 2
       OnChange = VideoSettingsChange
     end
-    object lblIterLimitHint: TLabel
-      Left = 168
-      Top = 84
-      Width = 110
-      Height = 15
-      Caption = 'vide = automatique'
-    end
   end
   object btnPreview: TButton
     Left = 412
@@ -294,7 +315,7 @@ object VideoForm: TVideoForm
     Width = 110
     Height = 25
     Caption = 'Aper'#231'u'
-    TabOrder = 9
+    TabOrder = 11
     OnClick = btnPreviewClick
   end
   object btnRender: TButton
@@ -303,7 +324,7 @@ object VideoForm: TVideoForm
     Width = 110
     Height = 25
     Caption = 'Cr'#233'er la vid'#233'o...'
-    TabOrder = 10
+    TabOrder = 12
     OnClick = btnRenderClick
   end
   object btnCancel: TButton
@@ -312,7 +333,7 @@ object VideoForm: TVideoForm
     Width = 108
     Height = 25
     Caption = 'Interrompre'
-    TabOrder = 11
+    TabOrder = 13
     OnClick = btnCancelClick
   end
   object pbProgress: TProgressBar
@@ -320,7 +341,7 @@ object VideoForm: TVideoForm
     Top = 262
     Width = 340
     Height = 18
-    TabOrder = 12
+    TabOrder = 14
   end
   object btnReplay: TButton
     Left = 412
@@ -328,7 +349,7 @@ object VideoForm: TVideoForm
     Width = 150
     Height = 25
     Caption = 'Revoir l'#39'aper'#231'u'
-    TabOrder = 13
+    TabOrder = 15
     OnClick = btnReplayClick
   end
   object tmrProgress: TTimer
