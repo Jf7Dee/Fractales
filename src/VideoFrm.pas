@@ -17,6 +17,8 @@ uses
   {$ENDIF}
 
 type
+  TVideoStepEvent = procedure(Sender: TObject; Index: Integer) of object;
+
   TVideoForm = class(TForm)
     lblSteps: TLabel;
     lvSteps: TListView;
@@ -26,6 +28,8 @@ type
     btnRemove: TButton;
     btnUp: TButton;
     btnDown: TButton;
+    btnShowStep: TButton;
+    btnReplaceStep: TButton;
     gbStep: TGroupBox;
     lblMode: TLabel;
     cbMode: TComboBox;
@@ -94,6 +98,9 @@ type
     procedure Action_CloseExecute(Sender: TObject);
     procedure Action_SaveExecute(Sender: TObject);
     procedure Action_ResetExecute(Sender: TObject);
+    procedure btnShowStepClick(Sender: TObject);
+    procedure btnReplaceStepClick(Sender: TObject);
+    procedure lvStepsDblClick(Sender: TObject);
   private
     FScenario: TVideoScenario;
     FFavorites: TFavoriteStore;
@@ -114,6 +121,7 @@ type
     FRenderedText: string;   // texte du scénario au lancement du rendu en cours
     FSavedText: string;      // texte du scénario au dernier enregistrement ou à l'ouverture ; sert à IsModified
     FOnRequestSnapshot: TNotifyEvent;
+    FOnShowStep: TVideoStepEvent;
     FScenarioFolder: string;  // dossiers retenus séparément ; '' = choix de Windows
     FVideoFolder: string;
     FPreviewFolder: string;   // aperçu d'un scénario sans fichier ; '' = dossier temporaire
@@ -164,6 +172,8 @@ type
     // Fenêtre non modale : demande à la fenêtre principale d'appeler Prepare avec son état du moment
     // (activation, « Ajouter la vue », lancement d'un rendu)
     property OnRequestSnapshot: TNotifyEvent read FOnRequestSnapshot write FOnRequestSnapshot;
+    // « Voir » : montre l'étape Index dans la fenêtre principale
+    property OnShowStep: TVideoStepEvent read FOnShowStep write FOnShowStep;
   end;
 
 // Au démarrage : rendus interrompus encore repris possibles (les autres sont oubliés), proposés à l'utilisateur ;
@@ -700,6 +710,8 @@ begin
   btnRemove.Enabled := IsIdle and (Index >= 0);
   btnUp.Enabled := IsIdle and (Index > 0);
   btnDown.Enabled := IsIdle and (Index >= 0) and (Index < FScenario.Count - 1);
+  btnShowStep.Enabled := (Index >= 0) and Assigned(FOnShowStep);  // pendant un rendu aussi : la vue principale est à part
+  btnReplaceStep.Enabled := IsIdle and (Index >= 0);
   cbMode.Enabled := IsIdle and (Index > 0);
   cbStop.Enabled := IsIdle and (Index > 0) and (Index < FScenario.Count - 1) and (FScenario[Index].PauseSeconds <= 0);
   edTravel.Enabled := IsIdle and (Index > 0);
@@ -802,6 +814,44 @@ end;
 {------------------------------------------------------------------------------}
 
 // Une valeur illisible n'est pas appliquée : le champ garde ce qu'on y tape, l'étape garde l'ancienne valeur
+procedure TVideoForm.lvStepsDblClick(Sender: TObject);
+begin
+  if btnShowStep.Enabled then
+    btnShowStepClick(Sender);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.btnShowStepClick(Sender: TObject);
+begin
+  if (SelectedIndex >= 0) and Assigned(FOnShowStep) then
+    FOnShowStep(Self, SelectedIndex);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.btnReplaceStepClick(Sender: TObject);
+var
+  Index: Integer;
+begin
+  Index := SelectedIndex;
+  if Index < 0 then
+    Exit;
+  RequestSnapshot;  // la vue affichée en ce moment dans la fenêtre principale
+  try
+    FScenario.ReplaceLocation(Index, FCurrent);
+  except
+    on E: EVideoScenarioError do
+    begin
+      MessageDlg(E.Message, mtWarning, [mbOK], 0);
+      Exit;
+    end;
+  end;
+  RefreshList(Index);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.StepChange(Sender: TObject);
 var
   Index: Integer;

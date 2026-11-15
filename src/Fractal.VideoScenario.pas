@@ -45,6 +45,7 @@ type
     function GetParams: TStrings;
     procedure CheckIndex(Index: Integer);
     procedure SetFormula(const AFormulaName: string; AParams: TStrings);
+    procedure CheckSameFractal(const AName: string; Location: TFractalLocation);
     function TravelFrames(Index: Integer): Integer;
     function PauseFrames(Index: Integer): Integer;
     function NextStop(Index: Integer): Integer;
@@ -57,6 +58,8 @@ type
     procedure Assign(Source: TVideoScenario);
     procedure Clear;
     procedure AddLocation(const AName: string; Location: TFractalLocation);
+    // Nouveau cadrage pour l'étape Index ; son nom, son mode, ses durées et son arrêt sont gardés
+    procedure ReplaceLocation(Index: Integer; Location: TFractalLocation);
     procedure Delete(Index: Integer);
     procedure Move(FromIndex, ToIndex: Integer);
     function Count: Integer;
@@ -240,10 +243,7 @@ var
 begin
   if Location = nil then
     raise EArgumentException.Create('AddLocation : Location nil');
-  if FHasFormula and (not SameText(Location.FormulaName, FTemplate.FormulaName)
-    or (Location.Params.Text <> FTemplate.Params.Text)) then
-    raise EVideoScenarioError.CreateFmt('« %s » n''est pas une vue de la même fractale que les autres étapes.',
-      [AName]);
+  CheckSameFractal(AName, Location);
   if not FHasFormula then
     SetFormula(Location.FormulaName, Location.Params);
   Step.Name := AName;
@@ -258,6 +258,29 @@ begin
     Step.TravelSeconds := SuggestedTravelSeconds(FSteps[Count - 1].Pose, Step.Pose, vmFlyover);
   SetLength(FSteps, Count + 1);
   FSteps[Count - 1] := Step;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.CheckSameFractal(const AName: string; Location: TFractalLocation);
+begin
+  if FHasFormula and (not SameText(Location.FormulaName, FTemplate.FormulaName)
+    or (Location.Params.Text <> FTemplate.Params.Text)) then
+    raise EVideoScenarioError.CreateFmt('« %s » n''est pas une vue de la même fractale que les autres étapes.',
+      [AName]);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.ReplaceLocation(Index: Integer; Location: TFractalLocation);
+begin
+  CheckIndex(Index);
+  if Location = nil then
+    raise EArgumentException.Create('ReplaceLocation : Location nil');
+  CheckSameFractal(FSteps[Index].Name, Location);
+  FSteps[Index].Pose.CenterX := Location.CenterX;
+  FSteps[Index].Pose.CenterY := Location.CenterY;
+  FSteps[Index].Pose.Width := Location.Width;
 end;
 
 {------------------------------------------------------------------------------}

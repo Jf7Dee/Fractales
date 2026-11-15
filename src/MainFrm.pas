@@ -276,6 +276,7 @@ type
     procedure DeleteSelectedFavorite;
     procedure PrepareHiResForm(Sender: TObject);
     procedure PrepareVideoForm(Sender: TObject);
+    procedure ShowVideoStep(Sender: TObject; Index: Integer);
     procedure ShowHelp(Topic: THelpTopic);
 
     procedure CheckSmokeStep(const StepName: string);
@@ -1118,6 +1119,11 @@ begin
     MenuImageVideoClick(nil);
     if (FVideoForm <> Form) or (Form.Scenario.Count <> 2) then
       raise Exception.Create('fenêtre Vidéo non conservée');
+    // « Voir » : la vue principale prend le cadrage de l'étape, puis revient sur celui de la seconde
+    ShowVideoStep(Form, 0);
+    if not SameValue(FNavigator.Viewport.Width, Form.Scenario[0].Pose.Width, Form.Scenario[0].Pose.Width * 1e-9) then
+      raise Exception.Create('« Voir » : la vue principale n''a pas pris le cadrage de l''étape');
+    ShowVideoStep(Form, 1);
     // trois étapes : décocher « Arrêt » sur celle du milieu en fait un passage, enchaîné avec les voisines
     FNavigator.ZoomCenter(4);
     IsDeeper := True;
@@ -2600,6 +2606,7 @@ begin
   begin
     FVideoForm := TVideoForm.Create(Self);
     TVideoForm(FVideoForm).OnRequestSnapshot := PrepareVideoForm;
+    TVideoForm(FVideoForm).OnShowStep := ShowVideoStep;
     TVideoForm(FVideoForm).ScenarioFolder := FSettings.VideoScenarioFolder;
     TVideoForm(FVideoForm).VideoFolder := FSettings.VideoFolder;
     TVideoForm(FVideoForm).InterruptedFile := SettingsFilePath;
@@ -2621,6 +2628,35 @@ begin
   finally
     Location.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// « Voir » de la fenêtre Vidéo : le cadrage de l'étape, avec la formule du scénario ; palette et coloration gardées
+procedure TMainForm.ShowVideoStep(Sender: TObject; Index: Integer);
+var
+  Scenario: TVideoScenario;
+  Current: TFractalLocation;
+  IsSameFractal: Boolean;
+  V: TViewport;
+begin
+  Scenario := TVideoForm(Sender).Scenario;
+  Current := CaptureLocation;
+  try
+    IsSameFractal := SameText(Scenario.FormulaName, Current.FormulaName)
+      and (Scenario.Params.Text = Current.Params.Text);
+  finally
+    Current.Free;
+  end;
+  if not IsSameFractal then
+    SetFormula(Scenario.CreateFormula, False);
+  V := FNavigator.Viewport;
+  V.SetCenter(Scenario[Index].Pose.CenterX, Scenario[Index].Pose.CenterY);
+  V.Width := Scenario[Index].Pose.Width;
+  if IsSameFractal then
+    FNavigator.GoToView(V)  // Précédent ramène la vue d'avant
+  else
+    FNavigator.Reset(V);    // l'historique d'une autre fractale n'a plus de sens
 end;
 
 {------------------------------------------------------------------------------}
