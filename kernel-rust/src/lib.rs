@@ -86,9 +86,12 @@ impl Formula {
         }
     }
 
-    // Multibrot passe par exp, ln, atan2, cos et sin : calcul scalaire seulement.
+    // Multibrot à puissance non entière passe par exp, ln, atan2, cos et sin : calcul scalaire seulement.
     fn is_vectorizable(self) -> bool {
-        !matches!(self, Formula::Multibrot { .. })
+        match self {
+            Formula::Multibrot { power, .. } => is_integer_power(power),
+            _ => true,
+        }
     }
 
     // TFractalFormula.IsPerturbationSupported côté Delphi : toutes, Multibrot pour une puissance entière seulement.
@@ -179,6 +182,9 @@ fn iterate_quadratic(
 }
 
 fn iterate_multibrot(max_iter: i32, power: f64, log_power: f64, cx: f64, cy: f64) -> f32 {
+    if is_integer_power(power) {
+        return iterate_multibrot_integer(max_iter, power.round() as usize, log_power, cx, cy);
+    }
     let mut x = 0.0_f64;
     let mut y = 0.0_f64;
     for n in 0..max_iter {
@@ -196,6 +202,29 @@ fn iterate_multibrot(max_iter: i32, power: f64, log_power: f64, cx: f64, cy: f64
             x = r * t.cos() + cx;
             y = r * t.sin() + cy;
         }
+    }
+    INSIDE
+}
+
+// Puissance entière p : z^p par p - 1 multiplications complexes successives, comme TMultibrotFormula.Iterate et
+// StepFloat côté Delphi (bien plus rapide que la forme polaire, et vectorisable).
+fn iterate_multibrot_integer(max_iter: i32, p: usize, log_power: f64, cx: f64, cy: f64) -> f32 {
+    let mut x = 0.0_f64;
+    let mut y = 0.0_f64;
+    for n in 0..max_iter {
+        let m = x * x + y * y;
+        if m > ESCAPE_RADIUS2 {
+            return smooth_value(n, m, log_power);
+        }
+        let mut px = x;
+        let mut py = y;
+        for _ in 2..=p {
+            let t = px * x - py * y;
+            py = px * y + py * x;
+            px = t;
+        }
+        x = px + cx;
+        y = py + cy;
     }
     INSIDE
 }
@@ -226,7 +255,10 @@ fn iterate4(formula: Formula, max_iter: i32, pxs: [f64; LANES], py: f64) -> [f32
             iterate4_quadratic(max_iter, 0, zero, zero, vx, vy, |x, y, k| two * (x * y).abs() - k)
         }
         Formula::Tricorn => iterate4_quadratic(max_iter, 0, zero, zero, vx, vy, |x, y, k| minus_two * x * y + k),
-        Formula::Multibrot { .. } => {
+        Formula::Multibrot { power, log_power } => {
+            if is_integer_power(power) {
+                return iterate4_multibrot_integer(max_iter, power.round() as usize, log_power, vx, vy);
+            }
             let mut result = [INSIDE; LANES];
             for lane in 0..LANES {
                 result[lane] = iterate(formula, max_iter, pxs[lane], py);
@@ -234,6 +266,41 @@ fn iterate4(formula: Formula, max_iter: i32, pxs: [f64; LANES], py: f64) -> [f32
             result
         }
     }
+}
+
+// iterate_multibrot_integer sur quatre voies, mêmes opérations dans le même ordre
+fn iterate4_multibrot_integer(max_iter: i32, p: usize, log_power: f64, cx: f64x4, cy: f64x4) -> [f32; LANES] {
+    let mut result = [INSIDE; LANES];
+    let mut done: u32 = 0;
+    let radius2 = f64x4::splat(ESCAPE_RADIUS2);
+    let mut x = f64x4::splat(0.0);
+    let mut y = f64x4::splat(0.0);
+    for n in 0..max_iter {
+        let modulus2 = x * x + y * y;
+        let escaped = (modulus2.cmp_gt(radius2).move_mask() as u32) & !done;
+        if escaped != 0 {
+            let values = modulus2.to_array();
+            for lane in 0..LANES {
+                if escaped & (1 << lane) != 0 {
+                    result[lane] = smooth_value(n, values[lane], log_power);
+                }
+            }
+            done |= escaped;
+            if done == ALL_LANES_DONE {
+                break;
+            }
+        }
+        let mut px = x;
+        let mut py = y;
+        for _ in 2..=p {
+            let t = px * x - py * y;
+            py = px * y + py * x;
+            px = t;
+        }
+        x = px + cx;
+        y = py + cy;
+    }
+    result
 }
 
 // Chaque voie s'arrête à son propre échappement ; les voies déjà échappées (ou intérieures d'office, `done`)
@@ -725,6 +792,55 @@ mod tests {
             if m >= 0.0 {
                 assert!((m - b).abs() < 1e-3, "({}, {}) : {} contre {}", x, y, m, b);
             }
+        }
+    }
+
+    // forme polaire d'origine, gardée ici comme référence pour la puissance entière
+    fn polar_multibrot(max_iter: i32, power: f64, cx: f64, cy: f64) -> f32 {
+        let (mut x, mut y) = (0.0_f64, 0.0_f64);
+        for n in 0..max_iter {
+            let m = x * x + y * y;
+            if m > ESCAPE_RADIUS2 {
+                return smooth_value(n, m, power.ln());
+            }
+            if m == 0.0 {
+                x = cx;
+                y = cy;
+            } else {
+                let r = (0.5 * m.ln() * power).exp();
+                let t = y.atan2(x) * power;
+                x = r * t.cos() + cx;
+                y = r * t.sin() + cy;
+            }
+        }
+        INSIDE
+    }
+
+    #[test]
+    fn multibrot_integer_matches_polar() {
+        // loin du bord, les deux formes donnent le même verdict et presque la même valeur lissée
+        for &p in &[3.0, 4.0, 7.0] {
+            for &(x, y) in &[(0.0, 0.0), (2.0, 2.0), (0.9, 0.9), (-1.2, 0.4), (0.1, -0.2), (1.5, -0.3)] {
+                let a = iterate_multibrot(500, p, f64::ln(p), x, y);
+                let b = polar_multibrot(500, p, x, y);
+                assert_eq!(a < 0.0, b < 0.0, "p = {} ({}, {})", p, x, y);
+                if a >= 0.0 {
+                    assert!((a - b).abs() < 1e-3, "p = {} ({}, {}) : {} contre {}", p, x, y, a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multibrot_integer_simd_matches_scalar_exactly() {
+        let dx = 3.0 / ROW_LENGTH as f64;
+        for &p in &[3.0, 5.0] {
+            let formula = Formula::Multibrot { power: p, log_power: f64::ln(p) };
+            let mut simd = vec![0.0_f32; ROW_LENGTH];
+            let mut scalar = vec![0.0_f32; ROW_LENGTH];
+            compute_row(formula, 300, -1.5, dx, 0.35, true, &mut simd);
+            compute_row(formula, 300, -1.5, dx, 0.35, false, &mut scalar);
+            assert_eq!(simd, scalar, "p = {}", p);
         }
     }
 

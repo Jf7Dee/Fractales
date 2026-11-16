@@ -99,6 +99,7 @@ type
   private
     FPower: TFloat;
     FLogPower: TFloat;
+    FIntPower: Integer;  // puissance entière (IsIntegerPower), 0 sinon : z^n par multiplications
   protected
     procedure ParamsChanged; override;
   public
@@ -551,18 +552,44 @@ procedure TMultibrotFormula.ParamsChanged;
 begin
   FPower := GetParam(0);
   FLogPower := Ln(FPower);
+  if IsIntegerPower(FPower) then
+    FIntPower := Round(FPower)
+  else
+    FIntPower := 0;
 end;
 
 {------------------------------------------------------------------------------}
 
 function TMultibrotFormula.Iterate(const CX, CY: TFloat): Single;
 var
-  X, Y, M, R, T: TFloat;
-  N: Integer;
+  X, Y, M, R, T, PX, PY: TFloat;
+  N, K: Integer;
 begin
   X := 0;
   Y := 0;
   N := 0;
+  if FIntPower > 0 then
+  begin
+    // puissance entière : z^n par n - 1 multiplications complexes, comme StepFloat (bien plus rapide que le polaire)
+    while N < FMaxIter do
+    begin
+      M := X * X + Y * Y;
+      if M > kEscapeRadius2 then
+        Exit(SmoothValue(N, M, FLogPower));
+      PX := X;
+      PY := Y;
+      for K := 2 to FIntPower do
+      begin
+        T := PX * X - PY * Y;
+        PY := PX * Y + PY * X;
+        PX := T;
+      end;
+      X := PX + CX;
+      Y := PY + CY;
+      Inc(N);
+    end;
+    Exit(kInside);
+  end;
   while N < FMaxIter do
   begin
     M := X * X + Y * Y;

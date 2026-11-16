@@ -13,6 +13,7 @@ type
     procedure TestMandelbrotFarPointEscapesFast;
     procedure TestSmoothValueIsContinuous;
     procedure TestMultibrotPower2MatchesMandelbrot;
+    procedure TestMultibrotIntegerMatchesPolar;
     procedure TestJuliaZeroIsUnitDisk;
     procedure TestTricornIsSymmetric;
     procedure TestBurningShip;
@@ -115,6 +116,42 @@ begin
   finally
     B.Free;
     M.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// puissance entière (multiplications) contre puissance à peine non entière (forme polaire), loin du bord
+procedure TTestFormulas.TestMultibrotIntegerMatchesPolar;
+const
+  kPoints: array[0..5, 0..1] of Double = ((0, 0), (2, 2), (0.9, 0.9), (-1.2, 0.4), (0.1, -0.2), (1.5, -0.3));
+  kPowers: array[0..2] of Integer = (3, 4, 7);
+var
+  A, B: TMultibrotFormula;
+  I, J: Integer;
+  VA, VB: Single;
+begin
+  A := TMultibrotFormula.Create;
+  B := TMultibrotFormula.Create;
+  try
+    A.MaxIter := 500;
+    B.MaxIter := 500;
+    for J := 0 to High(kPowers) do
+    begin
+      A.SetParam(A.IndexOfParam('power'), kPowers[J]);
+      B.SetParam(B.IndexOfParam('power'), kPowers[J] + 1e-8);
+      for I := 0 to High(kPoints) do
+      begin
+        VA := A.Iterate(kPoints[I, 0], kPoints[I, 1]);
+        VB := B.Iterate(kPoints[I, 0], kPoints[I, 1]);
+        CheckEquals(VB < 0, VA < 0, Format('verdict p = %d, point %d', [kPowers[J], I]));
+        if VA >= 0 then
+          CheckEquals(VB, VA, 1e-3, Format('valeur p = %d, point %d', [kPowers[J], I]));
+      end;
+    end;
+  finally
+    B.Free;
+    A.Free;
   end;
 end;
 
