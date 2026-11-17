@@ -697,7 +697,11 @@ begin
       begin
         // δc du premier pixel de la suite, comme PixelValue ; PixelOffset tient compte de l'axe imaginaire qui monte
         P := FViewport.PixelOffset(RunStart, Y);
-        if FFormula.HasPixelStart then
+        if FIsBlaActive and FActiveRustKernel.IsBlaSupported then
+          // vidéo : la DLL reçoit aussi les tables BLA (ABI 5) ; sinon (DLL plus ancienne) calcul sans BLA
+          FActiveRustKernel.ComputeRowPerturbed2Bla(FFormula, FDoubleOrbit, FDoubleCritical, FBla, FCriticalBla,
+            FRefDeltaX + P.X, DX, FRefDeltaY + P.Y, Count, @Values[0])
+        else if FFormula.HasPixelStart then
           // Julia : la DLL reçoit aussi l'orbite critique W, (δc) est ici δ0
           FActiveRustKernel.ComputeRowPerturbed2(FFormula, FDoubleOrbit, FDoubleCritical, FRefDeltaX + P.X, DX,
             FRefDeltaY + P.Y, Count, @Values[0])

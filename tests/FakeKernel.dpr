@@ -5,7 +5,8 @@
 // Compilée avec FAKE_ABI1 (build.sh tests → FakeKernelAbi1.dll), elle imite une DLL de version 1 : sans
 // fk_compute_row_perturbed. Compilée avec FAKE_ABI2 (FakeKernelAbi2.dll), elle imite une DLL de version 2 : sans
 // fk_perturbation_supported. Compilée avec FAKE_ABI3 (FakeKernelAbi3.dll), elle imite une DLL de version 3 : sans
-// fk_compute_row_perturbed2, et fk_perturbation_supported répond 0 pour Julia et Multibrot. Par défaut, version 4.
+// fk_compute_row_perturbed2, et fk_perturbation_supported répond 0 pour Julia et Multibrot. Compilée avec FAKE_ABI4
+// (FakeKernelAbi4.dll), elle imite une DLL de version 4 : sans les fonctions BLA. Par défaut, version 5.
 
 uses
   SysUtils,
@@ -24,7 +25,11 @@ const
 {$IFDEF FAKE_ABI3}
   kAbiVersion = 3;
 {$ELSE}
+{$IFDEF FAKE_ABI4}
   kAbiVersion = 4;
+{$ELSE}
+  kAbiVersion = 5;
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
 {$ENDIF}
@@ -243,6 +248,126 @@ begin
   end;
 end;
 
+{$IFNDEF FAKE_ABI4}
+
+{------------------------------------------------------------------------------}
+
+// Table plate de la DLL (BlaLength Double, format de Fractal.Bla) relue en TBlaTable pour une orbite de RefLength
+// points ; faux si la longueur ne correspond pas
+function ReadBla(Source: PDouble; BlaLength, RefLength: Integer; out Table: TBlaTable): Boolean;
+var
+  I, Steps: Integer;
+begin
+  Table := EmptyBlaTable;
+  if BlaLength = 0 then
+    Exit(True);
+  Steps := RefLength - 1;
+  if (Source = nil) or (Steps < 1) then
+    Exit(False);
+  Table.Steps := Steps;
+  Table.LevelCount := BlaLevelCount(Steps);
+  SetLength(Table.LevelStarts, Table.LevelCount);
+  for I := 0 to Table.LevelCount - 1 do
+    Table.LevelStarts[I] := BlaLevelStart(Steps, I);
+  if BlaLength <> (Table.LevelStarts[Table.LevelCount - 1] + 1) * kBlaEntrySize then
+    Exit(False);
+  SetLength(Table.Data, BlaLength);
+  for I := 0 to BlaLength - 1 do
+  begin
+    Table.Data[I] := Source^;
+    Inc(Source);
+  end;
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Même contrat que fk_compute_row_perturbed_bla de kernel-rust : fk_compute_row_perturbed plus la table BLA
+function fk_compute_row_perturbed_bla(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
+  RefOrbit: PDouble; RefLength: Integer; Bla: PDouble; BlaLength: Integer; DCX0, DDX, DCY: Double; Count: Integer;
+  Output: PSingle): Integer; cdecl;
+var
+  F: TFractalFormula;
+  Orbit: TOrbit;
+  Table: TBlaTable;
+  I: Integer;
+  DCX: Double;
+begin
+  if (ParamCount < 0) or (MaxIter < 0) or (Count < 0) or (Output = nil) or ((ParamCount > 0) and (Params = nil))
+    or (RefOrbit = nil) or (RefLength < kMinOrbitLength) or (BlaLength < 0) then
+    Exit(kInvalidArgument);
+  try
+    if not ReadBla(Bla, BlaLength, RefLength, Table) then
+      Exit(kInvalidArgument);
+    Result := CreateFormula(Formula, Params, ParamCount, MaxIter, F);
+    if Result <> kOk then
+      Exit;
+    try
+      if not F.IsPerturbationSupported or F.HasPixelStart then
+        Exit(kUnsupported);
+      Orbit := ReadOrbit(RefOrbit, RefLength);
+      for I := 0 to Count - 1 do
+      begin
+        DCX := DCX0 + I * DDX;
+        Output^ := F.IteratePerturbedBla(Orbit, RefLength, Table, DCX, DCY);
+        Inc(Output);
+      end;
+    finally
+      F.Free;
+    end;
+  except
+    Result := kInternalError;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Même contrat que fk_compute_row_perturbed2_bla de kernel-rust : fk_compute_row_perturbed2 plus les deux tables
+function fk_compute_row_perturbed2_bla(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
+  RefOrbit: PDouble; RefLength: Integer; Bla: PDouble; BlaLength: Integer; CritOrbit: PDouble; CritLength: Integer;
+  CritBla: PDouble; CritBlaLength: Integer; DCX0, DDX, DCY: Double; Count: Integer; Output: PSingle): Integer; cdecl;
+var
+  F: TFractalFormula;
+  Orbit, Critical: TOrbit;
+  Table, CriticalTable: TBlaTable;
+  I: Integer;
+  DCX: Double;
+begin
+  if (ParamCount < 0) or (MaxIter < 0) or (Count < 0) or (Output = nil) or ((ParamCount > 0) and (Params = nil))
+    or (RefOrbit = nil) or (RefLength < kMinOrbitLength) or (CritLength < 0) or (BlaLength < 0)
+    or (CritBlaLength < 0) then
+    Exit(kInvalidArgument);
+  try
+    if not ReadBla(Bla, BlaLength, RefLength, Table) or not ReadBla(CritBla, CritBlaLength, CritLength, CriticalTable) then
+      Exit(kInvalidArgument);
+    Result := CreateFormula(Formula, Params, ParamCount, MaxIter, F);
+    if Result <> kOk then
+      Exit;
+    try
+      if not F.IsPerturbationSupported then
+        Exit(kUnsupported);
+      if F.HasPixelStart and ((CritOrbit = nil) or (CritLength < kMinOrbitLength)) then
+        Exit(kInvalidArgument);
+      Orbit := ReadOrbit(RefOrbit, RefLength);
+      Critical := nil;
+      if (CritOrbit <> nil) and (CritLength > 0) then
+        Critical := ReadOrbit(CritOrbit, CritLength);
+      for I := 0 to Count - 1 do
+      begin
+        DCX := DCX0 + I * DDX;
+        Output^ := F.IteratePerturbedCriticalBla(Orbit, RefLength, Table, Critical, CritLength, CriticalTable, DCX,
+          DCY);
+        Inc(Output);
+      end;
+    finally
+      F.Free;
+    end;
+  except
+    Result := kInternalError;
+  end;
+end;
+
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
 {$ENDIF}
@@ -254,6 +379,10 @@ exports
   fk_perturbation_supported,
 {$IFNDEF FAKE_ABI3}
   fk_compute_row_perturbed2,
+{$IFNDEF FAKE_ABI4}
+  fk_compute_row_perturbed_bla,
+  fk_compute_row_perturbed2_bla,
+{$ENDIF}
 {$ENDIF}
 {$ENDIF}
 {$ENDIF}

@@ -4,7 +4,7 @@ interface
 
 uses
   TestFramework, Fractal.Types, Fractal.HighFloat, Fractal.Formulas, Fractal.Bla, Fractal.Perturbation,
-  Fractal.Engine, TestFractalPerturbation;
+  Fractal.Engine, Fractal.RustKernel, TestFractalPerturbation, TestFractalRustKernel;
 
 type
   TTestBla = class(TTestCase)
@@ -14,7 +14,8 @@ type
     procedure CheckBlaAgrees(Formula: TFractalFormula; const TextX, TextY: string; Width: TFloat;
       const Msg: string);
     procedure CheckBuffersAgree(A, B: TRenderEngine; const Msg: string);
-    function RenderMultiBroth(Engine: TRenderEngine; Width: TFloat): Boolean;
+    function RenderMultiBroth(Engine: TRenderEngine; Width: TFloat;
+      Kernel: TEngineKernelType = ekDelphi): Boolean;
   published
     procedure TestBlaLevelZeroMandelbrot;
     procedure TestBlaMergeMatchesTwoSteps;
@@ -35,6 +36,9 @@ type
     procedure TestEngineBlaAgrees;
     procedure TestEngineBlaTableFollowsWidth;
     procedure TestEngineBlaOffByDefault;
+    procedure TestFakeKernelBlaMatchesDelphi;
+    procedure TestEngineBlaRunsInRust;
+    procedure TestEngineBlaWithAbi4Rust;
   end;
 
 implementation
@@ -551,7 +555,7 @@ end;
 {------------------------------------------------------------------------------}
 
 // MultiBroth_1 au centre de l'étape 1, à la largeur donnée, noyau Delphi ; faux si le rendu n'a pas fini à temps
-function TTestBla.RenderMultiBroth(Engine: TRenderEngine; Width: TFloat): Boolean;
+function TTestBla.RenderMultiBroth(Engine: TRenderEngine; Width: TFloat; Kernel: TEngineKernelType): Boolean;
 var
   F: TFractalFormula;
 begin
@@ -559,7 +563,7 @@ begin
   try
     F.SetParam(0, 3);
     F.MaxIter := kMultiBroth1MaxIter;
-    Engine.Kernel := ekDelphi;
+    Engine.Kernel := Kernel;
     Engine.Render(MakeExactViewport(kMultiBroth1X, kMultiBroth1Y, Width, kEngineWidth, kEngineHeight), F, False);
     Result := Engine.WaitUntilComplete(kEngineTimeoutMs);
   finally
@@ -656,6 +660,91 @@ begin
     CheckFalse(E.IsBlaEnabled);
   finally
     E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// La table plate passe telle quelle à la DLL (factice : même calcul Delphi derrière) : mêmes valeurs que le Delphi
+procedure TTestBla.TestFakeKernelBlaMatchesDelphi;
+var
+  K: TRustKernel;
+  F: TFractalFormula;
+  V: TViewport;
+  Orbit: TOrbit;
+  Table: TBlaTable;
+  Values: array[0..kGridWidth - 1] of Single;
+  P: TComplexPoint;
+  X: Integer;
+begin
+  K := TRustKernel.Create(FakeKernelFileName);
+  F := TMultibrotFormula.Create;
+  try
+    CheckTrue(K.IsAvailable, K.Status);
+    F.SetParam(0, 3);
+    F.MaxIter := kMultiBroth1MaxIter;
+    V := MakeExactViewport(kMultiBroth1X, kMultiBroth1Y, kMultiBroth1Width, kGridWidth, kGridHeight);
+    CheckTrue(ComputeReferenceOrbit(F, V.ExactCenterX, V.ExactCenterY, nil, Orbit));
+    Table := BuildBlaTable(F, Orbit, Length(Orbit), 0.5 * Hypot(V.Width, V.Height));
+    P := V.PixelOffset(0, 9);
+    K.ComputeRowPerturbedBla(F, MakeDoubleOrbit(Orbit), Table, P.X, V.PixelSize, P.Y, kGridWidth, @Values[0]);
+    for X := 0 to kGridWidth - 1 do
+      CheckEquals(F.IteratePerturbedBla(Orbit, Length(Orbit), Table, P.X + X * V.PixelSize, P.Y), Values[X],
+        kMaxSmoothGap, 'pixel ' + IntToStr(X));
+  finally
+    F.Free;
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// ABI 5 : le rendu Rust profond avec BLA passe par la DLL, sans erreur, et concorde avec le Delphi avec BLA
+procedure TTestBla.TestEngineBlaRunsInRust;
+var
+  Fake: TRustKernel;
+  Rust, Delphi: TRenderEngine;
+begin
+  Fake := TRustKernel.Create(FakeKernelFileName);
+  Rust := TRenderEngine.Create(CpuCount);
+  Delphi := TRenderEngine.Create(CpuCount);
+  try
+    CheckTrue(Fake.IsAvailable, Fake.Status);
+    Rust.RustKernel := Fake;
+    Rust.IsBlaEnabled := True;
+    Delphi.IsBlaEnabled := True;
+    CheckTrue(RenderMultiBroth(Rust, kMultiBroth1Width, ekRust), 'Rust');
+    CheckEquals(Ord(ekRust), Ord(Rust.Status.Kernel), 'noyau');
+    CheckEquals('', Rust.TakeErrors);
+    CheckTrue(RenderMultiBroth(Delphi, kMultiBroth1Width), 'Delphi');
+    CheckBuffersAgree(Delphi, Rust, 'Rust avec BLA');
+  finally
+    Delphi.Free;
+    Rust.Free;
+    Fake.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// DLL v4 : le rendu Rust se fait sans BLA, sans erreur
+procedure TTestBla.TestEngineBlaWithAbi4Rust;
+var
+  Fake: TRustKernel;
+  E: TRenderEngine;
+begin
+  Fake := TRustKernel.Create(FakeKernelAbi4FileName);
+  E := TRenderEngine.Create(CpuCount);
+  try
+    CheckTrue(Fake.IsAvailable, Fake.Status);
+    E.RustKernel := Fake;
+    E.IsBlaEnabled := True;
+    CheckTrue(RenderMultiBroth(E, 1e-40, ekRust), 'Rust v4');
+    CheckEquals(Ord(ekRust), Ord(E.Status.Kernel), 'noyau');
+    CheckEquals('', E.TakeErrors);
+  finally
+    E.Free;
+    Fake.Free;
   end;
 end;
 

@@ -9,7 +9,8 @@ uses
 
 const
   kRustKernelFileName = 'fractal_kernel.dll';
-  kRustAbiVersion = 4;               // + fk_compute_row_perturbed2 (Julia, deux orbites)
+  kRustAbiVersion = 5;               // + fk_compute_row_perturbed_bla et fk_compute_row_perturbed2_bla (BLA)
+  kRustAbiVersionAbi4 = 4;           // + fk_compute_row_perturbed2 (Julia, deux orbites) ; pas de BLA
   kRustAbiVersionAbi3 = 3;           // fk_perturbation_supported répond 0 pour Julia et Multibrot : Delphi
   kRustAbiVersionAbi2 = 2;           // perturbation pour Mandelbrot et Tricorn seulement
   kRustAbiVersionNoPerturbation = 1; // fk_compute_row seule : le zoom profond reste en Delphi
@@ -39,6 +40,14 @@ type
   TRustComputeRowPerturbed2Func = function(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
     RefOrbit: PDouble; RefLength: Integer; CritOrbit: PDouble; CritLength: Integer; DCX0, DDX, DCY: Double;
     Count: Integer; Output: System.PSingle): Integer; cdecl;
+  // ABI 5 : comme les fonctions perturbées, avec la table BLA plate de Fractal.Bla (BlaLength Double ; 0 = sans)
+  TRustComputeRowPerturbedBlaFunc = function(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
+    RefOrbit: PDouble; RefLength: Integer; Bla: PDouble; BlaLength: Integer; DCX0, DDX, DCY: Double; Count: Integer;
+    Output: System.PSingle): Integer; cdecl;
+  TRustComputeRowPerturbed2BlaFunc = function(Formula: Integer; Params: PDouble; ParamCount, MaxIter: Integer;
+    RefOrbit: PDouble; RefLength: Integer; Bla: PDouble; BlaLength: Integer; CritOrbit: PDouble; CritLength: Integer;
+    CritBla: PDouble; CritBlaLength: Integer; DCX0, DDX, DCY: Double; Count: Integer;
+    Output: System.PSingle): Integer; cdecl;
   TRustPerturbationSupportedFunc = function(Formula: Integer): Integer; cdecl;
   TRustKernelParams = array[0..kMaxKernelParams - 1] of Double;
 
@@ -48,7 +57,9 @@ type
     FHandle: HMODULE;
     FComputeRow: TRustComputeRowFunc;
     FComputeRowPerturbed: TRustComputeRowPerturbedFunc;   // nil en version 1
-    FComputeRowPerturbed2: TRustComputeRowPerturbed2Func;   // nil hors version 4
+    FComputeRowPerturbed2: TRustComputeRowPerturbed2Func;   // nil avant la version 4
+    FComputeRowPerturbedBla: TRustComputeRowPerturbedBlaFunc;     // nil avant la version 5
+    FComputeRowPerturbed2Bla: TRustComputeRowPerturbed2BlaFunc;   // nil avant la version 5
     FPerturbationSupported: TRustPerturbationSupportedFunc;   // nil hors versions 3 et 4
     FAbiVersion: Cardinal;
     FStatus: string;
@@ -61,10 +72,15 @@ type
     function IsAvailable: Boolean;
     function HasPerturbation: Boolean;
     function HasPerturbationFor(KernelId: Integer): Boolean;
+    function IsBlaSupported: Boolean;   // version 5 : fonctions perturbées avec table BLA
     procedure ComputeRowPerturbed(Formula: TFractalFormula; const Orbit: TDoubleOrbit; DCX0, DDX, DCY: Double;
       Count: Integer; Output: System.PSingle);
     procedure ComputeRowPerturbed2(Formula: TFractalFormula; const Orbit, Critical: TDoubleOrbit;
       DCX0, DDX, DCY: Double; Count: Integer; Output: System.PSingle);
+    procedure ComputeRowPerturbedBla(Formula: TFractalFormula; const Orbit: TDoubleOrbit; const Bla: TBlaTable;
+      DCX0, DDX, DCY: Double; Count: Integer; Output: System.PSingle);
+    procedure ComputeRowPerturbed2Bla(Formula: TFractalFormula; const Orbit, Critical: TDoubleOrbit;
+      const Bla, CriticalBla: TBlaTable; DCX0, DDX, DCY: Double; Count: Integer; Output: System.PSingle);
     procedure ComputeRow(Formula: TFractalFormula; X0, DX, Y: Double; Count: Integer; Output: System.PSingle);
     property Status: string read FStatus;
   end;
@@ -157,13 +173,24 @@ begin
       Exit;
     end;
   end;
-  if Version = kRustAbiVersion then
+  if Version >= kRustAbiVersionAbi4 then
   begin
     FComputeRowPerturbed2 := FindExport('fk_compute_row_perturbed2');
     if not Assigned(FComputeRowPerturbed2) then
     begin
       Unload(Format('Moteur Rust : %s (version %d) ne contient pas fk_compute_row_perturbed2.',
         [ExtractFileName(AFileName), Version]));
+      Exit;
+    end;
+  end;
+  if Version >= kRustAbiVersion then
+  begin
+    FComputeRowPerturbedBla := FindExport('fk_compute_row_perturbed_bla');
+    FComputeRowPerturbed2Bla := FindExport('fk_compute_row_perturbed2_bla');
+    if not Assigned(FComputeRowPerturbedBla) or not Assigned(FComputeRowPerturbed2Bla) then
+    begin
+      Unload(Format('Moteur Rust : %s (version %d) ne contient pas fk_compute_row_perturbed_bla et '
+        + 'fk_compute_row_perturbed2_bla.', [ExtractFileName(AFileName), Version]));
       Exit;
     end;
   end;
@@ -175,6 +202,9 @@ begin
       + 'seront calculés en Delphi.', [Version])
   else if Version = kRustAbiVersionAbi3 then
     FStatus := Format('Moteur Rust disponible (version %d) : Julia et Multibrot profonds seront calculés en Delphi.',
+      [Version])
+  else if Version = kRustAbiVersionAbi4 then
+    FStatus := Format('Moteur Rust disponible (version %d) : les vidéos profondes seront calculées sans BLA.',
       [Version])
   else
     FStatus := 'Moteur Rust disponible.';
@@ -304,6 +334,76 @@ begin
     CritOrbit := @Critical[0];
   Code := FComputeRowPerturbed2(Formula.KernelId, @Params[0], Formula.ParamCount, Formula.MaxIter, RefOrbit,
     Length(Orbit) div 2, CritOrbit, Length(Critical) div 2, DCX0, DDX, DCY, Count, Output);
+  if Code <> kRustOk then
+    raise ERustKernelError.Create(RustErrorText(Code));
+end;
+
+{------------------------------------------------------------------------------}
+
+function TRustKernel.IsBlaSupported: Boolean;
+begin
+  Result := IsAvailable and Assigned(FComputeRowPerturbedBla) and Assigned(FComputeRowPerturbed2Bla);
+end;
+
+{------------------------------------------------------------------------------}
+
+function BlaPointer(const Table: TBlaTable): PDouble;
+begin
+  if Table.Data = nil then
+    Result := nil
+  else
+    Result := @Table.Data[0];
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TRustKernel.ComputeRowPerturbedBla(Formula: TFractalFormula; const Orbit: TDoubleOrbit;
+  const Bla: TBlaTable; DCX0, DDX, DCY: Double; Count: Integer; Output: System.PSingle);
+var
+  Params: TRustKernelParams;
+  RefOrbit: PDouble;
+  Code: Integer;
+begin
+  if not IsAvailable then
+    raise ERustKernelError.Create(FStatus);
+  if not Assigned(FComputeRowPerturbedBla) then
+    raise ERustKernelError.Create('Moteur Rust : DLL sans fk_compute_row_perturbed_bla (version 5 requise).');
+  LoadParams(Formula, Params);
+  if Orbit = nil then
+    RefOrbit := nil
+  else
+    RefOrbit := @Orbit[0];
+  Code := FComputeRowPerturbedBla(Formula.KernelId, @Params[0], Formula.ParamCount, Formula.MaxIter, RefOrbit,
+    Length(Orbit) div 2, BlaPointer(Bla), Length(Bla.Data), DCX0, DDX, DCY, Count, Output);
+  if Code <> kRustOk then
+    raise ERustKernelError.Create(RustErrorText(Code));
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TRustKernel.ComputeRowPerturbed2Bla(Formula: TFractalFormula; const Orbit, Critical: TDoubleOrbit;
+  const Bla, CriticalBla: TBlaTable; DCX0, DDX, DCY: Double; Count: Integer; Output: System.PSingle);
+var
+  Params: TRustKernelParams;
+  RefOrbit, CritOrbit: PDouble;
+  Code: Integer;
+begin
+  if not IsAvailable then
+    raise ERustKernelError.Create(FStatus);
+  if not Assigned(FComputeRowPerturbed2Bla) then
+    raise ERustKernelError.Create('Moteur Rust : DLL sans fk_compute_row_perturbed2_bla (version 5 requise).');
+  LoadParams(Formula, Params);
+  if Orbit = nil then
+    RefOrbit := nil
+  else
+    RefOrbit := @Orbit[0];
+  if Critical = nil then
+    CritOrbit := nil
+  else
+    CritOrbit := @Critical[0];
+  Code := FComputeRowPerturbed2Bla(Formula.KernelId, @Params[0], Formula.ParamCount, Formula.MaxIter, RefOrbit,
+    Length(Orbit) div 2, BlaPointer(Bla), Length(Bla.Data), CritOrbit, Length(Critical) div 2,
+    BlaPointer(CriticalBla), Length(CriticalBla.Data), DCX0, DDX, DCY, Count, Output);
   if Code <> kRustOk then
     raise ERustKernelError.Create(RustErrorText(Code));
 end;

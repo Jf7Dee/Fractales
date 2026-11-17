@@ -66,6 +66,8 @@ type
     procedure TestPerturbedKernelRejectsOnePointOrbit;
     procedure TestAbi1KernelHasNoPerturbation;
     procedure TestFakeKernelIsAbi4;
+    procedure TestFakeKernelHasBla;
+    procedure TestAbi4KernelHasNoBla;
     procedure TestAbi3KernelRefusesJuliaAndMultibrot;
     procedure TestAbi2KernelSupportsMandelbrotAndTricornOnly;
     procedure TestFakeKernelBurningShipMatchesDelphi;
@@ -79,6 +81,7 @@ function FakeKernelFileName: string;
 function FakeKernelAbi1FileName: string;
 function FakeKernelAbi2FileName: string;
 function FakeKernelAbi3FileName: string;
+function FakeKernelAbi4FileName: string;
 
 const
   // Pointe de l'axe réel, (-2 ; 0) : sur l'axe le Burning Ship se réduit à x² + c, et ce point du bord est exact
@@ -95,6 +98,7 @@ const
   kFakeKernelAbi1File = 'FakeKernelAbi1.dll';   // DLL factice compilée avec FAKE_ABI1 (build.sh tests)
   kFakeKernelAbi2File = 'FakeKernelAbi2.dll';   // DLL factice compilée avec FAKE_ABI2 (build.sh tests)
   kFakeKernelAbi3File = 'FakeKernelAbi3.dll';   // DLL factice compilée avec FAKE_ABI3 (build.sh tests)
+  kFakeKernelAbi4File = 'FakeKernelAbi4.dll';   // DLL factice compilée avec FAKE_ABI4 (build.sh tests)
   kUnknownKernelId = 42;
   kRowCount = 5;
   kRowX0 = -2.5;
@@ -172,6 +176,13 @@ end;
 function FakeKernelAbi3FileName: string;
 begin
   Result := TestBinFolder + kFakeKernelAbi3File;
+end;
+
+{------------------------------------------------------------------------------}
+
+function FakeKernelAbi4FileName: string;
+begin
+  Result := TestBinFolder + kFakeKernelAbi4File;
 end;
 
 {------------------------------------------------------------------------------}
@@ -496,6 +507,40 @@ begin
     CheckTrue(K.HasPerturbationFor(kKernelBurningShip));
     CheckTrue(K.HasPerturbationFor(kKernelJulia));
     CheckTrue(K.HasPerturbationFor(kKernelMultibrot));
+  finally
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// ABI 5 : les deux fonctions avec table BLA sont présentes
+procedure TTestRustKernel.TestFakeKernelHasBla;
+var
+  K: TRustKernel;
+begin
+  K := TRustKernel.Create(FakeKernelFileName);
+  try
+    CheckTrue(K.IsAvailable, K.Status);
+    CheckTrue(K.IsBlaSupported);
+  finally
+    K.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// DLL v4 (avant le BLA) : acceptée, perturbation complète, sans BLA
+procedure TTestRustKernel.TestAbi4KernelHasNoBla;
+var
+  K: TRustKernel;
+begin
+  K := TRustKernel.Create(FakeKernelAbi4FileName);
+  try
+    CheckTrue(K.IsAvailable, K.Status);
+    CheckTrue(K.HasPerturbationFor(kKernelJulia));
+    CheckTrue(K.HasPerturbationFor(kKernelMultibrot));
+    CheckFalse(K.IsBlaSupported);
   finally
     K.Free;
   end;

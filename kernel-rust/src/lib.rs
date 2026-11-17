@@ -19,6 +19,13 @@
 // Comme fk_compute_row_perturbed, plus l'orbite critique W0 = 0, W1, ... (crit_orbit, 2·crit_len valeurs),
 // obligatoire pour Julia et ignorée par les autres formules. Pour Julia, ref_orbit part de Z0 = la référence et
 // (dcx0 + i·ddx, dcy) est δ0 = pixel - référence ; même algorithme que TJuliaFormula.IteratePerturbedCritical.
+//   fk_compute_row_perturbed_bla(formula, params, param_count, max_iter, ref_orbit, ref_len, bla, bla_len, dcx0,
+//                                ddx, dcy, count, out) -> i32   (version 5)
+//   fk_compute_row_perturbed2_bla(formula, params, param_count, max_iter, ref_orbit, ref_len, bla, bla_len,
+//                                 crit_orbit, crit_len, crit_bla, crit_bla_len, dcx0, ddx, dcy, count, out) -> i32
+// Comme les deux précédentes, avec la table BLA (approximation bilinéaire) de chaque orbite, construite par
+// src\Fractal.Bla.pas (bla_len f64 ; 0 = sans BLA) : sauts de plusieurs itérations, pour les vidéos. Mandelbrot,
+// Multibrot entier et Julia ; Burning Ship et Tricorn calculent sans BLA.
 //
 // Compiler la DLL 32 bits :  cargo build --release --target i686-pc-windows-msvc
 
@@ -26,7 +33,7 @@ use std::f64::consts::LN_2;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use wide::*;
 
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 
 pub const FK_OK: i32 = 0;
 pub const FK_UNKNOWN_FORMULA: i32 = 1;
@@ -364,22 +371,127 @@ fn diff_abs(c: f64, d: f64) -> f64 {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Table BLA (approximation bilinéaire), construite par Fractal.Bla côté Delphi et reçue telle quelle : Steps =
+// longueur d'orbite - 1 pas de base ; le pas m (1 <= m <= Steps) mène de l'itération m à m + 1 avec Z = orbit[m]. Le
+// niveau k a ceil(Steps / 2^k) entrées ; l'entrée j couvre les pas 1 + j·2^k et suivants. Niveaux concaténés 0, 1,
+// 2… jusqu'au premier qui n'a qu'une entrée. Une entrée = BLA_ENTRY f64 : AX, AY, BX, BY, R, Len ; elle donne
+// δ(m + Len) ≈ A·δ(m) + B·δc tant que |δ(m)| < R.
+
+const BLA_ENTRY: usize = 6;
+const BLA_MAX_LEVELS: usize = 40;
+
+fn bla_level_entries(steps: usize, level: usize) -> usize {
+    (steps + (1 << level) - 1) >> level
+}
+
+struct Bla<'a> {
+    data: &'a [f64],
+    steps: usize,
+    level_count: usize,
+    starts: [usize; BLA_MAX_LEVELS], // première entrée de chaque niveau
+}
+
+impl<'a> Bla<'a> {
+    // None si `data` n'a pas la taille d'une table pour une orbite de `orbit_len` points
+    fn new(data: &'a [f64], orbit_len: usize) -> Option<Self> {
+        if orbit_len < 2 {
+            return None;
+        }
+        let steps = orbit_len - 1;
+        let mut starts = [0_usize; BLA_MAX_LEVELS];
+        let mut level_count = 1;
+        while bla_level_entries(steps, level_count - 1) > 1 {
+            if level_count >= BLA_MAX_LEVELS {
+                return None;
+            }
+            starts[level_count] = starts[level_count - 1] + bla_level_entries(steps, level_count - 1);
+            level_count += 1;
+        }
+        if data.len() != (starts[level_count - 1] + 1) * BLA_ENTRY {
+            return None;
+        }
+        Some(Bla { data, steps, level_count, starts })
+    }
+
+    // Saut au point m (>= 1) à l'itération n, comme BlaJump : l'entrée alignée du plus haut niveau dont le rayon
+    // contient δ, sans dépasser max_iter ni la fin de l'orbite ; δ devient A·δ + B·δc. Pas sautés, 0 si aucun.
+    #[allow(clippy::too_many_arguments)]
+    fn jump(&self, m: usize, n: i32, max_iter: i32, orbit_len: usize, delta: &mut (f64, f64), dcx: f64, dcy: f64) -> usize {
+        if m < 1 || m > self.steps {
+            return 0;
+        }
+        let k = m - 1;
+        let top = if k == 0 {
+            self.level_count - 1
+        } else {
+            (k.trailing_zeros() as usize).min(self.level_count - 1)
+        };
+        let (dx, dy) = *delta;
+        let d2 = dx * dx + dy * dy;
+        for level in (0..=top).rev() {
+            let o = (self.starts[level] + (k >> level)) * BLA_ENTRY;
+            let e = &self.data[o..o + BLA_ENTRY];
+            if d2 >= e[4] * e[4] {
+                continue;
+            }
+            let len = e[5].round() as usize;
+            if i64::from(n) + len as i64 > i64::from(max_iter) || m + len > orbit_len - 1 {
+                continue;
+            }
+            *delta = (
+                e[0] * dx - e[1] * dy + e[2] * dcx - e[3] * dcy,
+                e[0] * dy + e[1] * dx + e[2] * dcy + e[3] * dcx,
+            );
+            return len;
+        }
+        0
+    }
+}
+
+// Table BLA reçue de Delphi : Ok(None) si bla_len = 0 ; FK_INVALID_ARGUMENT si la taille ne va pas avec l'orbite.
+///
+/// # Safety
+/// `bla` désigne `bla_len` f64 lisibles quand `bla_len` > 0.
+unsafe fn bla_from_raw<'a>(bla: *const f64, bla_len: i32, orbit_len: i32) -> Result<Option<Bla<'a>>, i32> {
+    if bla_len == 0 {
+        return Ok(None);
+    }
+    if bla_len < 0 || bla.is_null() || orbit_len < 2 {
+        return Err(FK_INVALID_ARGUMENT);
+    }
+    let data = std::slice::from_raw_parts(bla, bla_len as usize);
+    Bla::new(data, orbit_len as usize).map(Some).ok_or(FK_INVALID_ARGUMENT)
+}
+
 // Pixel d'écart (dcx, dcy) à la référence, comme IteratePerturbedCritical : `critical` = orbite critique W de Julia
 // (où (dcx, dcy) est δ0), ignorée par les autres formules. Julia et Multibrot à puissance non entière n'arrivent ici
 // qu'après les contrôles des exportations.
-fn iterate_perturbed(formula: Formula, max_iter: i32, orbit: &[f64], critical: &[f64], dcx: f64, dcy: f64) -> f32 {
+// `bla`, `crit_bla` : tables BLA de `orbit` et `critical` (None = sans BLA) ; Burning Ship et Tricorn n'en ont pas.
+#[allow(clippy::too_many_arguments)]
+fn iterate_perturbed(
+    formula: Formula,
+    max_iter: i32,
+    orbit: &[f64],
+    critical: &[f64],
+    bla: Option<&Bla>,
+    crit_bla: Option<&Bla>,
+    dcx: f64,
+    dcy: f64,
+) -> f32 {
     match formula {
-        Formula::Julia { .. } => iterate_perturbed_julia(max_iter, orbit, critical, dcx, dcy),
+        Formula::Julia { .. } => iterate_perturbed_julia(max_iter, orbit, critical, bla, crit_bla, dcx, dcy),
         Formula::Multibrot { power, log_power } => {
-            iterate_perturbed_multibrot(max_iter, power.round() as usize, log_power, orbit, dcx, dcy)
+            iterate_perturbed_multibrot(max_iter, power.round() as usize, log_power, orbit, bla, dcx, dcy)
         }
-        _ => iterate_perturbed_quadratic(formula, max_iter, orbit, dcx, dcy),
+        Formula::Mandelbrot => iterate_perturbed_quadratic(formula, max_iter, orbit, bla, dcx, dcy),
+        _ => iterate_perturbed_quadratic(formula, max_iter, orbit, None, dcx, dcy),
     }
 }
 
 // Mandelbrot, Tricorn et Burning Ship. `orbit` = x0, y0, x1, y1, ... avec Z0 = 0 ; au moins deux points (après le
 // premier pas, la boucle lit Z1).
-fn iterate_perturbed_quadratic(formula: Formula, max_iter: i32, orbit: &[f64], dcx: f64, dcy: f64) -> f32 {
+fn iterate_perturbed_quadratic(formula: Formula, max_iter: i32, orbit: &[f64], bla: Option<&Bla>, dcx: f64, dcy: f64) -> f32 {
     let orbit_len = orbit.len() / 2;
     let is_conjugate = matches!(formula, Formula::Tricorn);
     let is_burning_ship = matches!(formula, Formula::BurningShip);
@@ -399,6 +511,17 @@ fn iterate_perturbed_quadratic(formula: Formula, max_iter: i32, orbit: &[f64], d
             dx = zx;
             dy = zy;
             m = 0;
+        }
+        if let Some(table) = bla {
+            let mut delta = (dx, dy);
+            let len = table.jump(m, n, max_iter, orbit_len, &mut delta, dcx, dcy);
+            if len > 0 {
+                dx = delta.0;
+                dy = delta.1;
+                m += len;
+                n += len as i32;
+                continue;
+            }
         }
         let (ox, oy) = (orbit[2 * m], orbit[2 * m + 1]);
         // δ' = 2·Z·δ + δ² + δc ; Tricorn : δ' = conj(2·Z·δ + δ²) + δc
@@ -424,7 +547,15 @@ fn iterate_perturbed_quadratic(formula: Formula, max_iter: i32, orbit: &[f64], d
 
 // Multibrot à puissance entière `p` (2..MAX_PERTURBED_POWER), Z0 = 0 : δ' = Σ C(p,k)·Z^(p-k)·δ^k + δc, en Horner
 // sur δ ; lissage en ln p (`log_power`, de la puissance reçue).
-fn iterate_perturbed_multibrot(max_iter: i32, p: usize, log_power: f64, orbit: &[f64], dcx: f64, dcy: f64) -> f32 {
+fn iterate_perturbed_multibrot(
+    max_iter: i32,
+    p: usize,
+    log_power: f64,
+    orbit: &[f64],
+    bla: Option<&Bla>,
+    dcx: f64,
+    dcy: f64,
+) -> f32 {
     let orbit_len = orbit.len() / 2;
     let mut binomial = [0.0_f64; MAX_PERTURBED_POWER + 1]; // C(p, k)
     let mut pow_x = [0.0_f64; MAX_PERTURBED_POWER + 1]; // Z^j
@@ -451,6 +582,17 @@ fn iterate_perturbed_multibrot(max_iter: i32, p: usize, log_power: f64, orbit: &
             dx = zx;
             dy = zy;
             m = 0;
+        }
+        if let Some(table) = bla {
+            let mut delta = (dx, dy);
+            let len = table.jump(m, n, max_iter, orbit_len, &mut delta, dcx, dcy);
+            if len > 0 {
+                dx = delta.0;
+                dy = delta.1;
+                m += len;
+                n += len as i32;
+                continue;
+            }
         }
         let (ox, oy) = (orbit[2 * m], orbit[2 * m + 1]);
         // puissances de Z : Z^j pour j = 0..p-1
@@ -480,8 +622,18 @@ fn iterate_perturbed_multibrot(max_iter: i32, p: usize, log_power: f64, orbit: &
 // Julia : δ0 = (dx0, dy0) = pixel - référence ; δ' = 2·Z·δ + δ² (pas de δc). On itère sur `orbit` (Z0 = la
 // référence) ; quand |z|² < |δ|² ou en fin d'orbite, on rebase sur l'orbite critique W (`critical`, W0 = 0) :
 // δ := z, m := 0 ; sur W, même règle, toujours vers W0. Les deux orbites ont au moins deux points.
-fn iterate_perturbed_julia(max_iter: i32, orbit: &[f64], critical: &[f64], dx0: f64, dy0: f64) -> f32 {
+// `bla` sert sur Z, `crit_bla` sur W après le rebasage (B = 0 : pas de δc).
+fn iterate_perturbed_julia(
+    max_iter: i32,
+    orbit: &[f64],
+    critical: &[f64],
+    bla: Option<&Bla>,
+    crit_bla: Option<&Bla>,
+    dx0: f64,
+    dy0: f64,
+) -> f32 {
     let mut reference = orbit;
+    let mut reference_bla = bla;
     let mut reference_len = orbit.len() / 2;
     let mut dx = dx0;
     let mut dy = dy0;
@@ -500,7 +652,19 @@ fn iterate_perturbed_julia(max_iter: i32, orbit: &[f64], critical: &[f64], dx0: 
             dy = zy;
             m = 0;
             reference = critical;
+            reference_bla = crit_bla;
             reference_len = critical.len() / 2;
+        }
+        if let Some(table) = reference_bla {
+            let mut delta = (dx, dy);
+            let len = table.jump(m, n, max_iter, reference_len, &mut delta, 0.0, 0.0);
+            if len > 0 {
+                dx = delta.0;
+                dy = delta.1;
+                m += len;
+                n += len as i32;
+                continue;
+            }
         }
         let (ox, oy) = (reference[2 * m], reference[2 * m + 1]);
         let new_dx = 2.0 * (ox * dx - oy * dy) + dx * dx - dy * dy;
@@ -519,13 +683,15 @@ fn compute_row_perturbed(
     max_iter: i32,
     orbit: &[f64],
     critical: &[f64],
+    bla: Option<&Bla>,
+    crit_bla: Option<&Bla>,
     dcx0: f64,
     ddx: f64,
     dcy: f64,
     out: &mut [f32],
 ) {
     for (i, value) in out.iter_mut().enumerate() {
-        *value = iterate_perturbed(formula, max_iter, orbit, critical, dcx0 + i as f64 * ddx, dcy);
+        *value = iterate_perturbed(formula, max_iter, orbit, critical, bla, crit_bla, dcx0 + i as f64 * ddx, dcy);
     }
 }
 
@@ -629,7 +795,7 @@ pub unsafe extern "C" fn fk_compute_row_perturbed(
         }
         let orbit = std::slice::from_raw_parts(ref_orbit, 2 * ref_len as usize);
         let out = std::slice::from_raw_parts_mut(out, count as usize);
-        compute_row_perturbed(formula, max_iter, orbit, &[], dcx0, ddx, dcy, out);
+        compute_row_perturbed(formula, max_iter, orbit, &[], None, None, dcx0, ddx, dcy, out);
         FK_OK
     }));
     result.unwrap_or(FK_INTERNAL_ERROR)
@@ -679,7 +845,131 @@ pub unsafe extern "C" fn fk_compute_row_perturbed2(
         };
         let orbit = std::slice::from_raw_parts(ref_orbit, 2 * ref_len as usize);
         let out = std::slice::from_raw_parts_mut(out, count as usize);
-        compute_row_perturbed(formula, max_iter, orbit, critical, dcx0, ddx, dcy, out);
+        compute_row_perturbed(formula, max_iter, orbit, critical, None, None, dcx0, ddx, dcy, out);
+        FK_OK
+    }));
+    result.unwrap_or(FK_INTERNAL_ERROR)
+}
+
+/// Comme fk_compute_row_perturbed, avec la table BLA de l'orbite (`bla`, `bla_len` f64, format de Fractal.Bla ;
+/// `bla_len` = 0 : sans BLA). Taille de table qui ne correspond pas à `ref_len` : FK_INVALID_ARGUMENT.
+///
+/// # Safety
+/// Comme fk_compute_row_perturbed ; de plus `bla` désigne `bla_len` f64 lisibles quand `bla_len` > 0.
+#[no_mangle]
+pub unsafe extern "C" fn fk_compute_row_perturbed_bla(
+    formula: i32,
+    params: *const f64,
+    param_count: i32,
+    max_iter: i32,
+    ref_orbit: *const f64,
+    ref_len: i32,
+    bla: *const f64,
+    bla_len: i32,
+    dcx0: f64,
+    ddx: f64,
+    dcy: f64,
+    count: i32,
+    out: *mut f32,
+) -> i32 {
+    // aucune panique ne doit traverser la frontière avec Delphi
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if param_count < 0 || max_iter < 0 || count < 0 || out.is_null() || (param_count > 0 && params.is_null()) {
+            return FK_INVALID_ARGUMENT;
+        }
+        if ref_orbit.is_null() || ref_len < MIN_ORBIT_LENGTH {
+            return FK_INVALID_ARGUMENT;
+        }
+        let table = match bla_from_raw(bla, bla_len, ref_len) {
+            Ok(table) => table,
+            Err(code) => return code,
+        };
+        let formula = match formula_from_raw(formula, params, param_count) {
+            Ok(formula) => formula,
+            Err(code) => return code,
+        };
+        if !formula.supports_perturbation() || formula.has_pixel_start() {
+            return FK_UNSUPPORTED;
+        }
+        let orbit = std::slice::from_raw_parts(ref_orbit, 2 * ref_len as usize);
+        let out = std::slice::from_raw_parts_mut(out, count as usize);
+        compute_row_perturbed(formula, max_iter, orbit, &[], table.as_ref(), None, dcx0, ddx, dcy, out);
+        FK_OK
+    }));
+    result.unwrap_or(FK_INTERNAL_ERROR)
+}
+
+/// Comme fk_compute_row_perturbed2, avec les tables BLA de l'orbite (`bla`) et de l'orbite critique (`crit_bla`) ;
+/// longueur 0 = sans BLA pour cette orbite.
+///
+/// # Safety
+/// Comme fk_compute_row_perturbed2 ; de plus `bla` et `crit_bla` désignent `bla_len` et `crit_bla_len` f64 lisibles
+/// quand leur longueur est > 0.
+#[no_mangle]
+pub unsafe extern "C" fn fk_compute_row_perturbed2_bla(
+    formula: i32,
+    params: *const f64,
+    param_count: i32,
+    max_iter: i32,
+    ref_orbit: *const f64,
+    ref_len: i32,
+    bla: *const f64,
+    bla_len: i32,
+    crit_orbit: *const f64,
+    crit_len: i32,
+    crit_bla: *const f64,
+    crit_bla_len: i32,
+    dcx0: f64,
+    ddx: f64,
+    dcy: f64,
+    count: i32,
+    out: *mut f32,
+) -> i32 {
+    // aucune panique ne doit traverser la frontière avec Delphi
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if param_count < 0 || max_iter < 0 || count < 0 || out.is_null() || (param_count > 0 && params.is_null()) {
+            return FK_INVALID_ARGUMENT;
+        }
+        if ref_orbit.is_null() || ref_len < MIN_ORBIT_LENGTH || crit_len < 0 {
+            return FK_INVALID_ARGUMENT;
+        }
+        let table = match bla_from_raw(bla, bla_len, ref_len) {
+            Ok(table) => table,
+            Err(code) => return code,
+        };
+        let crit_table = match bla_from_raw(crit_bla, crit_bla_len, crit_len) {
+            Ok(table) => table,
+            Err(code) => return code,
+        };
+        let formula = match formula_from_raw(formula, params, param_count) {
+            Ok(formula) => formula,
+            Err(code) => return code,
+        };
+        if !formula.supports_perturbation() {
+            return FK_UNSUPPORTED;
+        }
+        let critical: &[f64] = if formula.has_pixel_start() {
+            if crit_orbit.is_null() || crit_len < MIN_ORBIT_LENGTH {
+                return FK_INVALID_ARGUMENT;
+            }
+            std::slice::from_raw_parts(crit_orbit, 2 * crit_len as usize)
+        } else {
+            &[]
+        };
+        let orbit = std::slice::from_raw_parts(ref_orbit, 2 * ref_len as usize);
+        let out = std::slice::from_raw_parts_mut(out, count as usize);
+        compute_row_perturbed(
+            formula,
+            max_iter,
+            orbit,
+            critical,
+            table.as_ref(),
+            crit_table.as_ref(),
+            dcx0,
+            ddx,
+            dcy,
+            out,
+        );
         FK_OK
     }));
     result.unwrap_or(FK_INTERNAL_ERROR)
@@ -1189,5 +1479,212 @@ mod tests {
             );
         }
         assert!(out.iter().all(|v| *v == NOT_WRITTEN), "aucun pixel ne doit être écrit en cas d'erreur");
+    }
+
+    // Table BLA comme BuildBlaTable de Fractal.Bla (ε = 2^-44), pour les tests : un pas au point Z de l'orbite donne
+    // A = 2Z (Mandelbrot, Julia) ou p·Z^(p-1) (Multibrot), B = 1 (0 pour Julia).
+    fn build_bla(formula: Formula, orbit: &[f64], max_delta_c: f64) -> Vec<f64> {
+        let epsilon = 2.0_f64.powi(-44);
+        let steps = orbit.len() / 2 - 1;
+        let mut starts = vec![0_usize];
+        while bla_level_entries(steps, starts.len() - 1) > 1 {
+            let level = starts.len() - 1;
+            starts.push(starts[level] + bla_level_entries(steps, level));
+        }
+        let mut data = vec![0.0_f64; (starts[starts.len() - 1] + 1) * BLA_ENTRY];
+        for j in 0..steps {
+            let (zx, zy) = (orbit[2 * (j + 1)], orbit[2 * (j + 1) + 1]);
+            let (mut ax, mut ay, bx, ratio) = match formula {
+                Formula::Multibrot { power, .. } => {
+                    let p = power.round() as usize;
+                    let (mut px, mut py) = (1.0, 0.0);
+                    for _ in 2..=p {
+                        let t = px * zx - py * zy;
+                        py = px * zy + py * zx;
+                        px = t;
+                    }
+                    (px, py, 1.0, 1.0 / f64::max(1.0, (p as f64 - 1.0) / 2.0))
+                }
+                Formula::Julia { .. } => (zx, zy, 0.0, 1.0),
+                _ => (zx, zy, 1.0, 1.0),
+            };
+            match formula {
+                Formula::Multibrot { power, .. } => {
+                    ax *= power.round();
+                    ay *= power.round();
+                }
+                _ => {
+                    ax *= 2.0;
+                    ay *= 2.0;
+                }
+            }
+            let o = j * BLA_ENTRY;
+            let r = (epsilon * zx.hypot(zy) * ratio - bx * max_delta_c) / (ax.hypot(ay) + 1.0);
+            data[o..o + BLA_ENTRY].copy_from_slice(&[ax, ay, bx, 0.0, r.max(0.0), 1.0]);
+        }
+        for level in 1..starts.len() {
+            let previous = bla_level_entries(steps, level - 1);
+            for j in 0..bla_level_entries(steps, level) {
+                let x = (starts[level - 1] + 2 * j) * BLA_ENTRY;
+                let dst = (starts[level] + j) * BLA_ENTRY;
+                let merged = if 2 * j + 1 < previous {
+                    let y = x + BLA_ENTRY;
+                    let (a, b) = (&data[x..x + BLA_ENTRY], &data[y..y + BLA_ENTRY]);
+                    let abs_ax = a[0].hypot(a[1]);
+                    let ry = if abs_ax == 0.0 {
+                        0.0
+                    } else {
+                        ((b[4] - a[2].hypot(a[3]) * max_delta_c) / abs_ax).max(0.0)
+                    };
+                    [
+                        b[0] * a[0] - b[1] * a[1],
+                        b[0] * a[1] + b[1] * a[0],
+                        b[0] * a[2] - b[1] * a[3] + b[2],
+                        b[0] * a[3] + b[1] * a[2] + b[3],
+                        a[4].min(ry),
+                        a[5] + b[5],
+                    ]
+                } else {
+                    let mut copy = [0.0; BLA_ENTRY];
+                    copy.copy_from_slice(&data[x..x + BLA_ENTRY]);
+                    copy
+                };
+                data[dst..dst + BLA_ENTRY].copy_from_slice(&merged);
+            }
+        }
+        data
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn call_perturbed_bla(
+        formula: i32,
+        params: &[f64],
+        max_iter: i32,
+        orbit: &[f64],
+        bla: &[f64],
+        critical: &[f64],
+        crit_bla: &[f64],
+        dcx0: f64,
+        ddx: f64,
+        dcy: f64,
+        count: usize,
+    ) -> (i32, Vec<f32>) {
+        let mut out = vec![NOT_WRITTEN; count];
+        let code = unsafe {
+            if critical.is_empty() {
+                fk_compute_row_perturbed_bla(
+                    formula,
+                    params.as_ptr(),
+                    params.len() as i32,
+                    max_iter,
+                    orbit.as_ptr(),
+                    (orbit.len() / 2) as i32,
+                    bla.as_ptr(),
+                    bla.len() as i32,
+                    dcx0,
+                    ddx,
+                    dcy,
+                    count as i32,
+                    out.as_mut_ptr(),
+                )
+            } else {
+                fk_compute_row_perturbed2_bla(
+                    formula,
+                    params.as_ptr(),
+                    params.len() as i32,
+                    max_iter,
+                    orbit.as_ptr(),
+                    (orbit.len() / 2) as i32,
+                    bla.as_ptr(),
+                    bla.len() as i32,
+                    critical.as_ptr(),
+                    (critical.len() / 2) as i32,
+                    crit_bla.as_ptr(),
+                    crit_bla.len() as i32,
+                    dcx0,
+                    ddx,
+                    dcy,
+                    count as i32,
+                    out.as_mut_ptr(),
+                )
+            }
+        };
+        (code, out)
+    }
+
+    const BLA_MAX_ITER: i32 = 3000;
+    const BLA_ROWS: usize = 36;
+    const BLA_COLUMNS: usize = 64;
+
+    // Avec et sans BLA, sur une grille autour d'une référence qui ne s'échappe pas : 99,9 % de verdicts identiques et
+    // 99 % des valeurs extérieures à 1e-2 près (seuils de la conception). La table doit faire sauter des pas.
+    #[test]
+    fn bla_row_matches_plain() {
+        let rabbit = [-0.12, 0.75];
+        // (formule, paramètres, référence, largeur de la grille)
+        let cases: [(i32, &[f64], f64, f64, f64); 3] = [
+            (MANDELBROT, &[], -0.75, 0.0, 2e-3),
+            (MULTIBROT, &[3.0], 0.3, 0.3, 1.2),
+            (JULIA, &rabbit, 0.0, 0.0, 1.6),
+        ];
+        for &(id, params, rx, ry, width) in &cases {
+            let formula = Formula::from_id(id, params).unwrap();
+            let orbit = reference_orbit(formula, BLA_MAX_ITER, rx, ry);
+            assert!(orbit.len() / 2 > BLA_MAX_ITER as usize, "formule {} : la référence s'échappe", id);
+            let critical = if id == JULIA { julia_orbit(BLA_MAX_ITER, 0.0, 0.0, rabbit[0], rabbit[1]) } else { Vec::new() };
+            let pixel = width / BLA_COLUMNS as f64;
+            let max_delta_c = if id == JULIA { 0.0 } else { width };
+            let bla = build_bla(formula, &orbit, max_delta_c);
+            let crit_bla = if critical.is_empty() { Vec::new() } else { build_bla(formula, &critical, 0.0) };
+            let (mut same, mut exterior, mut close) = (0, 0, 0);
+            for row in 0..BLA_ROWS {
+                let dcy = (row as f64 - BLA_ROWS as f64 / 2.0) * pixel;
+                let dcx0 = -width / 2.0;
+                let (code, plain) = call_perturbed2(id, params, BLA_MAX_ITER, &orbit, &critical, dcx0, pixel, dcy, BLA_COLUMNS);
+                assert_eq!(code, FK_OK);
+                let (code, fast) = call_perturbed_bla(
+                    id, params, BLA_MAX_ITER, &orbit, &bla, &critical, &crit_bla, dcx0, pixel, dcy, BLA_COLUMNS,
+                );
+                assert_eq!(code, FK_OK);
+                for (a, b) in plain.iter().zip(fast.iter()) {
+                    if (*a < 0.0) == (*b < 0.0) {
+                        same += 1;
+                    }
+                    if *a >= 0.0 && *b >= 0.0 {
+                        exterior += 1;
+                        if (a - b).abs() <= 1e-2 {
+                            close += 1;
+                        }
+                    }
+                }
+            }
+            let total = (BLA_ROWS * BLA_COLUMNS) as f64;
+            assert!(same as f64 >= 0.999 * total, "formule {} : {} verdicts identiques", id, same);
+            assert!(close as f64 >= 0.99 * exterior as f64, "formule {} : {} proches sur {}", id, close, exterior);
+        }
+    }
+
+    // Table vide (longueur 0) : exactement le calcul sans BLA
+    #[test]
+    fn bla_empty_table_is_exact() {
+        let orbit = reference_orbit(Formula::Mandelbrot, BLA_MAX_ITER, -0.75, 0.0);
+        let (code, plain) = call_perturbed(MANDELBROT, &[], BLA_MAX_ITER, &orbit, -1e-3, 3e-5, 2e-4, 64);
+        assert_eq!(code, FK_OK);
+        let (code, fast) = call_perturbed_bla(MANDELBROT, &[], BLA_MAX_ITER, &orbit, &[], &[], &[], -1e-3, 3e-5, 2e-4, 64);
+        assert_eq!(code, FK_OK);
+        assert_eq!(plain, fast);
+    }
+
+    // Taille de table qui ne correspond pas à l'orbite : argument invalide, aucun pixel écrit
+    #[test]
+    fn bla_table_bad_length_is_error() {
+        let orbit = reference_orbit(Formula::Mandelbrot, BLA_MAX_ITER, -0.75, 0.0);
+        let bla = build_bla(Formula::Mandelbrot, &orbit, 1e-3);
+        let short = &bla[..bla.len() - BLA_ENTRY];
+        let (code, out) = call_perturbed_bla(MANDELBROT, &[], BLA_MAX_ITER, &orbit, short, &[], &[], 0.0, 1e-5, 0.0, 4);
+        assert_eq!(code, FK_INVALID_ARGUMENT);
+        assert!(out.iter().all(|v| *v == NOT_WRITTEN));
+        let (code, _) = call_perturbed_bla(MANDELBROT, &[], BLA_MAX_ITER, &orbit, &bla, &[], &[], 0.0, 1e-5, 0.0, 4);
+        assert_eq!(code, FK_OK);
     }
 }
