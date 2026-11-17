@@ -74,6 +74,11 @@ type
     // pixel - référence ; par défaut, W est ignorée et l'appel revient à IteratePerturbed(Orbit, OrbitLength, DX, DY)
     function IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
       CriticalLength: Integer; DX, DY: TFloat): Single; virtual;
+    // vrai si la formule a une approximation bilinéaire (Fractal.Bla) ; faux par défaut
+    function IsBlaSupported: Boolean; virtual;
+    // un pas linéarisé au point Z de l'orbite : δ' ≈ A·δ + B·δc ; Ratio réduit le rayon de validité quand le terme
+    // d'ordre 2 est plus fort (Multibrot p > 3)
+    procedure BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat); virtual;
     function ParamCount: Integer;
     function ParamInfo(Index: Integer): TFormulaParam;
     function GetParam(Index: Integer): Double;
@@ -93,6 +98,8 @@ type
     function IsPerturbationSupported: Boolean; override;
     procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
+    function IsBlaSupported: Boolean; override;
+    procedure BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat); override;
   end;
 
   TMultibrotFormula = class(TFractalFormula)
@@ -114,6 +121,8 @@ type
     function ShouldStepInFloat(ZX, ZY: TFloat): Boolean; override;
     function StepFloat(ZX, ZY, CX, CY: TFloat): TComplexPoint; override;
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
+    function IsBlaSupported: Boolean; override;
+    procedure BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat); override;
   end;
 
   TJuliaFormula = class(TFractalFormula)
@@ -135,6 +144,8 @@ type
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
     function IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
       CriticalLength: Integer; DX, DY: TFloat): Single; override;
+    function IsBlaSupported: Boolean; override;
+    procedure BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat); override;
   end;
 
   TBurningShipFormula = class(TFractalFormula)
@@ -272,6 +283,20 @@ function TFractalFormula.IteratePerturbedCritical(const Orbit: TOrbit; OrbitLeng
 begin
   // Z0 = 0 : le rebasage vers Z0 suffit, l'orbite critique ne sert pas
   Result := IteratePerturbed(Orbit, OrbitLength, DX, DY);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFractalFormula.IsBlaSupported: Boolean;
+begin
+  Result := False;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TFractalFormula.BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat);
+begin
+  raise Exception.CreateFmt('%s : pas d''approximation bilinéaire', [FormulaName]);
 end;
 
 {------------------------------------------------------------------------------}
@@ -511,6 +536,25 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function TMandelbrotFormula.IsBlaSupported: Boolean;
+begin
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+// δ' = 2·Z·δ + δ² + δc : A = 2Z, B = 1
+procedure TMandelbrotFormula.BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat);
+begin
+  A.X := 2 * Z.X;
+  A.Y := 2 * Z.Y;
+  B.X := 1;
+  B.Y := 0;
+  Ratio := 1;
+end;
+
+{------------------------------------------------------------------------------}
+
 constructor TMultibrotFormula.Create;
 begin
   inherited Create;
@@ -739,6 +783,38 @@ end;
 
 {------------------------------------------------------------------------------}
 
+function TMultibrotFormula.IsBlaSupported: Boolean;
+begin
+  Result := FIntPower > 0;
+end;
+
+{------------------------------------------------------------------------------}
+
+// δ' ≈ p·Z^(p-1)·δ + δc ; le terme suivant, C(p, 2)·Z^(p-2)·δ², pèse (p - 1) / 2 fois plus que pour p = 2
+procedure TMultibrotFormula.BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat);
+var
+  K: Integer;
+  T: TFloat;
+begin
+  if FIntPower <= 0 then
+    raise EArgumentException.CreateFmt(kNotIntegerPowerMessage, [FPower]);
+  A.X := 1;
+  A.Y := 0;
+  for K := 2 to FIntPower do
+  begin
+    T := A.X * Z.X - A.Y * Z.Y;
+    A.Y := A.X * Z.Y + A.Y * Z.X;
+    A.X := T;
+  end;
+  A.X := FIntPower * A.X;
+  A.Y := FIntPower * A.Y;
+  B.X := 1;
+  B.Y := 0;
+  Ratio := 1 / Max(1, (FIntPower - 1) / 2);
+end;
+
+{------------------------------------------------------------------------------}
+
 constructor TJuliaFormula.Create;
 begin
   inherited Create;
@@ -882,6 +958,25 @@ begin
     Inc(N);
   end;
   Result := kInside;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TJuliaFormula.IsBlaSupported: Boolean;
+begin
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+// δ' = 2·Z·δ + δ² : c est fixe, B = 0
+procedure TJuliaFormula.BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat);
+begin
+  A.X := 2 * Z.X;
+  A.Y := 2 * Z.Y;
+  B.X := 0;
+  B.Y := 0;
+  Ratio := 1;
 end;
 
 {------------------------------------------------------------------------------}

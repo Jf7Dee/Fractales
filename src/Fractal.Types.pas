@@ -19,6 +19,13 @@ type
   // orbite de référence Z0, Z1, ... en précision Extended (perturbation) : Z0 = 0, ou le point de départ de Julia
   TOrbit = array of TComplexPoint;
 
+  // table BLA (Fractal.Bla) : entrées de kBlaEntrySize Double, Data vide = pas de BLA
+  TBlaTable = record
+    Data: array of Double;
+    Steps: Integer;        // OrbitLength - 1
+    LevelCount: Integer;
+  end;
+
   TPrecisionState = (psOk, psWarning, psLimit);
 
   // Fenêtre sur le plan complexe. Le pixel (PX, PY) a son centre en PX + 0,5 ; l'axe imaginaire monte.
