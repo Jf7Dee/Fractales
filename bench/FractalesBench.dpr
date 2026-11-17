@@ -10,6 +10,7 @@ uses
   Fractal.Types in '..\src\Fractal.Types.pas',
   Fractal.HighFloat in '..\src\Fractal.HighFloat.pas',
   Fractal.Formulas in '..\src\Fractal.Formulas.pas',
+  Fractal.Bla in '..\src\Fractal.Bla.pas',
   Fractal.Perturbation in '..\src\Fractal.Perturbation.pas',
   Fractal.RustKernel in '..\src\Fractal.RustKernel.pas',
   Fractal.Buffer in '..\src\Fractal.Buffer.pas',

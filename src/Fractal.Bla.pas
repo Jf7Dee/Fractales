@@ -16,7 +16,10 @@ uses
 
 const
   kBlaEntrySize = 6;
-  kBlaEpsilon = 1 / 16777216;     // 2^-24 : erreur relative tolérée sur δ (point de départ, voir le plan)
+  // erreur relative tolérée sur δ : 2^-44. Mesuré sur MultiBroth_1 (64 x 36, 40 000 itérations) : 2^-24 laisse 1,7 %
+  // des pixels à plus de 1e-2 de la valeur sans BLA, 2^-44 aucun (écart max 0,008), pour un temps quasi identique
+  // (x 50 sur le calcul sans BLA)
+  kBlaEpsilon = 1 / 17592186044416;
   kBlaMinOrbitLength = 1024;      // en dessous, la table coûte plus qu'elle ne fait gagner
 
 function BlaLevelCount(Steps: Integer): Integer;
@@ -27,6 +30,11 @@ function BlaLevelStart(Steps, Level: Integer): Integer;
 // l'orbite est plus courte que kBlaMinOrbitLength
 function BuildBlaTable(Formula: TFractalFormula; const Orbit: TOrbit; OrbitLength: Integer; MaxDeltaC: TFloat;
   Epsilon: TFloat = kBlaEpsilon): TBlaTable;
+// Saut au point M de l'orbite (M >= 1), à l'itération N : l'entrée alignée du plus haut niveau dont le rayon
+// contient δ, qui ne dépasse ni MaxIter ni la fin de l'orbite. δ devient A·δ + B·δc. Renvoie le nombre de pas sautés,
+// 0 si aucun (table vide comprise) : l'appelant fait alors le pas normal.
+function BlaJump(const T: TBlaTable; M, N, MaxIter, OrbitLength: Integer; var DX, DY: TFloat;
+  DCX, DCY: TFloat): Integer;
 
 implementation
 
@@ -96,6 +104,7 @@ begin
   Result.Data := nil;
   Result.Steps := 0;
   Result.LevelCount := 0;
+  Result.LevelStarts := nil;
   if Formula = nil then
     raise EArgumentException.Create('BuildBlaTable : formule absente');
   if not Formula.IsBlaSupported or (OrbitLength < kBlaMinOrbitLength) or (OrbitLength > Length(Orbit)) then
@@ -103,7 +112,10 @@ begin
   Steps := OrbitLength - 1;
   Result.Steps := Steps;
   Result.LevelCount := BlaLevelCount(Steps);
-  SetLength(Result.Data, (BlaLevelStart(Steps, Result.LevelCount - 1) + 1) * kBlaEntrySize);
+  SetLength(Result.LevelStarts, Result.LevelCount);
+  for Level := 0 to Result.LevelCount - 1 do
+    Result.LevelStarts[Level] := BlaLevelStart(Steps, Level);
+  SetLength(Result.Data, (Result.LevelStarts[Result.LevelCount - 1] + 1) * kBlaEntrySize);
   // niveau 0 : un pas de la formule au point Z = Orbit[m]
   for J := 0 to Steps - 1 do
   begin
@@ -134,6 +146,40 @@ begin
         for K := 0 to kBlaEntrySize - 1 do
           Result.Data[O + K] := Result.Data[Src + K];
     end;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function BlaJump(const T: TBlaTable; M, N, MaxIter, OrbitLength: Integer; var DX, DY: TFloat;
+  DCX, DCY: TFloat): Integer;
+var
+  Level, Top, O, Len: Integer;
+  R, D2, NewDX: TFloat;
+begin
+  Result := 0;
+  if (T.Data = nil) or (M < 1) or (M > T.Steps) then
+    Exit;
+  // niveaux alignés sur M - 1 : autant que de zéros de poids faible
+  Top := 0;
+  while (Top < T.LevelCount - 1) and (((M - 1) shr Top) and 1 = 0) and (((M - 1) shr Top) <> 0) do
+    Inc(Top);
+  if M = 1 then
+    Top := T.LevelCount - 1;
+  D2 := DX * DX + DY * DY;
+  for Level := Top downto 0 do
+  begin
+    O := (T.LevelStarts[Level] + ((M - 1) shr Level)) * kBlaEntrySize;
+    R := T.Data[O + 4];
+    if D2 >= R * R then
+      Continue;
+    Len := Round(T.Data[O + 5]);
+    if (N + Len > MaxIter) or (M + Len > OrbitLength - 1) then
+      Continue;
+    NewDX := T.Data[O] * DX - T.Data[O + 1] * DY + T.Data[O + 2] * DCX - T.Data[O + 3] * DCY;
+    DY := T.Data[O] * DY + T.Data[O + 1] * DX + T.Data[O + 2] * DCY + T.Data[O + 3] * DCX;
+    DX := NewDX;
+    Exit(Len);
   end;
 end;
 

@@ -24,6 +24,7 @@ type
     Data: array of Double;
     Steps: Integer;        // OrbitLength - 1
     LevelCount: Integer;
+    LevelStarts: array of Integer;   // BlaLevelStart de chaque niveau, en entrées (Delphi seulement)
   end;
 
   TPrecisionState = (psOk, psWarning, psLimit);

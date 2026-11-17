@@ -74,6 +74,12 @@ type
     // pixel - référence ; par défaut, W est ignorée et l'appel revient à IteratePerturbed(Orbit, OrbitLength, DX, DY)
     function IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
       CriticalLength: Integer; DX, DY: TFloat): Single; virtual;
+    // comme IteratePerturbed et IteratePerturbedCritical, avec les sauts de la table BLA (Fractal.Bla) ; une table
+    // vide, ou une formule sans BLA, donne exactement le calcul sans BLA
+    function IteratePerturbedBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+      DCX, DCY: TFloat): Single; virtual;
+    function IteratePerturbedCriticalBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+      const Critical: TOrbit; CriticalLength: Integer; const CriticalBla: TBlaTable; DX, DY: TFloat): Single; virtual;
     // vrai si la formule a une approximation bilinéaire (Fractal.Bla) ; faux par défaut
     function IsBlaSupported: Boolean; virtual;
     // un pas linéarisé au point Z de l'orbite : δ' ≈ A·δ + B·δc ; Ratio réduit le rayon de validité quand le terme
@@ -98,6 +104,8 @@ type
     function IsPerturbationSupported: Boolean; override;
     procedure StepReference(var ZX, ZY: THighFloat; const CX, CY: THighFloat); override;
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
+    function IteratePerturbedBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+      DCX, DCY: TFloat): Single; override;
     function IsBlaSupported: Boolean; override;
     procedure BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat); override;
   end;
@@ -121,6 +129,8 @@ type
     function ShouldStepInFloat(ZX, ZY: TFloat): Boolean; override;
     function StepFloat(ZX, ZY, CX, CY: TFloat): TComplexPoint; override;
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
+    function IteratePerturbedBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+      DCX, DCY: TFloat): Single; override;
     function IsBlaSupported: Boolean; override;
     procedure BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat); override;
   end;
@@ -144,6 +154,8 @@ type
     function IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single; override;
     function IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
       CriticalLength: Integer; DX, DY: TFloat): Single; override;
+    function IteratePerturbedCriticalBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+      const Critical: TOrbit; CriticalLength: Integer; const CriticalBla: TBlaTable; DX, DY: TFloat): Single; override;
     function IsBlaSupported: Boolean; override;
     procedure BlaStep(const Z: TComplexPoint; out A, B: TComplexPoint; out Ratio: TFloat); override;
   end;
@@ -185,6 +197,12 @@ function IsIntegerPower(Power: TFloat): Boolean;
 function DiffAbs(C, D: TFloat): TFloat;
 
 implementation
+
+uses
+  Fractal.Bla;
+
+var
+  NoBla: TBlaTable;   // table vide (variable globale, donc à zéro) : le calcul sans BLA
 
 const
   kLn2 = 0.69314718055994530942;
@@ -283,6 +301,24 @@ function TFractalFormula.IteratePerturbedCritical(const Orbit: TOrbit; OrbitLeng
 begin
   // Z0 = 0 : le rebasage vers Z0 suffit, l'orbite critique ne sert pas
   Result := IteratePerturbed(Orbit, OrbitLength, DX, DY);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFractalFormula.IteratePerturbedBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+  DCX, DCY: TFloat): Single;
+begin
+  Result := IteratePerturbed(Orbit, OrbitLength, DCX, DCY);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TFractalFormula.IteratePerturbedCriticalBla(const Orbit: TOrbit; OrbitLength: Integer;
+  const Bla: TBlaTable; const Critical: TOrbit; CriticalLength: Integer; const CriticalBla: TBlaTable;
+  DX, DY: TFloat): Single;
+begin
+  // Z0 = 0 : comme IteratePerturbedCritical, l'orbite critique ne sert pas
+  Result := IteratePerturbedBla(Orbit, OrbitLength, Bla, DX, DY);
 end;
 
 {------------------------------------------------------------------------------}
@@ -500,9 +536,17 @@ end;
 {------------------------------------------------------------------------------}
 
 function TMandelbrotFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
+begin
+  Result := IteratePerturbedBla(Orbit, OrbitLength, NoBla, DCX, DCY);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMandelbrotFormula.IteratePerturbedBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+  DCX, DCY: TFloat): Single;
 var
   DX, DY, ZX, ZY, R2, NewDX, NewDY: TFloat;
-  N, M: Integer;
+  N, M, K: Integer;
 begin
   CheckOrbit(Orbit, OrbitLength);
   DX := 0;
@@ -522,6 +566,16 @@ begin
       DX := ZX;
       DY := ZY;
       M := 0;
+    end;
+    if Bla.Data <> nil then
+    begin
+      K := BlaJump(Bla, M, N, FMaxIter, OrbitLength, DX, DY, DCX, DCY);
+      if K > 0 then
+      begin
+        Inc(M, K);
+        Inc(N, K);
+        Continue;
+      end;
     end;
     // δ' = 2·Z·δ + δ² + δc
     NewDX := 2 * (Orbit[M].X * DX - Orbit[M].Y * DY) + DX * DX - DY * DY + DCX;
@@ -721,6 +775,14 @@ end;
 {------------------------------------------------------------------------------}
 
 function TMultibrotFormula.IteratePerturbed(const Orbit: TOrbit; OrbitLength: Integer; DCX, DCY: TFloat): Single;
+begin
+  Result := IteratePerturbedBla(Orbit, OrbitLength, NoBla, DCX, DCY);
+end;
+
+{------------------------------------------------------------------------------}
+
+function TMultibrotFormula.IteratePerturbedBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+  DCX, DCY: TFloat): Single;
 var
   Binomial: array[0..kMaxPerturbedPower] of TFloat;   // C(p, k)
   PowX, PowY: array[0..kMaxPerturbedPower] of TFloat;  // Z^j
@@ -753,6 +815,16 @@ begin
       DX := ZX;
       DY := ZY;
       M := 0;
+    end;
+    if Bla.Data <> nil then
+    begin
+      K := BlaJump(Bla, M, N, FMaxIter, OrbitLength, DX, DY, DCX, DCY);
+      if K > 0 then
+      begin
+        Inc(M, K);
+        Inc(N, K);
+        Continue;
+      end;
     end;
     // puissances de Z : Z^j pour j = 0..p-1
     for K := 1 to P - 1 do
@@ -923,14 +995,25 @@ end;
 // d'orbite, on rebase sur l'orbite critique W (W0 = 0) : δ := z, m := 0 ; sur W, même règle, toujours vers W0.
 function TJuliaFormula.IteratePerturbedCritical(const Orbit: TOrbit; OrbitLength: Integer; const Critical: TOrbit;
   CriticalLength: Integer; DX, DY: TFloat): Single;
+begin
+  Result := IteratePerturbedCriticalBla(Orbit, OrbitLength, NoBla, Critical, CriticalLength, NoBla, DX, DY);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Bla sert sur Z, CriticalBla sur W après le rebasage (B = 0 dans les deux : pas de δc)
+function TJuliaFormula.IteratePerturbedCriticalBla(const Orbit: TOrbit; OrbitLength: Integer; const Bla: TBlaTable;
+  const Critical: TOrbit; CriticalLength: Integer; const CriticalBla: TBlaTable; DX, DY: TFloat): Single;
 var
   Ref: TOrbit;
-  RefLength, N, M: Integer;
+  RefBla: TBlaTable;
+  RefLength, N, M, K: Integer;
   ZX, ZY, R2, NewDX, NewDY: TFloat;
 begin
   CheckOrbit(Orbit, OrbitLength);
   CheckOrbit(Critical, CriticalLength);
   Ref := Orbit;
+  RefBla := Bla;
   RefLength := OrbitLength;
   N := 0;
   M := 0;
@@ -948,7 +1031,18 @@ begin
       DY := ZY;
       M := 0;
       Ref := Critical;
+      RefBla := CriticalBla;
       RefLength := CriticalLength;
+    end;
+    if RefBla.Data <> nil then
+    begin
+      K := BlaJump(RefBla, M, N, FMaxIter, RefLength, DX, DY, 0, 0);
+      if K > 0 then
+      begin
+        Inc(M, K);
+        Inc(N, K);
+        Continue;
+      end;
     end;
     NewDX := 2 * (Ref[M].X * DX - Ref[M].Y * DY) + DX * DX - DY * DY;
     NewDY := 2 * (Ref[M].X * DY + Ref[M].Y * DX) + 2 * DX * DY;
