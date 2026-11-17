@@ -17,6 +17,7 @@ type
     Height: Integer;
     Supersample: Integer;
     FileName: string;
+    IsBla: Boolean;    // approximation bilinéaire en zoom profond : vidéos seulement, jamais les images fixes
   end;
 
   // Rendu hors écran par bandes de lignes, écrit directement dans le PNG.
@@ -202,6 +203,7 @@ begin
   Engine := TRenderEngine.Create(CpuCount);
   try
     Engine.Kernel := FKernel;
+    Engine.IsBlaEnabled := FSettings.IsBla;
     // les bandes partagent une seule orbite, même échappée : sinon chacune en recalculerait jusqu'à neuf
     Engine.IsEscapedReferenceReusable := True;
     Writer := TPngWriter.Create(Stream, FSettings.Width, FSettings.Height);

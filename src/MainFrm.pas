@@ -1059,7 +1059,7 @@ begin
     V := FNavigator.Viewport;
     V.Width := V.Width / 8;
     Deeper.CaptureFrom(FFormula, V, FIsAutoIter, FPalette, FMapping);
-    Form.Prepare(FFavorites, Location, FPalette, FMapping, FEngine.Kernel, Ffmpeg);
+    Form.Prepare(FFavorites, Location, FPalette, FMapping, FEngine.Kernel, Ffmpeg, FSettings.IsVideoBla);
     // aperçu à part : celui du dossier temporaire peut appartenir à un Fractales ouvert
     Form.PreviewFolder := ExtractFilePath(ParamStr(0)) + kSmokePreviewFolder;
     if not ForceDirectories(Form.PreviewFolder) then
@@ -2624,7 +2624,7 @@ begin
   Location := CaptureLocation;
   try
     TVideoForm(FVideoForm).Prepare(FFavorites, Location, FPalette, FMapping, FEngine.Kernel,
-      FindFfmpeg(ExtractFilePath(ParamStr(0)), FSettings.VideoFfmpegPath));
+      FindFfmpeg(ExtractFilePath(ParamStr(0)), FSettings.VideoFfmpegPath), FSettings.IsVideoBla);
   finally
     Location.Free;
   end;

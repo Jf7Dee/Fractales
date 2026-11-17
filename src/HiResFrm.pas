@@ -238,6 +238,7 @@ begin
     Exit;
   end;
   Settings.Supersample := cbSupersample.ItemIndex + 1;
+  Settings.IsBla := False;   // image fixe : calcul exact
   Settings.FileName := Trim(edFile.Text);
   if Settings.FileName = '' then
   begin

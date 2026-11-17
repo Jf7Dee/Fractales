@@ -14,6 +14,7 @@ type
     procedure WriteText(const FileName, Text: string);
   published
     procedure TestSettingsRoundTrip;
+    procedure TestSettingsVideoBla;
     procedure TestMissingFileGivesDefaults;
     procedure TestInvalidValuesGiveDefaults;
     procedure TestUnreadableFileGivesDefaults;
@@ -116,6 +117,34 @@ begin
   CheckEquals(3, R.HiResSupersample);
   CheckTrue(R.Update.Mode = umSilent);
   CheckEquals(S.Update.ManifestUrl, R.Update.ManifestUrl);
+end;
+
+{------------------------------------------------------------------------------}
+
+// [Video] BLA : actif sans la clé, aller-retour 0 et 1
+procedure TTestSettings.TestSettingsVideoBla;
+var
+  FileName: string;
+  S: TAppSettings;
+  L: TStringList;
+begin
+  FileName := TestTempFolder + 'settings-bla.ini';
+  WriteText(FileName, '[Video]' + #13#10 + 'FfmpegPath=' + #13#10);
+  CheckTrue(LoadAppSettings(FileName, kNavModeCount).IsVideoBla, 'sans clé');
+  S := SampleSettings;
+  S.IsVideoBla := False;
+  CheckTrue(SaveAppSettings(FileName, S));
+  CheckFalse(LoadAppSettings(FileName, kNavModeCount).IsVideoBla, 'BLA=0');
+  L := TStringList.Create;
+  try
+    L.LoadFromFile(FileName);
+    CheckEquals('0', L.Values['BLA'], 'clé écrite');
+  finally
+    L.Free;
+  end;
+  S.IsVideoBla := True;
+  CheckTrue(SaveAppSettings(FileName, S));
+  CheckTrue(LoadAppSettings(FileName, kNavModeCount).IsVideoBla, 'BLA=1');
 end;
 
 {------------------------------------------------------------------------------}

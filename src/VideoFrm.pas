@@ -108,6 +108,7 @@ type
     FPalette: TGradientPalette;
     FMapping: TColorMapping;
     FKernel: TEngineKernelType;
+    FIsBla: Boolean;           // [Video] BLA de Fractales.ini
     FFfmpegExe: string;
     FRenderer: TVideoRenderer;
     FIsPreview: Boolean;
@@ -150,7 +151,7 @@ type
   public
     // Copie le lieu courant et la palette ; Favorites reste à l'appelant. Peut être rappelé : garde les sélections
     procedure Prepare(Favorites: TFavoriteStore; CurrentLocation: TFractalLocation; Palette: TGradientPalette;
-      const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string);
+      const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string; IsBla: Boolean);
     procedure AddCurrentView;
     procedure StartRender(IsPreview: Boolean; const FileName: string; Divisor: Integer = 0);
     // Relance un rendu interrompu avec le scénario, la palette et la coloration gardés dans ses morceaux
@@ -285,7 +286,7 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TVideoForm.Prepare(Favorites: TFavoriteStore; CurrentLocation: TFractalLocation; Palette: TGradientPalette;
-  const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string);
+  const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string; IsBla: Boolean);
 var
   Favorite: string;
 begin
@@ -297,6 +298,7 @@ begin
   FMapping := Mapping;
   FKernel := Kernel;
   FFfmpegExe := FfmpegExe;
+  FIsBla := IsBla;
   Favorite := cbFavorites.Text;
   FFavorites.List(cbFavorites.Items);
   cbFavorites.ItemIndex := cbFavorites.Items.IndexOf(Favorite);
@@ -1016,7 +1018,7 @@ begin
   if IsPreview then
     Sink := PreviewSink;
   FRenderer := TVideoRenderer.Create(FScenario, Palette, Mapping, FKernel, FFfmpegExe, FileName, IsPreview, Sink,
-    Divisor);
+    Divisor, 0, FIsBla);
   if (FileName <> '') and (FInterruptedFile <> '') then
   begin
     R.OutputFile := FileName;

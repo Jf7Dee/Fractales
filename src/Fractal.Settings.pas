@@ -34,6 +34,7 @@ type
     HiResSupersample: Integer;
     Update: TUpdateConfig;     // section [MiseAJour]
     VideoFfmpegPath: string;   // section [Video] ; vide = ffmpeg.exe à côté de l'exe
+    IsVideoBla: Boolean;       // [Video] BLA : approximation bilinéaire des vidéos (1 par défaut, 0 pour comparer)
   end;
 
   // Aperçu ou génération vidéo lancé et pas encore terminé (section [RendusInterrompus]) : proposé au démarrage
@@ -70,6 +71,7 @@ const
   kKeyInterrupted = 'Rendu';
   kInterruptedSeparator = '|';  // interdit dans un chemin Windows
   kKeyFfmpegPath = 'FfmpegPath';
+  kKeyBla = 'BLA';
   kKeyKernel = 'Kernel';
   kKeyMode = 'Mode';
   kKeyLocations = 'Locations';
@@ -102,6 +104,7 @@ begin
   Result.HiResHeight := kDefaultHiResHeight;
   Result.HiResSupersample := kDefaultSupersample;
   Result.Update := DefaultUpdateConfig;
+  Result.IsVideoBla := True;
 end;
 
 {------------------------------------------------------------------------------}
@@ -135,6 +138,7 @@ begin
       Result.VideoScenarioFolder := Ini.ReadString(kSectionFolders, kKeyVideoScenarios, '');
       Result.VideoFolder := Ini.ReadString(kSectionFolders, kKeyVideos, '');
       Result.VideoFfmpegPath := Ini.ReadString(kSectionVideo, kKeyFfmpegPath, '');
+      Result.IsVideoBla := Ini.ReadBool(kSectionVideo, kKeyBla, D.IsVideoBla);
       Result.HiResPreset := ReadBounded(Ini, kSectionHiRes, kKeyPreset, D.HiResPreset, 0, kHiResPresetCount - 1);
       Result.HiResWidth := ReadBounded(Ini, kSectionHiRes, kKeyWidth, D.HiResWidth, kMinHiResSize, kMaxHiResSize);
       Result.HiResHeight := ReadBounded(Ini, kSectionHiRes, kKeyHeight, D.HiResHeight, kMinHiResSize,
@@ -189,6 +193,7 @@ begin
       Ini.WriteString(kSectionFolders, kKeyVideoScenarios, S.VideoScenarioFolder);
       Ini.WriteString(kSectionFolders, kKeyVideos, S.VideoFolder);
       Ini.WriteString(kSectionVideo, kKeyFfmpegPath, S.VideoFfmpegPath);
+      Ini.WriteBool(kSectionVideo, kKeyBla, S.IsVideoBla);
       Ini.WriteInteger(kSectionHiRes, kKeyPreset, S.HiResPreset);
       Ini.WriteInteger(kSectionHiRes, kKeyWidth, S.HiResWidth);
       Ini.WriteInteger(kSectionHiRes, kKeyHeight, S.HiResHeight);

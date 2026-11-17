@@ -28,6 +28,7 @@ type
     FPalette: TGradientPalette;
     FMapping: TColorMapping;
     FKernel: TEngineKernelType;
+    FIsBla: Boolean;
     FFfmpegExe: string;
     FOutputFile: string;
     FIsPreview: Boolean;
@@ -71,7 +72,7 @@ type
     // Divisor : 0 = automatique (kPreviewDivisor en aperçu, 1 sinon). SegmentFrames : 0 = kSegmentFrames
     constructor Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
       Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean;
-      Sink: TVideoFrameSink = nil; Divisor: Integer = 0; SegmentFrames: Integer = 0);
+      Sink: TVideoFrameSink = nil; Divisor: Integer = 0; SegmentFrames: Integer = 0; IsBla: Boolean = False);
     destructor Destroy; override;
     procedure Cancel;  // à préférer à Terminate : arrête aussi FFmpeg, même pendant la finalisation de la vidéo
     property FramesTotal: Integer read FFramesTotal;
@@ -116,7 +117,7 @@ function SetThreadExecutionState(Flags: DWORD): DWORD; stdcall; external kernel3
 
 constructor TVideoRenderer.Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
   Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean; Sink: TVideoFrameSink;
-  Divisor, SegmentFrames: Integer);
+  Divisor, SegmentFrames: Integer; IsBla: Boolean);
 begin
   if (Scenario = nil) or (Palette = nil) then
     raise EArgumentException.Create('TVideoRenderer : scénario ou palette nil');
@@ -129,6 +130,7 @@ begin
   FPalette.Assign(Palette);
   FMapping := Mapping;
   FKernel := Kernel;
+  FIsBla := IsBla;
   FFfmpegExe := FfmpegExe;
   FOutputFile := OutputFile;
   FIsPreview := IsPreview;
@@ -215,6 +217,7 @@ begin
   Settings.Height := Height;
   Settings.Supersample := Supersample;
   Settings.FileName := '';
+  Settings.IsBla := FIsBla;   // morceaux, aperçu et profil de coût : le profil prédit ainsi le vrai rendu
   Target.Size := 0;
   R := THiResRenderer.Create(Settings, V, Formula, TColorMapper.Create(FPalette, FMapping), '', FKernel,
     kHiResBandRows, Target);

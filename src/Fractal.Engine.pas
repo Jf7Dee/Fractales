@@ -4,7 +4,7 @@ interface
 
 uses
   Windows, SysUtils, Classes, SyncObjs, Math, Fractal.HighFloat, Fractal.Types, Fractal.Formulas, Fractal.Buffer,
-  Fractal.RustKernel;
+  Fractal.RustKernel, Fractal.Bla;
 
 const
   kTileSize = 64;
@@ -109,6 +109,10 @@ type
     FDoubleOrbit: TDoubleOrbit;            // FOrbit en Double, en mode Rust seulement
     FDoubleCritical: TDoubleOrbit;         // FCritical en Double, en mode Rust seulement (nil sauf Julia)
     FRefDeltaX, FRefDeltaY: TFloat;        // centre exact − référence, partie constante de δc
+    FIsBlaEnabled: Boolean;                // réglage : BLA pour les rendus suivants (vidéos seulement)
+    FIsBlaActive: Boolean;                 // figé au début du rendu courant : réglage, perturbation, formule
+    FBla: TBlaTable;                       // table BLA de FOrbit pour le rendu courant (vide sans BLA)
+    FCriticalBla: TBlaTable;               // table BLA de FCritical (Julia), vide sinon
     FReference: TReferenceOrbit;           // sous FLock pendant un rendu
     FReferenceComputeCount: Integer;
     FCriticalComputeCount: Integer;
@@ -126,6 +130,7 @@ type
     function IsCriticalReusable(Formula: TFractalFormula; FracWords: Integer): Boolean;
     class function ReferenceFracWords(const V: TViewport): Integer;
     function CurrentRustKernel: TRustKernel;
+    procedure PrepareBla;
     procedure FinishJob(const Job: TTileJob; IsCompleted: Boolean);
     procedure AddError(const Msg: string);
     procedure StopCurrent;
@@ -152,6 +157,9 @@ type
     property RustKernel: TRustKernel read FRustKernel write FRustKernel;
     // rendu HD par bandes : une référence échappée sert aussi aux bandes suivantes de même largeur
     property IsEscapedReferenceReusable: Boolean read FIsEscapedReferenceReusable write FIsEscapedReferenceReusable;
+    // approximation bilinéaire (Fractal.Bla) des rendus perturbés suivants ; faux par défaut (explorateur, images
+    // fixes), mis par la vidéo
+    property IsBlaEnabled: Boolean read FIsBlaEnabled write FIsBlaEnabled;
     property ReferenceComputeCount: Integer read GetReferenceComputeCount;   // tâches référence installées
     property CriticalComputeCount: Integer read GetCriticalComputeCount;     // orbites critiques calculées, installées
     property ReferenceLength: Integer read GetReferenceLength;               // points de la dernière référence
@@ -354,6 +362,9 @@ begin
   FViewport := V;
   // aucune tâche ne tourne plus : l'orbite et la référence gardée se lisent sans verrou
   FIsPerturbation := IsNewPerturbation;
+  FIsBlaActive := FIsBlaEnabled and IsNewPerturbation and NewFormula.IsBlaSupported;
+  FBla := EmptyBlaTable;
+  FCriticalBla := EmptyBlaTable;
   FOrbit := nil;
   FCritical := nil;
   FDoubleOrbit := nil;
@@ -377,6 +388,7 @@ begin
     end;
     FRefDeltaX := V.ExactCenterX.Sub(FReference.ExactX).ToFloat;
     FRefDeltaY := V.ExactCenterY.Sub(FReference.ExactY).ToFloat;
+    PrepareBla;
   end;
   if (FBuffer.Width <> V.PixelWidth) or (FBuffer.Height <> V.PixelHeight) then
     FBuffer.Resize(V.PixelWidth, V.PixelHeight)
@@ -635,8 +647,12 @@ begin
     // δc (δ0 pour Julia) = (centre exact − référence) + écart du pixel au centre exact ; FCritical est vide sauf
     // pour Julia, et ignorée par les autres formules
     P := FViewport.PixelOffset(X, Y);
-    Result := FFormula.IteratePerturbedCritical(FOrbit, Length(FOrbit), FCritical, Length(FCritical),
-      FRefDeltaX + P.X, FRefDeltaY + P.Y);
+    if FIsBlaActive then
+      Result := FFormula.IteratePerturbedCriticalBla(FOrbit, Length(FOrbit), FBla, FCritical, Length(FCritical),
+        FCriticalBla, FRefDeltaX + P.X, FRefDeltaY + P.Y)
+    else
+      Result := FFormula.IteratePerturbedCritical(FOrbit, Length(FOrbit), FCritical, Length(FCritical),
+        FRefDeltaX + P.X, FRefDeltaY + P.Y);
   end
   else
   begin
@@ -845,11 +861,30 @@ begin
     FDoubleCritical := FReference.CriticalDouble;
     FRefDeltaX := FViewport.ExactCenterX.Sub(RefX).ToFloat;
     FRefDeltaY := FViewport.ExactCenterY.Sub(RefY).ToFloat;
+    PrepareBla;
     FIsReferenceReady := True;
     Inc(FReferenceComputeCount);
   finally
     FLock.Leave;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Tables BLA du rendu courant, chaque fois que FOrbit est fixée (référence réutilisée ou installée) : le rayon de
+// validité dépend du |δc| maximal de la vue, donc de sa largeur et de l'écart à la référence
+procedure TRenderEngine.PrepareBla;
+var
+  MaxDeltaC: TFloat;
+begin
+  FBla := EmptyBlaTable;
+  FCriticalBla := EmptyBlaTable;
+  if not FIsBlaActive then
+    Exit;
+  MaxDeltaC := Hypot(FRefDeltaX, FRefDeltaY) + 0.5 * Hypot(FViewport.Width, FViewport.Height);
+  FBla := BuildBlaTable(FFormula, FOrbit, Length(FOrbit), MaxDeltaC);
+  if FCritical <> nil then
+    FCriticalBla := BuildBlaTable(FFormula, FCritical, Length(FCritical), 0);
 end;
 
 {------------------------------------------------------------------------------}

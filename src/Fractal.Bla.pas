@@ -22,6 +22,7 @@ const
   kBlaEpsilon = 1 / 17592186044416;
   kBlaMinOrbitLength = 1024;      // en dessous, la table coûte plus qu'elle ne fait gagner
 
+function EmptyBlaTable: TBlaTable;   // pas de BLA
 function BlaLevelCount(Steps: Integer): Integer;
 function BlaLevelEntries(Steps, Level: Integer): Integer;
 // indice (en entrées, pas en Double) de la première entrée du niveau
@@ -40,6 +41,16 @@ implementation
 
 uses
   SysUtils, Math;
+
+{------------------------------------------------------------------------------}
+
+function EmptyBlaTable: TBlaTable;
+begin
+  Result.Data := nil;
+  Result.Steps := 0;
+  Result.LevelCount := 0;
+  Result.LevelStarts := nil;
+end;
 
 {------------------------------------------------------------------------------}
 

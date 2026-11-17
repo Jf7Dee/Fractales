@@ -4,7 +4,7 @@ interface
 
 uses
   TestFramework, Fractal.Types, Fractal.HighFloat, Fractal.Formulas, Fractal.Bla, Fractal.Perturbation,
-  TestFractalPerturbation;
+  Fractal.Engine, TestFractalPerturbation;
 
 type
   TTestBla = class(TTestCase)
@@ -13,6 +13,8 @@ type
     function EntryOffset(const T: TBlaTable; Level, Index: Integer): Integer;
     procedure CheckBlaAgrees(Formula: TFractalFormula; const TextX, TextY: string; Width: TFloat;
       const Msg: string);
+    procedure CheckBuffersAgree(A, B: TRenderEngine; const Msg: string);
+    function RenderMultiBroth(Engine: TRenderEngine; Width: TFloat): Boolean;
   published
     procedure TestBlaLevelZeroMandelbrot;
     procedure TestBlaMergeMatchesTwoSteps;
@@ -30,6 +32,9 @@ type
     procedure TestBlaKeepsInside;
     procedure TestBlaShortOrbit;
     procedure TestBlaReferencePixel;
+    procedure TestEngineBlaAgrees;
+    procedure TestEngineBlaTableFollowsWidth;
+    procedure TestEngineBlaOffByDefault;
   end;
 
 implementation
@@ -63,6 +68,9 @@ const
   kRabbitCX = -0.12;
   kRabbitCY = 0.75;
   kRabbitWidth = 1.6;
+  kEngineWidth = 128;          // rendu moteur de MultiBroth_1 : 128 x 72 pixels
+  kEngineHeight = 72;
+  kEngineTimeoutMs = 600000;
 
 {------------------------------------------------------------------------------}
 
@@ -537,6 +545,117 @@ begin
       F.IteratePerturbedBla(Orbit, Length(Orbit), Table, 0, 0), kMaxSmoothGap);
   finally
     F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// MultiBroth_1 au centre de l'étape 1, à la largeur donnée, noyau Delphi ; faux si le rendu n'a pas fini à temps
+function TTestBla.RenderMultiBroth(Engine: TRenderEngine; Width: TFloat): Boolean;
+var
+  F: TFractalFormula;
+begin
+  F := TMultibrotFormula.Create;
+  try
+    F.SetParam(0, 3);
+    F.MaxIter := kMultiBroth1MaxIter;
+    Engine.Kernel := ekDelphi;
+    Engine.Render(MakeExactViewport(kMultiBroth1X, kMultiBroth1Y, Width, kEngineWidth, kEngineHeight), F, False);
+    Result := Engine.WaitUntilComplete(kEngineTimeoutMs);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestBla.CheckBuffersAgree(A, B: TRenderEngine; const Msg: string);
+var
+  X, Y, Exterior, Close, SameVerdict: Integer;
+  VA, VB: Single;
+begin
+  Exterior := 0;
+  Close := 0;
+  SameVerdict := 0;
+  for Y := 0 to kEngineHeight - 1 do
+    for X := 0 to kEngineWidth - 1 do
+    begin
+      VA := A.Buffer.Value(X, Y);
+      VB := B.Buffer.Value(X, Y);
+      if (VA < 0) = (VB < 0) then
+        Inc(SameVerdict);
+      if (VA >= 0) and (VB >= 0) then
+      begin
+        Inc(Exterior);
+        if Abs(VA - VB) <= kMaxSmoothGap then
+          Inc(Close);
+      end;
+    end;
+  Status(Format('%s : %d extérieurs, %d proches, %d verdicts identiques sur %d',
+    [Msg, Exterior, Close, SameVerdict, kEngineWidth * kEngineHeight]));
+  CheckTrue(SameVerdict >= kMinVerdictShare * kEngineWidth * kEngineHeight, Msg + ' : verdicts');
+  CheckTrue(Close >= kMinCloseShare * Exterior, Msg + ' : valeurs');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestBla.TestEngineBlaAgrees;
+var
+  Plain, Bla: TRenderEngine;
+  T0, PlainMs: Cardinal;
+begin
+  Plain := TRenderEngine.Create(CpuCount);
+  Bla := TRenderEngine.Create(CpuCount);
+  try
+    Bla.IsBlaEnabled := True;
+    T0 := GetTickCount;
+    CheckTrue(RenderMultiBroth(Plain, kMultiBroth1Width), 'sans BLA');
+    PlainMs := GetTickCount - T0;
+    T0 := GetTickCount;
+    CheckTrue(RenderMultiBroth(Bla, kMultiBroth1Width), 'avec BLA');
+    Status(Format('moteur : %d ms sans BLA, %d ms avec', [PlainMs, GetTickCount - T0]));
+    CheckBuffersAgree(Plain, Bla, 'moteur 2,33e-55');
+  finally
+    Bla.Free;
+    Plain.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// vidéo : même référence d'une image à l'autre, largeur différente : la table suit le nouveau |δc| maximal
+procedure TTestBla.TestEngineBlaTableFollowsWidth;
+var
+  Plain, Bla: TRenderEngine;
+  Count: Integer;
+begin
+  Plain := TRenderEngine.Create(CpuCount);
+  Bla := TRenderEngine.Create(CpuCount);
+  try
+    Bla.IsBlaEnabled := True;
+    CheckTrue(RenderMultiBroth(Bla, kMultiBroth1Width), 'avec BLA, 2,33e-55');
+    Count := Bla.ReferenceComputeCount;
+    CheckTrue(RenderMultiBroth(Bla, 1e-52), 'avec BLA, 1e-52');
+    CheckEquals(Count, Bla.ReferenceComputeCount, 'référence réutilisée');
+    CheckTrue(RenderMultiBroth(Plain, 1e-52), 'sans BLA, 1e-52');
+    CheckBuffersAgree(Plain, Bla, 'moteur 1e-52 après 2,33e-55');
+  finally
+    Bla.Free;
+    Plain.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestBla.TestEngineBlaOffByDefault;
+var
+  E: TRenderEngine;
+begin
+  E := TRenderEngine.Create(1);
+  try
+    CheckFalse(E.IsBlaEnabled);
+  finally
+    E.Free;
   end;
 end;
 
