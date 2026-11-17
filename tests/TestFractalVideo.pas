@@ -25,6 +25,7 @@ type
     procedure TestDeepBurningShipDescent;
     procedure TestWideToDeepOffsetDescent;
     procedure TestCloseStepFromWideView;
+    procedure TestDeepToFarWideView;
     procedure TestLateralKeepsDepth;
     procedure TestSameStepIsStill;
     procedure TestPureZoom;
@@ -266,6 +267,21 @@ begin
   A := Pose(kDeepX, kDeepY, 1e-3);
   CheckContinuous(A, Shifted(A, 2e-12, 0, 1e-12), 3000);
   CheckContinuous(A, Shifted(A, 2e-13, 1e-13, 1e-14), 3000);
+end;
+
+{------------------------------------------------------------------------------}
+
+// MultiBroth_1 de JF : de 2,33e-55 vers (0, 0) en largeur 3. À mi-longueur la largeur n'est que de 1e-27 alors que
+// l'étape large est encore à 0,72 : le centre doit rester calculé depuis le bout dont il est le plus près
+procedure TTestVideoPath.TestDeepToFarWideView;
+var
+  A, B: TCameraPose;
+begin
+  A := Pose('0.6436032989752984374817305594833887051524012044957825545579532636106783601909397218300741567511592',
+    '0.3192585403317653763008687900976260312288946415772095488687299432276187153103164694680194451662740', 2.33e-55);
+  B := Pose('0', '0', 3);
+  CheckContinuous(A, B, 3600);
+  CheckContinuous(B, A, 3600);
 end;
 
 {------------------------------------------------------------------------------}

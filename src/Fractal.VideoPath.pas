@@ -197,21 +197,20 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Survol, après la longueur S (0 à Total) ; D est la distance des centres, non nulle
+// Survol, après la longueur S (0 à Total) ; D est la distance des centres, non nulle. Le centre part de l'étape
+// dont il est le plus près en distance (pas en longueur de trajet) : entre une étape très profonde et une étape
+// large, la mi-longueur est encore à une largeur minuscule, loin de l'étape large, et un décalage flottant compté
+// depuis celle-ci y serait faux de D x 1e-19, bien plus que la largeur de l'image (MultiBroth_1 de JF)
 function FlyoverPose(const A, B: TCameraPose; DX, DY, D, Total, S: TFloat): TCameraPose;
 var
-  Offset, Width: TFloat;
+  OffsetA, WidthA, OffsetB, WidthB: TFloat;
 begin
-  if S <= Total / 2 then
-  begin
-    FlyoverFrom(A.Width, B.Width, D, S, Offset, Width);
-    Result := CenterFrom(A, DX, DY, Offset / D, Width);
-  end
+  FlyoverFrom(A.Width, B.Width, D, S, OffsetA, WidthA);
+  FlyoverFrom(B.Width, A.Width, D, Total - S, OffsetB, WidthB);
+  if OffsetA <= OffsetB then
+    Result := CenterFrom(A, DX, DY, OffsetA / D, WidthA)
   else
-  begin
-    FlyoverFrom(B.Width, A.Width, D, Total - S, Offset, Width);
-    Result := CenterFrom(B, -DX, -DY, Offset / D, Width);
-  end;
+    Result := CenterFrom(B, -DX, -DY, OffsetB / D, WidthB);
 end;
 
 {------------------------------------------------------------------------------}
