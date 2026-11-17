@@ -18,6 +18,7 @@ type
     procedure RemoveFolder(const Folder: string);
     procedure Stage(const Folder: string; WithDll, WithNew: Boolean);
     function ExeSource: string;
+    function ExeSourceVersion: string;
     function NewManifest(const Version, ExeHash, DllHash: string): string;
     procedure PrepareDownload(const Name: string; out Folder, ExeHash, DllHash: string);
     function RunDownload(Fake: TObject; const Folder, Version, ExeHash, DllHash: string; out Err: string): Boolean;
@@ -692,6 +693,18 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Version réelle de bin\Fractales.exe : le manifeste des tests de téléchargement doit l'annoncer, quelle que soit
+// la version du moment (0.5.0.3 depuis la release)
+function TTestUpdate.ExeSourceVersion: string;
+var
+  Version: TFileVersion;
+begin
+  CheckTrue(TryReadFileVersion(ExeSource, Version), 'version de ' + ExeSource);
+  Result := VersionToString(Version);
+end;
+
+{------------------------------------------------------------------------------}
+
 function TTestUpdate.NewManifest(const Version, ExeHash, DllHash: string): string;
 begin
   Result := '[Version]'#13#10'Numero=' + Version + #13#10'Obligatoire=0'#13#10#13#10'[Fichiers]'#13#10 +
@@ -816,7 +829,7 @@ begin
   PrepareDownload('dl-ok', F, ExeHash, DllHash);
   D := TFakeDownloader.Create;
   try
-    CheckTrue(RunDownload(D, F, '0.5.0.0', ExeHash, DllHash, Err), Err);
+    CheckTrue(RunDownload(D, F, ExeSourceVersion, ExeHash, DllHash, Err), Err);
     CheckTrue(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
     CheckTrue(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
   finally
@@ -840,7 +853,7 @@ begin
   PrepareDownload('dl-badhash', F, ExeHash, DllHash);
   D := TFakeDownloader.Create;
   try
-    CheckFalse(RunDownload(D, F, '0.5.0.0', ExeHash, kDllHash, Err), 'doit échouer');
+    CheckFalse(RunDownload(D, F, ExeSourceVersion, ExeHash, kDllHash, Err), 'doit échouer');
     CheckEquals(Format('Le fichier %s est corrompu (empreinte différente).', [kRustKernelFileName]), Err);
     CheckFalse(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
     CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
@@ -865,7 +878,7 @@ begin
   PrepareDownload('dl-version', F, ExeHash, DllHash);
   D := TFakeDownloader.Create;
   try
-    CheckFalse(RunDownload(D, F, '0.6.0.0', ExeHash, DllHash, Err), 'doit échouer');
+    CheckFalse(RunDownload(D, F, '0.0.0.1', ExeHash, DllHash, Err), 'doit échouer');
     CheckEquals('La version téléchargée ne correspond pas au manifeste.', Err);
     CheckFalse(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
     CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
@@ -891,7 +904,7 @@ begin
   D := TFakeDownloader.Create;
   try
     D.FailAtFile := 2;
-    CheckFalse(RunDownload(D, F, '0.5.0.0', ExeHash, DllHash, Err), 'doit échouer');
+    CheckFalse(RunDownload(D, F, ExeSourceVersion, ExeHash, DllHash, Err), 'doit échouer');
     CheckTrue(Err <> '', 'ErrorText');
     CheckFalse(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
     CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
@@ -917,7 +930,7 @@ begin
   D := TFakeDownloader.Create;
   try
     D.Cancel;
-    CheckFalse(RunDownload(D, F, '0.5.0.0', ExeHash, DllHash, Err), 'doit échouer');
+    CheckFalse(RunDownload(D, F, ExeSourceVersion, ExeHash, DllHash, Err), 'doit échouer');
     CheckFalse(FileExists(F + kExeFileName + kNewSuffix), 'exe.new');
     CheckFalse(FileExists(F + kRustKernelFileName + kNewSuffix), 'dll.new');
   finally
