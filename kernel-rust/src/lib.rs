@@ -1616,16 +1616,17 @@ mod tests {
     const BLA_ROWS: usize = 36;
     const BLA_COLUMNS: usize = 64;
 
-    // Avec et sans BLA, sur une grille autour d'une référence qui ne s'échappe pas : 99,9 % de verdicts identiques et
-    // 99 % des valeurs extérieures à 1e-2 près (seuils de la conception). La table doit faire sauter des pas.
+    // Avec et sans BLA, sur une grille profonde (largeur 1e-20, sinon ε·|Z| < |δc| et tous les rayons sont nuls)
+    // autour d'une référence qui ne s'échappe pas : 99,9 % de verdicts identiques et 99 % des valeurs extérieures à
+    // 1e-2 près (seuils de la conception). La table doit permettre des sauts (rayons non nuls aux niveaux élevés).
     #[test]
     fn bla_row_matches_plain() {
         let rabbit = [-0.12, 0.75];
         // (formule, paramètres, référence, largeur de la grille)
         let cases: [(i32, &[f64], f64, f64, f64); 3] = [
-            (MANDELBROT, &[], -0.75, 0.0, 2e-3),
-            (MULTIBROT, &[3.0], 0.3, 0.3, 1.2),
-            (JULIA, &rabbit, 0.0, 0.0, 1.6),
+            (MANDELBROT, &[], -0.75, 0.0, 1e-20),
+            (MULTIBROT, &[3.0], 0.3, 0.3, 1e-20),
+            (JULIA, &rabbit, 0.0, 0.0, 1e-20),
         ];
         for &(id, params, rx, ry, width) in &cases {
             let formula = Formula::from_id(id, params).unwrap();
@@ -1636,6 +1637,9 @@ mod tests {
             let max_delta_c = if id == JULIA { 0.0 } else { width };
             let bla = build_bla(formula, &orbit, max_delta_c);
             let crit_bla = if critical.is_empty() { Vec::new() } else { build_bla(formula, &critical, 0.0) };
+            let table = Bla::new(&bla, orbit.len() / 2).unwrap();
+            let top = (table.starts[3]..table.starts[4]).any(|j| table.data[j * BLA_ENTRY + 4] > 0.0);
+            assert!(top, "formule {} : aucun saut de 8 pas possible", id);
             let (mut same, mut exterior, mut close) = (0, 0, 0);
             for row in 0..BLA_ROWS {
                 let dcy = (row as f64 - BLA_ROWS as f64 / 2.0) * pixel;
@@ -1661,6 +1665,50 @@ mod tests {
             let total = (BLA_ROWS * BLA_COLUMNS) as f64;
             assert!(same as f64 >= 0.999 * total, "formule {} : {} verdicts identiques", id, same);
             assert!(close as f64 >= 0.99 * exterior as f64, "formule {} : {} proches sur {}", id, close, exterior);
+        }
+    }
+
+    // Un saut donne le même δ, à 1e-6 près en relatif, que les pas perturbés exacts qu'il remplace : vérifie A, B (terme
+    // en δc), les signes et les indices de la table, pour les trois formules.
+    #[test]
+    fn bla_jump_matches_exact_steps() {
+        let rabbit = [-0.12, 0.75];
+        let cases: [(i32, &[f64], f64, f64); 3] =
+            [(MANDELBROT, &[], -0.75, 0.0), (MULTIBROT, &[3.0], 0.3, 0.3), (JULIA, &rabbit, 0.0, 0.0)];
+        let (dcx, dcy) = (3e-22, -2e-22);
+        for &(id, params, rx, ry) in &cases {
+            let formula = Formula::from_id(id, params).unwrap();
+            let orbit = reference_orbit(formula, BLA_MAX_ITER, rx, ry);
+            let (cx, cy) = if id == JULIA { (0.0, 0.0) } else { (dcx, dcy) };
+            let bla = build_bla(formula, &orbit, 1e-21);
+            let table = Bla::new(&bla, orbit.len() / 2).unwrap();
+            // m = 1 : toutes les entrées de niveau élevé sont alignées
+            let start = (1e-22, 5e-23);
+            let mut delta = start;
+            let len = table.jump(1, 1, BLA_MAX_ITER, orbit.len() / 2, &mut delta, cx, cy);
+            assert!(len >= 8, "formule {} : saut de {} pas seulement", id, len);
+            let (mut dx, mut dy) = start;
+            for m in 1..1 + len {
+                let (zx, zy) = (orbit[2 * m], orbit[2 * m + 1]);
+                // pas perturbé exact, sans soustraction de grands nombres : (Z + δ)^p - Z^p + δc développé
+                let (d2x, d2y) = (dx * dx - dy * dy, 2.0 * dx * dy);
+                let (nx, ny) = if id == MULTIBROT {
+                    // 3·Z²·δ + 3·Z·δ² + δ³
+                    let (z2x, z2y) = (zx * zx - zy * zy, 2.0 * zx * zy);
+                    let (d3x, d3y) = (d2x * dx - d2y * dy, d2x * dy + d2y * dx);
+                    (
+                        3.0 * (z2x * dx - z2y * dy) + 3.0 * (zx * d2x - zy * d2y) + d3x,
+                        3.0 * (z2x * dy + z2y * dx) + 3.0 * (zx * d2y + zy * d2x) + d3y,
+                    )
+                } else {
+                    // 2·Z·δ + δ²
+                    (2.0 * (zx * dx - zy * dy) + d2x, 2.0 * (zx * dy + zy * dx) + d2y)
+                };
+                dx = nx + cx;
+                dy = ny + cy;
+            }
+            let error = (delta.0 - dx).hypot(delta.1 - dy);
+            assert!(error <= 1e-6 * dx.hypot(dy), "formule {} : écart {} pour |δ| = {}", id, error, dx.hypot(dy));
         }
     }
 

@@ -39,6 +39,7 @@ type
     procedure TestFakeKernelBlaMatchesDelphi;
     procedure TestEngineBlaRunsInRust;
     procedure TestEngineBlaWithAbi4Rust;
+    procedure TestEngineBlaTableReusedForBands;
   end;
 
 implementation
@@ -727,7 +728,8 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// DLL v4 : le rendu Rust se fait sans BLA, sans erreur
+// DLL v4 (sans BLA) : une vidéo profonde avec BLA passe en Delphi, bien plus rapide que le Rust sans BLA (mesuré :
+// 16,7 s contre 224 s sur l'image 0 de MultiBroth_1)
 procedure TTestBla.TestEngineBlaWithAbi4Rust;
 var
   Fake: TRustKernel;
@@ -740,11 +742,47 @@ begin
     E.RustKernel := Fake;
     E.IsBlaEnabled := True;
     CheckTrue(RenderMultiBroth(E, 1e-40, ekRust), 'Rust v4');
-    CheckEquals(Ord(ekRust), Ord(E.Status.Kernel), 'noyau');
+    CheckEquals(Ord(ekDelphi), Ord(E.Status.Kernel), 'noyau du rendu profond avec BLA');
+    E.IsBlaEnabled := False;
+    CheckTrue(RenderMultiBroth(E, 1e-40, ekRust), 'Rust v4 sans BLA');
+    CheckEquals(Ord(ekRust), Ord(E.Status.Kernel), 'noyau sans BLA');
     CheckEquals('', E.TakeErrors);
   finally
     E.Free;
     Fake.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// rendu haute résolution par bandes : même référence, vue plus petite (une bande) : la table déjà construite reste
+// valable (rayons calculés pour un |δc| plus grand), elle n'est pas reconstruite ; une vue plus large la reconstruit
+procedure TTestBla.TestEngineBlaTableReusedForBands;
+var
+  E: TRenderEngine;
+  F: TFractalFormula;
+  Count: Integer;
+begin
+  E := TRenderEngine.Create(CpuCount);
+  F := TMultibrotFormula.Create;
+  try
+    E.IsBlaEnabled := True;
+    E.Kernel := ekDelphi;
+    F.SetParam(0, 3);
+    F.MaxIter := kMultiBroth1MaxIter;
+    E.Render(MakeExactViewport(kMultiBroth1X, kMultiBroth1Y, kMultiBroth1Width, kEngineWidth, kEngineHeight), F, False);
+    CheckTrue(E.WaitUntilComplete(kEngineTimeoutMs), 'image');
+    Count := E.BlaBuildCount;
+    CheckTrue(Count > 0, 'table construite');
+    E.Render(MakeExactViewport(kMultiBroth1X, kMultiBroth1Y, kMultiBroth1Width, kEngineWidth, 16), F, False);
+    CheckTrue(E.WaitUntilComplete(kEngineTimeoutMs), 'bande');
+    CheckEquals(Count, E.BlaBuildCount, 'bande : table réutilisée');
+    E.Render(MakeExactViewport(kMultiBroth1X, kMultiBroth1Y, 1e-52, kEngineWidth, kEngineHeight), F, False);
+    CheckTrue(E.WaitUntilComplete(kEngineTimeoutMs), 'vue plus large');
+    CheckEquals(Count + 1, E.BlaBuildCount, 'vue plus large : table reconstruite');
+  finally
+    F.Free;
+    E.Free;
   end;
 end;
 

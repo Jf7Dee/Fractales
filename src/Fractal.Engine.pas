@@ -113,6 +113,14 @@ type
     FIsBlaActive: Boolean;                 // figé au début du rendu courant : réglage, perturbation, formule
     FBla: TBlaTable;                       // table BLA de FOrbit pour le rendu courant (vide sans BLA)
     FCriticalBla: TBlaTable;               // table BLA de FCritical (Julia), vide sinon
+    // dernières tables construites, gardées d'un rendu à l'autre (bandes du rendu HD, images de vidéo) : une table
+    // reste valable pour la même orbite tant que le |δc| maximal ne dépasse pas celui de sa construction
+    FBlaCache: TBlaTable;
+    FBlaCacheOrbit: TOrbit;
+    FBlaCacheMaxDeltaC: TFloat;
+    FCriticalBlaCache: TBlaTable;
+    FCriticalBlaCacheOrbit: TOrbit;
+    FBlaBuildCount: Integer;
     FReference: TReferenceOrbit;           // sous FLock pendant un rendu
     FReferenceComputeCount: Integer;
     FCriticalComputeCount: Integer;
@@ -160,6 +168,7 @@ type
     // approximation bilinéaire (Fractal.Bla) des rendus perturbés suivants ; faux par défaut (explorateur, images
     // fixes), mis par la vidéo
     property IsBlaEnabled: Boolean read FIsBlaEnabled write FIsBlaEnabled;
+    property BlaBuildCount: Integer read FBlaBuildCount;   // tables BLA de l'orbite construites (pas réutilisées)
     property ReferenceComputeCount: Integer read GetReferenceComputeCount;   // tâches référence installées
     property CriticalComputeCount: Integer read GetCriticalComputeCount;     // orbites critiques calculées, installées
     property ReferenceLength: Integer read GetReferenceLength;               // points de la dernière référence
@@ -345,6 +354,11 @@ begin
   IsNewPerturbation := NewFormula.IsPerturbationSupported and (V.PrecisionState(GetEpsilon(NewKernel)) <> psOk);
   if IsNewPerturbation then
     NewKernel := ResolveKernel(NewFormula, True);
+  // vidéo avec BLA et DLL sans BLA (avant l'ABI 5) : le Delphi avec BLA est bien plus rapide que le Rust sans (mesuré
+  // sur MultiBroth_1, image 0 : 16,7 s contre 224 s)
+  if IsNewPerturbation and (NewKernel = ekRust) and FIsBlaEnabled and NewFormula.IsBlaSupported
+    and not CurrentRustKernel.IsBlaSupported then
+    NewKernel := ekDelphi;
   StopCurrent;
   FLock.Enter;
   try
@@ -886,9 +900,27 @@ begin
   if not FIsBlaActive then
     Exit;
   MaxDeltaC := Hypot(FRefDeltaX, FRefDeltaY) + 0.5 * Hypot(FViewport.Width, FViewport.Height);
-  FBla := BuildBlaTable(FFormula, FOrbit, Length(FOrbit), MaxDeltaC);
-  if FCritical <> nil then
-    FCriticalBla := BuildBlaTable(FFormula, FCritical, Length(FCritical), 0);
+  // même orbite (même tableau : il reste vivant tant que le cache le tient) : sa formule et ses paramètres aussi. Une
+  // table faite pour un |δc| plus de deux fois plus grand (zoom avant) sauterait trop peu : reconstruite. Les bandes
+  // d'une même image restent sous ce rapport.
+  if (Pointer(FOrbit) <> Pointer(FBlaCacheOrbit)) or (MaxDeltaC > FBlaCacheMaxDeltaC)
+    or (MaxDeltaC < 0.5 * FBlaCacheMaxDeltaC) then
+  begin
+    FBlaCache := BuildBlaTable(FFormula, FOrbit, Length(FOrbit), MaxDeltaC);
+    FBlaCacheOrbit := FOrbit;
+    FBlaCacheMaxDeltaC := MaxDeltaC;
+    Inc(FBlaBuildCount);
+  end;
+  FBla := FBlaCache;
+  if FCritical = nil then
+    Exit;
+  // W : B = 0, le rayon ne dépend pas de δc
+  if Pointer(FCritical) <> Pointer(FCriticalBlaCacheOrbit) then
+  begin
+    FCriticalBlaCache := BuildBlaTable(FFormula, FCritical, Length(FCritical), 0);
+    FCriticalBlaCacheOrbit := FCritical;
+  end;
+  FCriticalBla := FCriticalBlaCache;
 end;
 
 {------------------------------------------------------------------------------}
