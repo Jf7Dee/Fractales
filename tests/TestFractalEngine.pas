@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, SysUtils, Math, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.RustKernel;
+  Windows, SysUtils, Math, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Engine, Fractal.RustKernel, Types;
 
 type
   TRaisingFormula = class(TFractalFormula)
@@ -27,6 +27,8 @@ type
     procedure CheckBurningShipAcceptanceDepths(Kernel: TEngineKernelType; RustKernel: TRustKernel);
     procedure CheckExactAcceptanceDepths(F: TFractalFormula; const TextX, TextY, FormulaLabel: string;
       Kernel: TEngineKernelType = ekDelphi; RustKernel: TRustKernel = nil);
+    procedure CheckMaskedMatchesFull(Kernel: TEngineKernelType; RustKernel: TRustKernel);
+    procedure CheckMaskSkipsPixels(Kernel: TEngineKernelType; RustKernel: TRustKernel);
   published
     procedure TestRenderCompletesWithExactPixels;
     procedure TestValuesMatchDirectIteration;
@@ -65,6 +67,10 @@ type
     procedure TestJuliaDustDeepRender;
     procedure TestJuliaShallowStaysDirect;
     procedure TestMultibrotShallowStaysDirect;
+    procedure TestMaskedRenderMatchesFull;
+    procedure TestMaskedRenderSkipsPixels;
+    procedure TestMaskedOutTileCompletes;
+    procedure TestMaskWrongLengthRaises;
   end;
 
 implementation
@@ -1304,6 +1310,202 @@ begin
     CheckFalse(E.Status.IsPerturbation);
     CheckEquals(0, E.ReferenceComputeCount);
     CheckEquals('', E.TakeErrors);
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Masque de sous-pixels (lissage adaptatif) : les pixels masqués valent exactement ceux du rendu complet en Delphi.
+// En Rust, une suite de la DLL part de l'abscisse de son premier pixel (x0 + i·dx) : un pixel masqué isolé a une
+// abscisse arrondie autrement qu'au milieu d'une suite du rendu complet, d'où de rares écarts près du bord (comme
+// les pixels déjà exacts du rendu progressif).
+procedure TTestEngine.TestMaskedRenderMatchesFull;
+var
+  Fake: TRustKernel;
+begin
+  CheckMaskedMatchesFull(ekDelphi, nil);
+  Fake := TRustKernel.Create(FakeKernelFileName);
+  try
+    CheckTrue(Fake.IsAvailable, Fake.Status);
+    CheckMaskedMatchesFull(ekRust, Fake);
+  finally
+    Fake.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.CheckMaskedMatchesFull(Kernel: TEngineKernelType; RustKernel: TRustKernel);
+const
+  kW = 64;
+  kH = 48;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  V: TViewport;
+  Full: array of Single;
+  Mask: TBooleanDynArray;
+  X, Y, M, Count, Differ: Integer;
+begin
+  E := TRenderEngine.Create(2);
+  F := TMandelbrotFormula.Create;
+  try
+    E.Kernel := Kernel;
+    E.RustKernel := RustKernel;
+    V := MakeViewport(-0.745, 0.11, 0.05, kW, kH);
+    E.Render(V, F, False);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    SetLength(Full, kW * kH);
+    for Y := 0 to kH - 1 do
+      for X := 0 to kW - 1 do
+        Full[Y * kW + X] := E.Buffer.Value(X, Y);
+    // masque 0 : un pixel sur trois ; masque 1 : un carré plein à cheval sur deux suites de la DLL
+    for M := 0 to 1 do
+    begin
+      SetLength(Mask, kW * kH);
+      for Y := 0 to kH - 1 do
+        for X := 0 to kW - 1 do
+          if M = 0 then
+            Mask[Y * kW + X] := (Y * kW + X) mod 3 = 0
+          else
+            Mask[Y * kW + X] := (X >= 10) and (X < 30) and (Y >= 5) and (Y < 25);
+      E.SampleMask := Mask;
+      E.Render(V, F, False);
+      CheckTrue(E.WaitUntilComplete(kWaitMs));
+      CheckEquals('', E.TakeErrors);
+      Count := 0;
+      Differ := 0;
+      for Y := 0 to kH - 1 do
+        for X := 0 to kW - 1 do
+          if Mask[Y * kW + X] then
+          begin
+            CheckTrue(E.Buffer.IsExact(X, Y), Format('pixel masqué %d,%d calculé', [X, Y]));
+            if Kernel = ekDelphi then
+              CheckEquals(Full[Y * kW + X], E.Buffer.Value(X, Y), 0, Format('pixel %d,%d (masque %d)', [X, Y, M]))
+            else if Full[Y * kW + X] <> E.Buffer.Value(X, Y) then
+              Inc(Differ);
+            Inc(Count);
+          end;
+      CheckTrue(Count > 0);
+      Status(Format('%s, masque %d : %d pixels sur %d différents', [TRenderEngine.GetDisplayName(Kernel), M, Differ,
+        Count]));
+      CheckTrue(Differ * 20 <= Count, Format('%d pixels différents sur %d', [Differ, Count]));
+    end;
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Un seul pixel dans le masque d'un rendu perturbé profond : lui seul est calculé.
+procedure TTestEngine.TestMaskedRenderSkipsPixels;
+var
+  Fake: TRustKernel;
+begin
+  CheckMaskSkipsPixels(ekDelphi, nil);
+  Fake := TRustKernel.Create(FakeKernelFileName);
+  try
+    CheckTrue(Fake.IsAvailable, Fake.Status);
+    CheckMaskSkipsPixels(ekRust, Fake);
+  finally
+    Fake.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.CheckMaskSkipsPixels(Kernel: TEngineKernelType; RustKernel: TRustKernel);
+const
+  kW = 64;
+  kH = 48;
+  kMaskX = 17;
+  kMaskY = 9;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  Mask: TBooleanDynArray;
+  X, Y, Exact: Integer;
+begin
+  E := TRenderEngine.Create(2);
+  F := TMandelbrotFormula.Create;
+  try
+    E.Kernel := Kernel;
+    E.RustKernel := RustKernel;
+    F.MaxIter := kDeepMaxIter;
+    SetLength(Mask, kW * kH);
+    Mask[kMaskY * kW + kMaskX] := True;
+    E.SampleMask := Mask;
+    E.Render(MakeViewport(0, 1, 1e-20, kW, kH), F, False);
+    CheckTrue(E.WaitUntilComplete(kWaitMs));
+    CheckEquals('', E.TakeErrors);
+    CheckTrue(E.Status.IsPerturbation, 'rendu perturbé');
+    Exact := 0;
+    for Y := 0 to kH - 1 do
+      for X := 0 to kW - 1 do
+        if E.Buffer.IsExact(X, Y) then
+          Inc(Exact);
+    CheckEquals(1, Exact, 'pixels calculés');
+    CheckTrue(E.Buffer.IsExact(kMaskX, kMaskY));
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Masque tout faux sur plusieurs tuiles : le rendu se termine sans rien calculer.
+procedure TTestEngine.TestMaskedOutTileCompletes;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  V: TViewport;
+  Mask: TBooleanDynArray;
+begin
+  E := TRenderEngine.Create(2);
+  F := TMandelbrotFormula.Create;
+  try
+    V := SmallViewport;
+    SetLength(Mask, V.PixelWidth * V.PixelHeight);
+    E.SampleMask := Mask;
+    E.Render(V, F, False);
+    CheckTrue(E.WaitUntilComplete(5000));
+    CheckTrue(E.Status.IsComplete);
+    CheckEquals('', E.TakeErrors);
+    CheckFalse(E.Buffer.IsExact(V.PixelWidth div 2, V.PixelHeight div 2));
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestEngine.TestMaskWrongLengthRaises;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  Mask: TBooleanDynArray;
+  IsRaised: Boolean;
+begin
+  E := TRenderEngine.Create(2);
+  F := TMandelbrotFormula.Create;
+  try
+    SetLength(Mask, 10);
+    E.SampleMask := Mask;
+    IsRaised := False;
+    try
+      E.Render(SmallViewport, F, False);
+    except
+      on Exception do
+        IsRaised := True;
+    end;
+    CheckTrue(IsRaised, 'masque de mauvaise longueur');
   finally
     F.Free;
     E.Free;

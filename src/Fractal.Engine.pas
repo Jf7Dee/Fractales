@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, SysUtils, Classes, SyncObjs, Math, Fractal.HighFloat, Fractal.Types, Fractal.Formulas, Fractal.Buffer,
+  Windows, SysUtils, Classes, SyncObjs, Math, Types, Fractal.HighFloat, Fractal.Types, Fractal.Formulas, Fractal.Buffer,
   Fractal.RustKernel, Fractal.Bla;
 
 const
@@ -125,6 +125,9 @@ type
     FReferenceComputeCount: Integer;
     FCriticalComputeCount: Integer;
     FIsEscapedReferenceReusable: Boolean;
+    FSampleMask: TBooleanDynArray;         // réglage : pixels à calculer au prochain rendu (nil = tous)
+    FActiveMask: TBooleanDynArray;         // figé au début du rendu courant (nil = tous, ou rendu progressif)
+    function IsSkipped(X, Y: Integer): Boolean; inline;
     function TryTakeJob(out Job: TTileJob): Boolean;
     function ProcessJob(const Job: TTileJob): Boolean;
     function ProcessRustJob(const Job: TTileJob): Boolean;
@@ -172,6 +175,10 @@ type
     property ReferenceComputeCount: Integer read GetReferenceComputeCount;   // tâches référence installées
     property CriticalComputeCount: Integer read GetCriticalComputeCount;     // orbites critiques calculées, installées
     property ReferenceLength: Integer read GetReferenceLength;               // points de la dernière référence
+    // lissage adaptatif : seuls les pixels à True (indice Y * PixelWidth + X de la vue du prochain Render) sont
+    // calculés, les autres restent non exacts et sans valeur ; nil = tous. Longueur différente de la vue : exception
+    // au Render. Ignoré en rendu progressif (explorateur).
+    property SampleMask: TBooleanDynArray read FSampleMask write FSampleMask;
   end;
 
 function CpuCount: Integer;
@@ -347,6 +354,9 @@ var
   NewKernel: TEngineKernelType;
   IsNewPerturbation, IsReused: Boolean;
 begin
+  if (FSampleMask <> nil) and (Length(FSampleMask) <> V.PixelWidth * V.PixelHeight) then
+    raise EArgumentException.CreateFmt('Masque de %d pixels pour une vue de %d x %d',
+      [Length(FSampleMask), V.PixelWidth, V.PixelHeight]);
   // clonée avant l'arrêt : si le clonage échoue, le rendu courant reste intact
   NewFormula := Formula.Clone;
   NewKernel := ResolveKernel(NewFormula);
@@ -374,6 +384,11 @@ begin
   else
     FActiveRustKernel := nil;
   FViewport := V;
+  // copie : le masque de l'appelant peut changer pendant le rendu
+  if IsProgressive then
+    FActiveMask := nil
+  else
+    FActiveMask := Copy(FSampleMask);
   // aucune tâche ne tourne plus : l'orbite et la référence gardée se lisent sans verrou
   FIsPerturbation := IsNewPerturbation;
   FIsBlaActive := FIsBlaEnabled and IsNewPerturbation and NewFormula.IsBlaSupported;
@@ -640,7 +655,7 @@ begin
     begin
       if Job.Generation <> FGeneration then
         Exit;
-      if not FBuffer.IsExact(X, Y) then
+      if not IsSkipped(X, Y) then
         FBuffer.WriteAnchor(X, Y, Job.Step, PixelValue(X, Y));
       Inc(X, Job.Step);
     end;
@@ -648,6 +663,14 @@ begin
     Inc(Y, Job.Step);
   end;
   Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Pixel déjà exact, ou hors du masque du rendu courant.
+function TRenderEngine.IsSkipped(X, Y: Integer): Boolean;
+begin
+  Result := FBuffer.IsExact(X, Y) or ((FActiveMask <> nil) and not FActiveMask[Y * FBuffer.Width + X]);
 end;
 
 {------------------------------------------------------------------------------}
@@ -693,14 +716,14 @@ begin
     X := Job.X0;
     while X < Job.X1 do
     begin
-      if FBuffer.IsExact(X, Y) then
+      if IsSkipped(X, Y) then
       begin
         Inc(X, Job.Step);
         Continue;
       end;
       RunStart := X;
       Count := 0;
-      while (X < Job.X1) and not FBuffer.IsExact(X, Y) do
+      while (X < Job.X1) and not IsSkipped(X, Y) do
       begin
         Inc(Count);
         Inc(X, Job.Step);
