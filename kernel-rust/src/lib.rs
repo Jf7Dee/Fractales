@@ -1028,8 +1028,8 @@ mod tests {
     }
 
     #[test]
-    fn abi_version_is_4() {
-        assert_eq!(fk_abi_version(), 4);
+    fn abi_version_is_5() {
+        assert_eq!(fk_abi_version(), 5);
     }
 
     // Mêmes valeurs que TestDiffAbs (tests\TestFractalPerturbation.pas), égalités strictes.
