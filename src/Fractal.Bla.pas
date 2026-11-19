@@ -21,6 +21,9 @@ const
   // (x 50 sur le calcul sans BLA)
   kBlaEpsilon = 1 / 17592186044416;
   kBlaMinOrbitLength = 1024;      // en dessous, la table coûte plus qu'elle ne fait gagner
+  // |A| ou |B| au-delà : entrée morte (une orbite qui tourne loin de 0, comme c = i, multiplie |A| à chaque pas). Toutes
+  // les valeurs restant sous ce seuil, leurs produits ne débordent pas des Double
+  kBlaMaxCoefficient = 1e150;
 
 function EmptyBlaTable: TBlaTable;   // pas de BLA
 function BlaLevelCount(Steps: Integer): Integer;
@@ -81,11 +84,24 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// x puis y, à l'offset Dst : A = Ay·Ax, B = Ay·Bx + By, R = min(Rx, (Ry - |Bx|·Cmax) / |Ax|)
+// x puis y, à l'offset Dst : A = Ay·Ax, B = Ay·Bx + By, R = min(Rx, (Ry - |Bx|·Cmax) / |Ax|). Au-delà de
+// kBlaMaxCoefficient : entrée morte (A = B = 0, R = 0), et morte aussi toute fusion qui la contient
 procedure MergeEntries(var D: array of Double; X, Y, Dst: Integer; MaxDeltaC: TFloat);
 var
-  AX, AY, BX, BY, AbsAX, RY: Double;
+  AX, AY, BX, BY, AbsAX, AbsAY, RY: Double;
 begin
+  AbsAY := Hypot(D[Y], D[Y + 1]);
+  if (AbsAY * Hypot(D[X], D[X + 1]) > kBlaMaxCoefficient)
+    or (AbsAY * Hypot(D[X + 2], D[X + 3]) + Hypot(D[Y + 2], D[Y + 3]) > kBlaMaxCoefficient) then
+  begin
+    D[Dst] := 0;
+    D[Dst + 1] := 0;
+    D[Dst + 2] := 0;
+    D[Dst + 3] := 0;
+    D[Dst + 4] := 0;
+    D[Dst + 5] := D[X + 5] + D[Y + 5];
+    Exit;
+  end;
   AX := D[Y] * D[X] - D[Y + 1] * D[X + 1];
   AY := D[Y] * D[X + 1] + D[Y + 1] * D[X];
   BX := D[Y] * D[X + 2] - D[Y + 1] * D[X + 3] + D[Y + 2];

@@ -40,6 +40,8 @@ type
     procedure TestEngineBlaRunsInRust;
     procedure TestEngineBlaWithAbi4Rust;
     procedure TestEngineBlaTableReusedForBands;
+    procedure TestBlaPeriodicOrbitDoesNotOverflow;
+    procedure TestBlaMisiurewiczAgrees;
   end;
 
 implementation
@@ -783,6 +785,57 @@ begin
   finally
     F.Free;
     E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// c = i (point de Misiurewicz) : l'orbite tourne sans fin entre -1 + i et -i, |A| gagne un facteur 4·√2 tous les
+// deux pas et dépasse le plus grand Double dès les niveaux hauts. La table se construit sans débordement ; une entrée
+// hors des Double est morte (rayon nul, jamais prise)
+procedure TTestBla.TestBlaPeriodicOrbitDoesNotOverflow;
+const
+  kLength = 4000;
+var
+  F: TFractalFormula;
+  Orbit: TOrbit;
+  T: TBlaTable;
+  I: Integer;
+begin
+  SetLength(Orbit, kLength);
+  Orbit[0].X := 0;
+  Orbit[0].Y := 0;
+  for I := 1 to kLength - 1 do
+  begin
+    Orbit[I].X := Sqr(Orbit[I - 1].X) - Sqr(Orbit[I - 1].Y);
+    Orbit[I].Y := 2 * Orbit[I - 1].X * Orbit[I - 1].Y + 1;
+  end;
+  F := TMandelbrotFormula.Create;
+  try
+    T := BuildBlaTable(F, Orbit, kLength, 1e-40);
+    CheckTrue(T.LevelCount > 10, 'niveaux');
+    for I := 0 to High(T.Data) do
+      CheckFalse(IsNan(T.Data[I]) or IsInfinite(T.Data[I]), Format('valeur %d finie', [I]));
+    CheckEquals(0, T.Data[EntryOffset(T, T.LevelCount - 1, 0) + 4], 0, 'entrée du sommet morte');
+    CheckTrue(T.Data[EntryOffset(T, 0, 0) + 4] > 0, 'premier pas utilisable');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Le rendu qui débordait : Mandelbrot en c = i, pixel de 1e-40 / 64 ; avec BLA comme sans
+procedure TTestBla.TestBlaMisiurewiczAgrees;
+var
+  F: TFractalFormula;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 2000;
+    CheckBlaAgrees(F, '0', '1', 1e-40, 'Mandelbrot c = i');
+  finally
+    F.Free;
   end;
 end;
 
