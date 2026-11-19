@@ -192,6 +192,9 @@ const
   kProgressiveSteps: array[0..3] of Integer = (8, 4, 2, 1);
   kReferenceReuseWidths = 2;     // distance maximale référence - centre, en largeurs de vue, pour la réutiliser
   kReferenceCandidateGrid = 3;   // grille de kReferenceCandidateGrid x kReferenceCandidateGrid références candidates
+  // table BLA faite pour 1,5 fois le |δc| demandé : réutilisée tant qu'une vue demande de 0,5 à 1,5 fois ce |δc|
+  // (bandes d'une image HD : de x 0,65 à x 1,4 de la première), pour un rayon de validité à peine plus petit
+  kBlaHeadroom = 1.5;
 
 {------------------------------------------------------------------------------}
 
@@ -923,13 +926,14 @@ begin
   if not FIsBlaActive then
     Exit;
   MaxDeltaC := Hypot(FRefDeltaX, FRefDeltaY) + 0.5 * Hypot(FViewport.Width, FViewport.Height);
-  // même orbite (même tableau : il reste vivant tant que le cache le tient) : sa formule et ses paramètres aussi. Une
-  // table faite pour un |δc| plus de deux fois plus grand (zoom avant) sauterait trop peu : reconstruite. Les bandes
-  // d'une même image restent sous ce rapport.
-  if (Pointer(FOrbit) <> Pointer(FBlaCacheOrbit)) or (MaxDeltaC > FBlaCacheMaxDeltaC)
+  // même orbite (même tableau : il reste vivant tant que le cache le tient) : sa formule et ses paramètres aussi.
+  // FBlaCacheMaxDeltaC : |δc| demandé à la construction ; la table est faite pour kBlaHeadroom fois plus, de sorte que
+  // les bandes d'une même image, de plus en plus loin de la référence de la première, la réutilisent. Une vue qui
+  // demande moins de la moitié (zoom avant) sauterait trop peu : reconstruite
+  if (Pointer(FOrbit) <> Pointer(FBlaCacheOrbit)) or (MaxDeltaC > kBlaHeadroom * FBlaCacheMaxDeltaC)
     or (MaxDeltaC < 0.5 * FBlaCacheMaxDeltaC) then
   begin
-    FBlaCache := BuildBlaTable(FFormula, FOrbit, Length(FOrbit), MaxDeltaC);
+    FBlaCache := BuildBlaTable(FFormula, FOrbit, Length(FOrbit), kBlaHeadroom * MaxDeltaC);
     FBlaCacheOrbit := FOrbit;
     FBlaCacheMaxDeltaC := MaxDeltaC;
     Inc(FBlaBuildCount);

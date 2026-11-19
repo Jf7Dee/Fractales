@@ -45,12 +45,20 @@ type
     procedure TestAdaptiveBandEdge;
     procedure TestAdaptiveReusesReference;
     procedure TestAdaptiveReferenceAtWordBoundary;
+    procedure TestBandsShareBlaTable;
   end;
 
 implementation
 
 uses
   Windows, Math, Fractal.Adaptive, TestFractalPerturbation;
+
+const
+  // MultiBroth_1.fscn de JF, première étape (environ 40 000 itérations par pixel)
+  kMultiBroth1X = '0.6436032989752984374817305594833887051524012044957825545579532636106783601909397218300741567511592';
+  kMultiBroth1Y = '0.3192585403317653763008687900976260312288946415772095488687299432276187153103164694680194451662740';
+  kMultiBroth1Width = 2.33279729810509063E-55;
+  kMultiBroth1MaxIter = 41477;
 
 {------------------------------------------------------------------------------}
 
@@ -774,10 +782,6 @@ procedure TTestHiRes.TestAdaptiveReusesReference;
 const
   kW = 48;
   kH = 32;
-  kMultiBroth1X = '0.6436032989752984374817305594833887051524012044957825545579532636106783601909397218300741567511592';
-  kMultiBroth1Y = '0.3192585403317653763008687900976260312288946415772095488687299432276187153103164694680194451662740';
-  kMultiBroth1Width = 2.33279729810509063E-55;
-  kMultiBroth1MaxIter = 41477;
 var
   F: TMultibrotFormula;
   Settings: THiResSettings;
@@ -834,6 +838,36 @@ begin
     Settings.IsAdaptive := True;
     RenderPixels(Settings, V, F, 8);
     CheckEquals(FullReferences, FReferenceCount, 'références');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Bandes d'une même image : la référence est celle de la première bande, l'écart des suivantes à la référence grandit
+// peu à peu. Une ou deux tables BLA pour toute l'image, pas une par bande (avant correction : 16 sur 16 bandes)
+procedure TTestHiRes.TestBandsShareBlaTable;
+const
+  kW = 48;
+  kH = 64;
+  kBandRows = 4;
+  kMaxTables = 2;
+var
+  F: TMultibrotFormula;
+  Settings: THiResSettings;
+  V: TViewport;
+begin
+  F := TMultibrotFormula.Create;
+  try
+    F.SetParam(0, 3);
+    F.MaxIter := kMultiBroth1MaxIter;
+    V := MakeExactViewport(kMultiBroth1X, kMultiBroth1Y, kMultiBroth1Width, kW, kH);
+    Settings := MakeSettings(kW, kH, 1, TestTempFolder + 'hires-bla-bands.png');
+    Settings.IsBla := True;
+    RenderPixels(Settings, V, F, kBandRows);
+    CheckTrue(FReferenceCount > 0, 'rendu non perturbé');
+    CheckTrue(FBlaCount <= kMaxTables, Format('%d tables BLA pour %d bandes', [FBlaCount, kH div kBandRows]));
   finally
     F.Free;
   end;
