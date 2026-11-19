@@ -139,6 +139,8 @@ function ReliefHeightToSlider(Height: Double): Integer;
 function SwapRedBlue(C: Cardinal): Cardinal;
 function BuiltInPaletteCount: Integer;
 function CreateBuiltInPalette(Index: Integer): TGradientPalette;
+// Même nom et mêmes points de couleur, à la précision des fichiers ; faux si l'une est nil
+function IsSamePalette(A, B: TGradientPalette): Boolean;
 
 implementation
 
@@ -912,5 +914,28 @@ begin
     Result.AddStop(0.5, $FFFFFF);
   end;
 end;
+
+{------------------------------------------------------------------------------}
+
+function IsSamePalette(A, B: TGradientPalette): Boolean;
+var
+  LinesA, LinesB: TStringList;
+begin
+  Result := False;
+  if (A = nil) or (B = nil) then
+    Exit;
+  LinesA := TStringList.Create;
+  LinesB := TStringList.Create;
+  try
+    A.SaveToStrings(LinesA);
+    B.SaveToStrings(LinesB);
+    Result := LinesA.Text = LinesB.Text;
+  finally
+    LinesB.Free;
+    LinesA.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 end.

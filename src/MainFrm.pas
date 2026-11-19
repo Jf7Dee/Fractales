@@ -260,6 +260,7 @@ type
     procedure ToggleFullScreen;
     procedure InitColorPanel;
     procedure FillPaletteCombo;
+    procedure SelectMatchingPalette;
     procedure PaletteComboChange(Sender: TObject);
 
     procedure UpdateColorControls;
@@ -1368,6 +1369,8 @@ begin
       finally
         Location.Free;
       end;
+      if cbPalette.ItemIndex <> 1 then
+        raise Exception.Create('palette du lieu rouvert non retrouvée dans la liste');
 
       if not WaitForRender(kSmokeTimeoutMs) then
         raise Exception.Create('rendu après réouverture non terminé');
@@ -1784,6 +1787,22 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// La palette en cours dans la liste, si elle y est telle quelle ; sinon aucune sélection
+procedure TMainForm.SelectMatchingPalette;
+var
+  I: Integer;
+begin
+  cbPalette.ItemIndex := -1;
+  for I := 0 to FPalettes.Count - 1 do
+    if IsSamePalette(FPalette, TGradientPalette(FPalettes[I])) then
+    begin
+      cbPalette.ItemIndex := I;
+      Exit;
+    end;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TMainForm.PaletteComboChange(Sender: TObject);
 begin
   if cbPalette.ItemIndex < 0 then
@@ -1978,7 +1997,7 @@ begin
   FIsAutoIter := Location.IsAutoIter;
   FPalette.Assign(Location.Palette);
   FMapping := Location.Mapping;
-  cbPalette.ItemIndex := -1;
+  SelectMatchingPalette;
   UpdateColorControls;
   ColorsChanged;
   SetFormula(Formula, False);

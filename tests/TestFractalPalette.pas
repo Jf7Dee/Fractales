@@ -18,6 +18,7 @@ type
     procedure TestMoveStopKeepsOrder;
     procedure TestStringsRoundTrip;
     procedure TestEmptyStringsGiveDefault;
+    procedure TestIsSamePalette;
     procedure TestLoadFromMap;
     procedure TestInvalidMapRaises;
     procedure TestMapperInsideIsBlack;
@@ -1096,6 +1097,36 @@ begin
   CheckEquals(2, M.Stretch, 1e-12);
   CheckTrue(M.IsInverted);
 end;
+
+{------------------------------------------------------------------------------}
+
+// Une palette relue d'un lieu retrouve son original de la liste : même nom, mêmes couleurs
+procedure TTestPalette.TestIsSamePalette;
+var
+  A, B: TGradientPalette;
+  Lines: TStringList;
+begin
+  A := CreateBuiltInPalette(1);
+  B := TGradientPalette.Create;
+  Lines := TStringList.Create;
+  try
+    A.SaveToStrings(Lines);
+    B.LoadFromStrings(Lines);
+    CheckTrue(IsSamePalette(A, B), 'relue');
+    B.Name := A.Name + ' bis';
+    CheckFalse(IsSamePalette(A, B), 'autre nom');
+    B.Name := A.Name;
+    B.SetStopColor(0, B.Stop(0).Color xor $010101);
+    CheckFalse(IsSamePalette(A, B), 'modifiée sans être renommée');
+    CheckFalse(IsSamePalette(A, nil), 'nil');
+  finally
+    Lines.Free;
+    B.Free;
+    A.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 initialization
   RegisterTest(TTestPalette.Suite);
