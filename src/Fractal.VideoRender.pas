@@ -22,6 +22,20 @@ type
   // Appelé dans le fil de rendu, une fois par image
   TVideoFrameSink = procedure(Png: TStream) of object;
 
+  TGenerationOutcome = (goSucceeded, goCancelled, goFailed);
+
+  // Une session de génération, pour le journal écrit à côté de la vidéo
+  TGenerationLogEntry = record
+    StartTime, EndTime: TDateTime;
+    ScenarioFile: string;  // vide : scénario non enregistré
+    VideoFormat: TVideoFormat;
+    FramesTotal: Integer;
+    FramesDone: Integer;
+    FirstFrame: Integer;   // > 0 : génération reprise
+    Outcome: TGenerationOutcome;
+    ErrorMessage: string;
+  end;
+
   TVideoRenderer = class(TThread)
   private
     FScenario: TVideoScenario;
@@ -99,6 +113,11 @@ function VideoMaxIter(const V: TViewport; Limit: Integer): Integer;
 // d'images déjà faites. Faux si le dossier ou son scénario manque ou est illisible
 function ReadInterruptedRender(const OutputFile: string; Scenario: TVideoScenario; Location: TFractalLocation;
   out FramesDone: Integer): Boolean;
+
+// Journal des générations d'une vidéo : même dossier et même nom qu'elle, extension .log ; une entrée par session
+function GenerationLogFile(const OutputFile: string): string;
+function GenerationLogText(const Entry: TGenerationLogEntry): string;
+procedure AppendGenerationLog(const OutputFile: string; const Entry: TGenerationLogEntry);
 
 implementation
 
@@ -634,5 +653,78 @@ begin
     S.Free;
   end;
 end;
+
+{------------------------------------------------------------------------------}
+
+function GenerationLogFile(const OutputFile: string): string;
+begin
+  Result := ChangeFileExt(OutputFile, '.log');
+end;
+
+{------------------------------------------------------------------------------}
+
+// 1 h 49 min 36 s, 4 min 05 s, 12 s
+function DurationText(Seconds: Integer): string;
+begin
+  if Seconds >= 3600 then
+    Result := Format('%d h %d min %.2d s', [Seconds div 3600, (Seconds div 60) mod 60, Seconds mod 60])
+  else if Seconds >= 60 then
+    Result := Format('%d min %.2d s', [Seconds div 60, Seconds mod 60])
+  else
+    Result := Format('%d s', [Seconds]);
+end;
+
+{------------------------------------------------------------------------------}
+
+function GenerationLogText(const Entry: TGenerationLogEntry): string;
+const
+  kStamp = 'yyyy-mm-dd hh:nn:ss';
+var
+  Outcome, Scenario, Resumed: string;
+  Width, Height: Integer;
+begin
+  case Entry.Outcome of
+    goSucceeded: Outcome := 'terminée';
+    goCancelled: Outcome := Format('interrompue à l''image %d', [Entry.FramesDone]);
+  else
+    Outcome := 'échec, ' + Entry.ErrorMessage;
+  end;
+  Scenario := Entry.ScenarioFile;
+  if Scenario = '' then
+    Scenario := '(non enregistré)';
+  Resumed := '';
+  if Entry.FirstFrame > 0 then
+    Resumed := Format(' (reprise à l''image %d)', [Entry.FirstFrame]);
+  VideoFormatSize(Entry.VideoFormat, Width, Height);
+  Result := Format('%s → %s (%s) : %s', [FormatDateTime(kStamp, Entry.StartTime), FormatDateTime(kStamp, Entry.EndTime),
+      DurationText(Round((Entry.EndTime - Entry.StartTime) * SecsPerDay)), Outcome]) + #13#10 +
+    '  Scénario : ' + Scenario + #13#10 +
+    Format('  Vidéo : %s, %d × %d, %d images%s', [VideoFormatName(Entry.VideoFormat), Width, Height,
+      Entry.FramesTotal, Resumed]) + #13#10;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure AppendGenerationLog(const OutputFile: string; const Entry: TGenerationLogEntry);
+var
+  T: TStringList;
+  FileName: string;
+begin
+  FileName := GenerationLogFile(OutputFile);
+  T := TStringList.Create;
+  try
+    if FileExists(FileName) then
+    begin
+      T.LoadFromFile(FileName, TEncoding.UTF8);
+      T.Add('');
+    end;
+    T.Text := T.Text + GenerationLogText(Entry);
+    T.SaveToFile(FileName, TEncoding.UTF8);
+  finally
+    T.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 end.

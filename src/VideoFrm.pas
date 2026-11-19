@@ -127,6 +127,10 @@ type
     FIsUpdating: Boolean;
     FScenarioFile: string;   // dernier scénario ouvert ou enregistré ; '' = pas encore de fichier
     FRenderedText: string;   // texte du scénario au lancement du rendu en cours
+    FRenderStart: TDateTime;     // lancement du rendu en cours, pour le journal de génération
+    FRenderScenarioFile: string; // scénario et format du rendu en cours, pour le journal
+    FRenderFormat: TVideoFormat;
+    FLogError: string;           // journal de génération non écrit : affiché avec l'issue
     FSavedText: string;      // texte du scénario au dernier enregistrement ou à l'ouverture ; sert à IsModified
     FOnRequestSnapshot: TNotifyEvent;
     FOnShowStep: TVideoStepEvent;
@@ -153,6 +157,7 @@ type
     procedure UpdateControls;
     procedure ShowPreviewFrame;
     procedure FinishRender;
+    procedure LogGeneration;
     function SelectedIndex: Integer;
     function IsRendering: Boolean;
     procedure MarkSaved;
@@ -1112,6 +1117,10 @@ begin
   FOutputFile := FileName;
   FRenderedText := FScenario.SaveToText;
   FLastError := '';
+  FLogError := '';
+  FRenderStart := Now;
+  FRenderScenarioFile := FScenarioFile;
+  FRenderFormat := FScenario.Format;
   Sink := nil;
   if IsPreview then
     Sink := PreviewSink;
@@ -1143,6 +1152,7 @@ begin
   IsSucceeded := FRenderer.IsSucceeded;
   FLastError := FRenderer.ErrorMessage;
   IsCancelled := not IsSucceeded and (FLastError = '');
+  LogGeneration;
   FreeAndNil(FRenderer);
   if IsSucceeded and (FOutputFile <> '') and (FInterruptedFile <> '') then
     RemoveInterruptedRender(FInterruptedFile, FOutputFile);
@@ -1171,9 +1181,43 @@ begin
     lblProgress.Caption := 'Vidéo enregistrée.';
     MessageDlg(Format(kMsgDone, [FOutputFile]), mtInformation, [mbOK], 0);
   end;
+  if FLogError <> '' then
+    lblProgress.Caption := lblProgress.Caption + ' Journal non écrit : ' + FLogError;
 
   Caption := kFORM_CAPTION;
 
+end;
+
+{------------------------------------------------------------------------------}
+
+// Une entrée au journal à côté de la vidéo, quelle que soit l'issue ; rien pour l'aperçu. Appelé avant de libérer le
+// rendu terminé. Un journal qui ne s'écrit pas ne doit pas faire perdre la vidéo : l'erreur est seulement retenue
+procedure TVideoForm.LogGeneration;
+var
+  Entry: TGenerationLogEntry;
+begin
+  if FIsPreview or (FOutputFile = '') or (FRenderer = nil) then
+    Exit;
+  Entry.StartTime := FRenderStart;
+  Entry.EndTime := Now;
+  Entry.ScenarioFile := FRenderScenarioFile;
+  Entry.VideoFormat := FRenderFormat;
+  Entry.FramesTotal := FRenderer.FramesTotal;
+  Entry.FramesDone := FRenderer.FramesDone;
+  Entry.FirstFrame := FRenderer.FirstFrame;
+  Entry.ErrorMessage := FRenderer.ErrorMessage;
+  if FRenderer.IsSucceeded then
+    Entry.Outcome := goSucceeded
+  else if Entry.ErrorMessage = '' then
+    Entry.Outcome := goCancelled
+  else
+    Entry.Outcome := goFailed;
+  try
+    AppendGenerationLog(FOutputFile, Entry);
+  except
+    on E: Exception do
+      FLogError := E.Message;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -1198,6 +1242,7 @@ begin
     Result := FRenderer.IsSucceeded;
     if Result and FIsPreview and (FOutputFile <> '') then
       WritePreviewStamp;
+    LogGeneration;
     FreeAndNil(FRenderer);
     UpdateControls;
   end;
@@ -1318,7 +1363,9 @@ begin
   if CanClose then
   begin
     FRenderer.Cancel;
-    FreeAndNil(FRenderer);  // attend la fin du fil, qui arrête FFmpeg et supprime la vidéo partielle
+    FRenderer.WaitFor;  // le fil arrête FFmpeg et supprime la vidéo partielle
+    LogGeneration;
+    FreeAndNil(FRenderer);
   end
   else
     tmrProgress.Enabled := True;

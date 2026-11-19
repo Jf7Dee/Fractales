@@ -109,6 +109,8 @@ type
     procedure TestStampIncludesBlaAndAdaptive;
     procedure TestReadInterruptedRender;
     procedure TestVideoMaxIter;
+    procedure TestGenerationLogText;
+    procedure TestGenerationLogAppends;
   end;
 
 implementation
@@ -2009,6 +2011,75 @@ begin
     Read.Free;
     Sc.Free;
     SysUtils.DeleteFile(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function SampleLogEntry: TGenerationLogEntry;
+begin
+  Result.StartTime := EncodeDate(2026, 11, 19) + EncodeTime(22, 14, 5, 0);
+  Result.EndTime := EncodeDate(2026, 11, 20) + EncodeTime(0, 3, 41, 0);
+  Result.ScenarioFile := 'D:\Videos\testJulia.fscn';
+  Result.VideoFormat := vf16x9;
+  Result.FramesTotal := 5400;
+  Result.FramesDone := 5400;
+  Result.FirstFrame := 0;
+  Result.Outcome := goSucceeded;
+  Result.ErrorMessage := '';
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TestGenerationLogText;
+var
+  E: TGenerationLogEntry;
+begin
+  E := SampleLogEntry;
+  CheckEquals('2026-11-19 22:14:05 → 2026-11-20 00:03:41 (1 h 49 min 36 s) : terminée'#13#10 +
+    '  Scénario : D:\Videos\testJulia.fscn'#13#10 +
+    '  Vidéo : Horizontal 16:9, 1920 × 1080, 5400 images'#13#10, GenerationLogText(E), 'terminée');
+
+  E.StartTime := EncodeDate(2026, 11, 19) + EncodeTime(22, 0, 0, 0);
+  E.EndTime := E.StartTime + EncodeTime(0, 4, 5, 0);
+  E.FirstFrame := 1200;
+  E.FramesDone := 1350;
+  E.Outcome := goCancelled;
+  E.ScenarioFile := '';
+  CheckEquals('2026-11-19 22:00:00 → 2026-11-19 22:04:05 (4 min 05 s) : interrompue à l''image 1350'#13#10 +
+    '  Scénario : (non enregistré)'#13#10 +
+    '  Vidéo : Horizontal 16:9, 1920 × 1080, 5400 images (reprise à l''image 1200)'#13#10, GenerationLogText(E),
+    'interrompue, reprise');
+
+  E.EndTime := E.StartTime + EncodeTime(0, 0, 12, 0);
+  E.FirstFrame := 0;
+  E.Outcome := goFailed;
+  E.ErrorMessage := 'FFmpeg a échoué';
+  CheckEquals('2026-11-19 22:00:00 → 2026-11-19 22:00:12 (12 s) : échec, FFmpeg a échoué',
+    Copy(GenerationLogText(E), 1, Pos(#13#10, GenerationLogText(E)) - 1), 'échec');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TestGenerationLogAppends;
+var
+  Video, LogFile: string;
+  T: TStringList;
+begin
+  Video := TestTempFolder + 'journal.mp4';
+  LogFile := TestTempFolder + 'journal.log';
+  CheckEquals(LogFile, GenerationLogFile(Video), 'à côté de la vidéo, du même nom');
+  SysUtils.DeleteFile(LogFile);
+  T := TStringList.Create;
+  try
+    AppendGenerationLog(Video, SampleLogEntry);
+    AppendGenerationLog(Video, SampleLogEntry);
+    T.LoadFromFile(LogFile, TEncoding.UTF8);
+    CheckEquals(GenerationLogText(SampleLogEntry) + #13#10 + GenerationLogText(SampleLogEntry), T.Text,
+      'deux entrées séparées d''une ligne vide');
+  finally
+    T.Free;
+    SysUtils.DeleteFile(LogFile);
   end;
 end;
 

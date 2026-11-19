@@ -310,7 +310,8 @@ implementation
 {$R *.dfm}
 
 uses
-  PaletteEditorFrm, HiResFrm, UpdateFrm, AboutFrm, VideoFrm, Fractal.VideoScenario, Fractal.VideoEncoder;
+  PaletteEditorFrm, HiResFrm, UpdateFrm, AboutFrm, VideoFrm, Fractal.VideoScenario, Fractal.VideoEncoder,
+  Fractal.VideoRender;
 
 {------------------------------------------------------------------------------}
 
@@ -1049,6 +1050,7 @@ var
   S: TVideoStep;
   Ffmpeg, VideoFile: string;
   IsDeeper: Boolean;
+  LogText: TStringList;
   MainRepeats: Double;
 begin
   IsDeeper := False;
@@ -1095,6 +1097,18 @@ begin
         raise Exception.Create('vidéo absente');
       SysUtils.DeleteFile(VideoFile);
       FSmokeLog.Add('Vidéo encodée OK');
+      LogText := TStringList.Create;
+      try
+        if not FileExists(GenerationLogFile(VideoFile)) then
+          raise Exception.Create('journal de génération absent');
+        LogText.LoadFromFile(GenerationLogFile(VideoFile), TEncoding.UTF8);
+        if Pos(') : terminée', LogText.Text) = 0 then
+          raise Exception.Create('journal de génération sans issue « terminée »');
+      finally
+        LogText.Free;
+        SysUtils.DeleteFile(GenerationLogFile(VideoFile));
+      end;
+      FSmokeLog.Add('Journal de génération OK');
       // aperçu encodé : il peut être revu tant que le scénario ne change pas
       Form.btnPreviewClick(nil);
       if not Form.WaitForRender(kVideoTimeoutMs) then
