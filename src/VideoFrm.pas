@@ -61,6 +61,10 @@ type
     dlgSave: TSaveDialog;
     dlgVideo: TSaveDialog;
     btnReplay: TButton;
+    gbColors: TGroupBox;
+    lblColors: TLabel;
+    pbPalette: TPaintBox;
+    btnReplaceColors: TButton;
     MainMenu1: TMainMenu;
     ActionList1: TActionList;
     Action_Open: TAction;
@@ -92,6 +96,8 @@ type
     procedure btnCancelClick(Sender: TObject);
     procedure tmrProgressTimer(Sender: TObject);
     procedure btnReplayClick(Sender: TObject);
+    procedure btnReplaceColorsClick(Sender: TObject);
+    procedure pbPalettePaint(Sender: TObject);
     procedure FormActivate(Sender: TObject);
     procedure Action_OpenExecute(Sender: TObject);
     procedure Action_SaveAsExecute(Sender: TObject);
@@ -139,6 +145,10 @@ type
     procedure RefreshStep;
     procedure RefreshSummary;
     procedure RefreshSpeed(Index: Integer);
+    procedure RefreshColors;
+    function RenderPalette: TGradientPalette;
+    function RenderMapping: TColorMapping;
+    procedure FixColors;
     function ModeText(Index: Integer): string;
     procedure UpdateControls;
     procedure ShowPreviewFrame;
@@ -155,6 +165,8 @@ type
       const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string;
       IsBla, IsAdaptive: Boolean);
     procedure AddCurrentView;
+    // « Remplacer les couleurs par celles de la vue » : palette et effets de la fenêtre principale dans le scénario
+    procedure ReplaceColors;
     procedure StartRender(IsPreview: Boolean; const FileName: string; Divisor: Integer = 0);
     // Relance un rendu interrompu avec le scénario, la palette et la coloration gardés dans ses morceaux
     function ResumeRender(const R: TInterruptedRender): Boolean;
@@ -171,6 +183,7 @@ type
     property ReplayButton: TButton read btnReplay;
     property StopCheckBox: TCheckBox read cbStop;  // pour le test de fumée
     property SpeedLabel: TLabel read lblSpeed;
+    property ColorsLabel: TLabel read lblColors;
     procedure SelectStep(Index: Integer);
     // Fenêtre non modale : demande à la fenêtre principale d'appeler Prepare avec son état du moment
     // (activation, « Ajouter la vue », lancement d'un rendu)
@@ -427,6 +440,7 @@ begin
 
   if not ExecuteInFolder(dlgSave, FScenarioFolder) then
     Exit;
+  FixColors;
   try
     FScenario.SaveToFile(dlgSave.FileName);
     FScenarioFile := dlgSave.FileName;
@@ -444,6 +458,7 @@ procedure TVideoForm.Action_SaveExecute(Sender: TObject);
 begin
   if FScenarioFile = '' then
     Exit;
+  FixColors;
   try
     FScenario.SaveToFile(FScenarioFile);
     MarkSaved;
@@ -559,6 +574,85 @@ begin
   end;
   RefreshStep;
   RefreshSummary;
+  RefreshColors;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Couleurs de l'aperçu et de la vidéo : celles du scénario, sinon celles de la fenêtre principale
+function TVideoForm.RenderPalette: TGradientPalette;
+begin
+  if FScenario.HasColors then
+    Result := FScenario.Palette
+  else
+    Result := FPalette;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TVideoForm.RenderMapping: TColorMapping;
+begin
+  if FScenario.HasColors then
+    Result := FScenario.Mapping
+  else
+    Result := FMapping;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.RefreshColors;
+begin
+  if FScenario.HasColors then
+    lblColors.Caption := Format('Couleurs du scénario : palette « %s »', [FScenario.Palette.Name])
+  else
+    lblColors.Caption := 'Couleurs de la fenêtre principale ; le scénario les gardera à son enregistrement';
+  pbPalette.Invalidate;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.pbPalettePaint(Sender: TObject);
+var
+  P: TGradientPalette;
+  X, W: Integer;
+begin
+  P := RenderPalette;
+  W := Max(1, pbPalette.Width);
+  for X := 0 to pbPalette.Width - 1 do
+  begin
+    pbPalette.Canvas.Pen.Color := TColor(SwapRedBlue(P.ColorAt(X / W)));
+    pbPalette.Canvas.MoveTo(X, 0);
+    pbPalette.Canvas.LineTo(X, pbPalette.Height);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Premier enregistrement d'un scénario sans couleurs : il garde celles de la fenêtre principale du moment
+procedure TVideoForm.FixColors;
+begin
+  if FScenario.HasColors then
+    Exit;
+  RequestSnapshot;
+  FScenario.SetColors(FPalette, FMapping);
+  RefreshColors;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.ReplaceColors;
+begin
+  RequestSnapshot;  // les couleurs affichées en ce moment dans la fenêtre principale
+  FScenario.SetColors(FPalette, FMapping);
+  RefreshColors;
+  UpdateControls;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoForm.btnReplaceColorsClick(Sender: TObject);
+begin
+  ReplaceColors;
 end;
 
 {------------------------------------------------------------------------------}
@@ -728,6 +822,7 @@ begin
   btnRender.Enabled := IsIdle and (FScenario.Count >= 2) and (FFfmpegExe <> '');
   btnCancel.Enabled := not IsIdle;
   btnReplay.Enabled := IsIdle and IsPreviewCurrent;
+  btnReplaceColors.Enabled := IsIdle;
 
   Action_Open.Enabled := IsIdle;
   Action_SaveAs.Enabled := IsIdle and (FScenario.Count > 0);
@@ -959,8 +1054,8 @@ procedure TVideoForm.StartRender(IsPreview: Boolean; const FileName: string; Div
 begin
   if IsRendering then
     Exit;
-  RequestSnapshot;  // palette, coloration et moteur du moment
-  LaunchRender(IsPreview, FileName, Divisor, FPalette, FMapping);
+  RequestSnapshot;  // moteur du moment ; palette et coloration de la fenêtre principale si le scénario n'en a pas
+  LaunchRender(IsPreview, FileName, Divisor, RenderPalette, RenderMapping);
 end;
 
 {------------------------------------------------------------------------------}

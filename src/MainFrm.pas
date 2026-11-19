@@ -1049,8 +1049,10 @@ var
   S: TVideoStep;
   Ffmpeg, VideoFile: string;
   IsDeeper: Boolean;
+  MainRepeats: Double;
 begin
   IsDeeper := False;
+  MainRepeats := FMapping.Repeats;
   Ffmpeg := FindFfmpeg(ExtractFilePath(ParamStr(0)), FSettings.VideoFfmpegPath);
   Location := CaptureLocation;
   Deeper := TFractalLocation.Create;
@@ -1140,7 +1142,18 @@ begin
     Form.SelectStep(2);
     if Pos('arrivée', Form.SpeedLabel.Caption) = 0 then
       raise Exception.Create('passage : arrivée non annoncée en fin d''enchaînement : ' + Form.SpeedLabel.Caption);
+    // couleurs : celles de la fenêtre principale jusqu'à « Remplacer les couleurs », ensuite celles du scénario
+    if Form.Scenario.HasColors or (Pos('fenêtre principale', Form.ColorsLabel.Caption) = 0) then
+      raise Exception.Create('couleurs : scénario neuf annoncé ' + Form.ColorsLabel.Caption);
+    Form.ReplaceColors;
+    if not Form.Scenario.HasColors or (Pos('fenêtre principale', Form.ColorsLabel.Caption) > 0) then
+      raise Exception.Create('couleurs : « Remplacer les couleurs » sans effet : ' + Form.ColorsLabel.Caption);
+    FMapping.Repeats := MainRepeats + 1;
+    PrepareVideoForm(nil);
+    if not SameValue(Form.Scenario.Mapping.Repeats, MainRepeats) then
+      raise Exception.Create('couleurs : le scénario a suivi la fenêtre principale');
   finally
+    FMapping.Repeats := MainRepeats;
     FNavigator.ZoomCenter(1 / 4);
     if IsDeeper then
       FNavigator.ZoomCenter(1 / 4);

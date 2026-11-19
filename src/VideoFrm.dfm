@@ -352,6 +352,38 @@ object VideoForm: TVideoForm
     TabOrder = 15
     OnClick = btnReplayClick
   end
+  object gbColors: TGroupBox
+    Left = 412
+    Top = 424
+    Width = 340
+    Height = 114
+    Caption = 'Couleurs'
+    TabOrder = 16
+    object lblColors: TLabel
+      Left = 12
+      Top = 18
+      Width = 316
+      Height = 30
+      AutoSize = False
+      WordWrap = True
+    end
+    object pbPalette: TPaintBox
+      Left = 12
+      Top = 50
+      Width = 316
+      Height = 20
+      OnPaint = pbPalettePaint
+    end
+    object btnReplaceColors: TButton
+      Left = 12
+      Top = 78
+      Width = 316
+      Height = 25
+      Caption = 'Remplacer les couleurs par celles de la vue'
+      TabOrder = 0
+      OnClick = btnReplaceColorsClick
+    end
+  end
   object tmrProgress: TTimer
     Enabled = False
     Interval = 250
