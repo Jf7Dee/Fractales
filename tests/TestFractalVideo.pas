@@ -62,6 +62,8 @@ type
     procedure TestIterLimit;
     procedure TestReplaceLocation;
     procedure TestLoadGarbage;
+    procedure TestColorsRoundTrip;
+    procedure TestWithoutColors;
     procedure TestMoveAndDelete;
     procedure TestDurationsAreBounded;
     procedure TestAllStopsUnchanged;
@@ -718,6 +720,92 @@ begin
     B.Free;
     A.Free;
     SysUtils.DeleteFile(FileName);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Palette et effets enregistrés dans le scénario : relus tels quels, copiés par Assign
+procedure TTestVideoScenario.TestColorsRoundTrip;
+var
+  A, B, C: TVideoScenario;
+  P: TGradientPalette;
+  M: TColorMapping;
+  FileName: string;
+  Expected, Actual: TStringList;
+begin
+  FileName := TempFile('couleurs' + kScenarioExtension);
+  A := TVideoScenario.Create;
+  B := TVideoScenario.Create;
+  C := TVideoScenario.Create;
+  P := TGradientPalette.Create;
+  Expected := TStringList.Create;
+  Actual := TStringList.Create;
+  try
+    Add(A, 'bord', 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    P.SetDefault;
+    P.Name := 'Essai';
+    P.AddStop(0.5, $123456);
+    M := DefaultColorMapping;
+    M.Offset := 0.25;
+    M.Repeats := 25;
+    M.Mode := cmBands;
+    M.HasContours := True;
+    M.HasRelief := True;
+    M.ReliefHeight := 14.5;
+    A.SetColors(P, M);
+    CheckTrue(A.HasColors, 'couleurs fixées');
+    A.SaveToFile(FileName);
+    B.LoadFromFile(FileName);
+    CheckTrue(B.HasColors, 'couleurs relues');
+    P.SaveToStrings(Expected);
+    B.Palette.SaveToStrings(Actual);
+    CheckEquals(Expected.Text, Actual.Text, 'palette');
+    CheckEquals(0.25, B.Mapping.Offset, 1e-12, 'décalage');
+    CheckEquals(25, B.Mapping.Repeats, 1e-12, 'répétitions');
+    CheckTrue(B.Mapping.Mode = cmBands, 'mode');
+    CheckTrue(B.Mapping.HasContours, 'contours');
+    CheckTrue(B.Mapping.HasRelief, 'relief');
+    CheckEquals(14.5, B.Mapping.ReliefHeight, 1e-12, 'hauteur du relief');
+    C.Assign(B);
+    CheckTrue(C.HasColors, 'Assign : couleurs');
+    CheckEquals(B.SaveToText, C.SaveToText, 'Assign : texte');
+  finally
+    Actual.Free;
+    Expected.Free;
+    P.Free;
+    C.Free;
+    B.Free;
+    A.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Sans couleurs fixées (scénario neuf ou ancien fichier) : rien d'écrit, relu sans couleurs ; Clear les oublie
+procedure TTestVideoScenario.TestWithoutColors;
+var
+  A, B: TVideoScenario;
+  P: TGradientPalette;
+begin
+  A := TVideoScenario.Create;
+  B := TVideoScenario.Create;
+  P := TGradientPalette.Create;
+  try
+    Add(A, 'bord', 'BurningShip', kEdgeX, kEdgeY, '5.02824617434859796E-11');
+    CheckFalse(A.HasColors, 'scénario neuf');
+    CheckEquals(0, Pos('[Colors]', A.SaveToText), 'pas de [Colors]');
+    CheckEquals(0, Pos('[Palette]', A.SaveToText), 'pas de [Palette]');
+    B.LoadFromText(A.SaveToText);
+    CheckFalse(B.HasColors, 'relu sans couleurs');
+    P.SetDefault;
+    A.SetColors(P, DefaultColorMapping);
+    A.Clear;
+    CheckFalse(A.HasColors, 'Clear');
+  finally
+    P.Free;
+    B.Free;
+    A.Free;
   end;
 end;
 
@@ -1876,6 +1964,7 @@ begin
     M := DefaultColorMapping;
     M.Repeats := 3.25;
     M.HasRelief := True;
+    Sc.SetColors(P, M);   // couleurs du scénario : dans le tampon, avant [Fractal]
     FCancelAfter := 12;
     R := TVideoRenderer.Create(Sc, P, M, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5);
     try
@@ -1888,6 +1977,8 @@ begin
     CheckTrue(ReadInterruptedRender(OutFile, Read, L, Done), 'morceaux relus');
     CheckEquals(10, Done, 'deux morceaux de 5 images');
     CheckEquals(Sc.SaveToText, Read.SaveToText, 'scénario');
+    CheckTrue(Read.HasColors, 'couleurs du scénario relues');
+    CheckEquals(3.25, L.Mapping.Repeats, 1e-12, 'couleurs du lieu');
     // tampon d'une version sans les lignes BLA et LissageAdaptatif : la reprise effacerait les morceaux, elle n'est
     // pas proposée
     Stamp := TStringList.Create;

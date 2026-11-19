@@ -1,12 +1,12 @@
 ﻿unit Fractal.VideoScenario;
 
-// Scénario d'une vidéo : étapes (positions copiées des favoris), trajets et pauses, format ; fichier .fscn.
+// Scénario d'une vidéo : étapes (positions copiées des favoris), trajets et pauses, format, couleurs ; fichier .fscn.
 
 interface
 
 uses
-  SysUtils, Classes, IniFiles, Math, Fractal.Types, Fractal.HighFloat, Fractal.Formulas, Fractal.Persistence,
-  Fractal.VideoPath;
+  SysUtils, Classes, IniFiles, Math, Fractal.Types, Fractal.HighFloat, Fractal.Formulas, Fractal.Palette,
+  Fractal.Persistence, Fractal.VideoPath;
 
 const
   kScenarioExtension = '.fscn';
@@ -37,6 +37,10 @@ type
     FFormat: TVideoFormat;
     FSmoothing: Integer;
     FIterLimit: Integer;
+    // palette et effets de toute la vidéo ; sans eux (scénario neuf, ancien fichier), ceux de la fenêtre principale
+    FHasColors: Boolean;
+    FPalette: TGradientPalette;
+    FMapping: TColorMapping;
     procedure SetSmoothing(Value: Integer);
     procedure SetIterLimit(Value: Integer);
     function GetStep(Index: Integer): TVideoStep;
@@ -72,6 +76,8 @@ type
     // un glissement pur ; pour un trajet seul, celle d'un palier aux rampes d'une demi-durée). Étape 0 : tout à 0.
     procedure ChainInfo(Index: Integer; out First, Last: Integer; out Seconds, PassAt, CruiseSpeed: Double);
     function CreateFormula: TFractalFormula;
+    // Couleurs du scénario (copiées) : enregistrées dans le fichier, elles priment sur la fenêtre principale
+    procedure SetColors(APalette: TGradientPalette; const AMapping: TColorMapping);
     function SaveToText: string;
     procedure SaveToFile(const FileName: string);
     procedure LoadFromFile(const FileName: string);
@@ -83,6 +89,9 @@ type
     property Smoothing: Integer read FSmoothing write SetSmoothing;  // 1 = aucun, 2 = 2×2, 3 = 3×3
     // plafond des itérations automatiques de chaque image ; 0 = pas de plafond
     property IterLimit: Integer read FIterLimit write SetIterLimit;
+    property HasColors: Boolean read FHasColors;
+    property Palette: TGradientPalette read FPalette;   // défaut tant que HasColors est faux
+    property Mapping: TColorMapping read FMapping;
   end;
 
 procedure VideoFormatSize(Format: TVideoFormat; out Width, Height: Integer);
@@ -146,12 +155,16 @@ begin
   FTemplate := TFractalLocation.Create;
   FFormat := vf16x9;
   FSmoothing := 1;
+  FPalette := TGradientPalette.Create;
+  FPalette.SetDefault;
+  FMapping := DefaultColorMapping;
 end;
 
 {------------------------------------------------------------------------------}
 
 destructor TVideoScenario.Destroy;
 begin
+  FPalette.Free;
   FTemplate.Free;
   inherited Destroy;
 end;
@@ -166,6 +179,9 @@ begin
   FFormat := Source.FFormat;
   FSmoothing := Source.FSmoothing;
   FIterLimit := Source.FIterLimit;
+  FHasColors := Source.FHasColors;
+  FPalette.Assign(Source.FPalette);
+  FMapping := Source.FMapping;
 end;
 
 {------------------------------------------------------------------------------}
@@ -188,6 +204,9 @@ procedure TVideoScenario.Clear;
 begin
   SetLength(FSteps, 0);
   FHasFormula := False;
+  FHasColors := False;
+  FPalette.SetDefault;
+  FMapping := DefaultColorMapping;
 end;
 
 {------------------------------------------------------------------------------}
@@ -233,6 +252,19 @@ begin
   if not FHasFormula then
     raise EVideoScenarioError.Create('Scénario vide : aucune formule.');
   Result := FTemplate.CreateFormula;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TVideoScenario.SetColors(APalette: TGradientPalette; const AMapping: TColorMapping);
+begin
+  if APalette = nil then
+    raise EArgumentException.Create('TVideoScenario.SetColors : palette nil');
+  FPalette.Assign(APalette);
+  if FPalette.Name = '' then
+    FPalette.Name := kUnnamed;   // comme à la relecture : le texte du scénario ne change pas une fois enregistré
+  FMapping := AMapping;
+  FHasColors := True;
 end;
 
 {------------------------------------------------------------------------------}
@@ -562,6 +594,11 @@ begin
       if not S.IsStop then
         L.Add('Arret=0');
     end;
+    if FHasColors then
+    begin
+      L.Add('');
+      AddColorSections(L, FPalette, FMapping);
+    end;
     Result := L.Text;
   finally
     L.Free;
@@ -663,6 +700,7 @@ begin
         S.IsStop := Ini.ReadString(Section, 'Arret', '1') <> '0';
         Loaded.FSteps[I] := S;
       end;
+      Loaded.FHasColors := ReadColorSections(Ini, Loaded.FPalette, Loaded.FMapping);
     except
       on E: EVideoScenarioError do
         raise;

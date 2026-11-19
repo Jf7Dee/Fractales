@@ -8,6 +8,7 @@ uses
 
 const
   kLocationExtension = '.frac';
+  kUnnamed = 'Sans nom';   // palette ou lieu sans nom
 
 type
   EFractalFileError = class(Exception);
@@ -71,6 +72,10 @@ function FavoritesFolder: string;
 // Centres en haute précision dans les fichiers texte (lieux, scénarios vidéo)
 function CenterDigits(AWidth: TFloat; const C: THighFloat): Integer;
 function ParseCenter(const S: string; AWidth, ADefault: TFloat): THighFloat;
+// Couleurs dans les fichiers texte (lieux, scénarios vidéo) : sections [Colors] (coloration et effets) et [Palette]
+procedure AddColorSections(L: TStrings; Palette: TGradientPalette; const Mapping: TColorMapping);
+// Faux sans section [Colors] ; Palette et Mapping reçoivent alors les défauts
+function ReadColorSections(Ini: TMemIniFile; Palette: TGradientPalette; out Mapping: TColorMapping): Boolean;
 
 implementation
 
@@ -103,7 +108,6 @@ const
   kMinLocationWidth: Double = 1e-300;
   kMaxLocationWidth: Double = 1e300;
   kInvalidFileChars = '\/:*?"<>|';
-  kUnnamed = 'Sans nom';
   kNoLocationMessage = 'Ce fichier ne contient pas de lieu fractal.';
   kNameSeparator = '_';
   kNameDateFormat = 'yyyymmdd-hhnn';
@@ -339,10 +343,9 @@ end;
 
 function TFractalLocation.SaveToText: string;
 var
-  L, PaletteLines: TStringList;
+  L: TStringList;
 begin
   L := TStringList.Create;
-  PaletteLines := TStringList.Create;
   try
     L.Add('[' + kSectionFractal + ']');
     L.Add('Version=' + IntToStr(kFormatVersion));
@@ -356,20 +359,65 @@ begin
     L.Add('[' + kSectionParams + ']');
     L.AddStrings(FParams);
     L.Add('');
-    L.Add('[' + kSectionColors + ']');
-    L.Add('Offset=' + FloatToInvariant(FMapping.Offset));
-    L.Add('Repeats=' + FloatToInvariant(FMapping.Repeats));
-    L.Add('Stretch=' + FloatToInvariant(FMapping.Stretch));
-    L.Add('Invert=' + BoolTo01(FMapping.IsInverted));
-    AddEffectLines(L, FMapping);
-    L.Add('');
-    L.Add('[' + kSectionPalette + ']');
-    FPalette.SaveToStrings(PaletteLines);
-    L.AddStrings(PaletteLines);
+    AddColorSections(L, FPalette, FMapping);
     Result := L.Text;
   finally
-    PaletteLines.Free;
     L.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure AddColorSections(L: TStrings; Palette: TGradientPalette; const Mapping: TColorMapping);
+var
+  PaletteLines: TStringList;
+begin
+  if (L = nil) or (Palette = nil) then
+    raise EArgumentException.Create('AddColorSections : paramètre nil');
+  PaletteLines := TStringList.Create;
+  try
+    L.Add('[' + kSectionColors + ']');
+    L.Add('Offset=' + FloatToInvariant(Mapping.Offset));
+    L.Add('Repeats=' + FloatToInvariant(Mapping.Repeats));
+    L.Add('Stretch=' + FloatToInvariant(Mapping.Stretch));
+    L.Add('Invert=' + BoolTo01(Mapping.IsInverted));
+    AddEffectLines(L, Mapping);
+    L.Add('');
+    L.Add('[' + kSectionPalette + ']');
+    Palette.SaveToStrings(PaletteLines);
+    L.AddStrings(PaletteLines);
+  finally
+    PaletteLines.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ReadColorSections(Ini: TMemIniFile; Palette: TGradientPalette; out Mapping: TColorMapping): Boolean;
+var
+  Lines: TStringList;
+begin
+  if (Ini = nil) or (Palette = nil) then
+    raise EArgumentException.Create('ReadColorSections : paramètre nil');
+  Result := Ini.SectionExists(kSectionColors);
+  Mapping := DefaultColorMapping;
+  Mapping.Offset := InvariantToDouble(Ini.ReadString(kSectionColors, 'Offset', ''), Mapping.Offset);
+  Mapping.Repeats := InvariantToDouble(Ini.ReadString(kSectionColors, 'Repeats', ''), Mapping.Repeats);
+  Mapping.Stretch := InvariantToDouble(Ini.ReadString(kSectionColors, 'Stretch', ''), Mapping.Stretch);
+  Mapping.IsInverted := Ini.ReadBool(kSectionColors, 'Invert', False);
+  ReadEffects(Ini, Mapping);
+  Mapping := ClampColorMapping(Mapping);
+  Lines := TStringList.Create;
+  try
+    Ini.ReadSectionValues(kSectionPalette, Lines);
+    if Lines.Count > 0 then
+      Palette.LoadFromStrings(Lines)
+    else
+      Palette.SetDefault;
+    if Palette.Name = '' then
+      Palette.Name := kUnnamed;
+  finally
+    Lines.Free;
   end;
 end;
 
@@ -425,22 +473,7 @@ begin
     FParams.Clear;
     Ini.ReadSectionValues(kSectionParams, FParams);
 
-    FMapping := DefaultColorMapping;
-    FMapping.Offset := InvariantToDouble(Ini.ReadString(kSectionColors, 'Offset', ''), FMapping.Offset);
-    FMapping.Repeats := InvariantToDouble(Ini.ReadString(kSectionColors, 'Repeats', ''), FMapping.Repeats);
-    FMapping.Stretch := InvariantToDouble(Ini.ReadString(kSectionColors, 'Stretch', ''), FMapping.Stretch);
-    FMapping.IsInverted := Ini.ReadBool(kSectionColors, 'Invert', False);
-    ReadEffects(Ini, FMapping);
-    FMapping := ClampColorMapping(FMapping);
-
-    Lines.Clear;
-    Ini.ReadSectionValues(kSectionPalette, Lines);
-    if Lines.Count > 0 then
-      FPalette.LoadFromStrings(Lines)
-    else
-      FPalette.SetDefault;
-    if FPalette.Name = '' then
-      FPalette.Name := kUnnamed;
+    ReadColorSections(Ini, FPalette, FMapping);
   finally
     Lines.Free;
     Ini.Free;
