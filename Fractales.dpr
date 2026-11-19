@@ -11,6 +11,7 @@ uses
   Fractal.Formulas in 'src\Fractal.Formulas.pas',
   Fractal.Perturbation in 'src\Fractal.Perturbation.pas',
   Fractal.Bla in 'src\Fractal.Bla.pas',
+  Fractal.Adaptive in 'src\Fractal.Adaptive.pas',
   Fractal.RustKernel in 'src\Fractal.RustKernel.pas',
   Fractal.Buffer in 'src\Fractal.Buffer.pas',
   Fractal.Engine in 'src\Fractal.Engine.pas',

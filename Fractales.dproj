@@ -100,6 +100,7 @@
         <DCCReference Include="src\Fractal.Formulas.pas"/>
         <DCCReference Include="src\Fractal.Perturbation.pas"/>
         <DCCReference Include="src\Fractal.Bla.pas"/>
+        <DCCReference Include="src\Fractal.Adaptive.pas"/>
         <DCCReference Include="src\Fractal.RustKernel.pas"/>
         <DCCReference Include="src\Fractal.Buffer.pas"/>
         <DCCReference Include="src\Fractal.Engine.pas"/>
