@@ -15,6 +15,7 @@ type
   published
     procedure TestSettingsRoundTrip;
     procedure TestSettingsVideoBla;
+    procedure TestSettingsVideoAdaptive;
     procedure TestMissingFileGivesDefaults;
     procedure TestInvalidValuesGiveDefaults;
     procedure TestUnreadableFileGivesDefaults;
@@ -145,6 +146,34 @@ begin
   S.IsVideoBla := True;
   CheckTrue(SaveAppSettings(FileName, S));
   CheckTrue(LoadAppSettings(FileName, kNavModeCount).IsVideoBla, 'BLA=1');
+end;
+
+{------------------------------------------------------------------------------}
+
+// [Video] LissageAdaptatif : actif sans la clé, aller-retour 0 et 1
+procedure TTestSettings.TestSettingsVideoAdaptive;
+var
+  FileName: string;
+  S: TAppSettings;
+  L: TStringList;
+begin
+  FileName := TestTempFolder + 'settings-adaptive.ini';
+  WriteText(FileName, '[Video]' + #13#10 + 'FfmpegPath=' + #13#10);
+  CheckTrue(LoadAppSettings(FileName, kNavModeCount).IsVideoAdaptive, 'sans clé');
+  S := SampleSettings;
+  S.IsVideoAdaptive := False;
+  CheckTrue(SaveAppSettings(FileName, S));
+  CheckFalse(LoadAppSettings(FileName, kNavModeCount).IsVideoAdaptive, 'LissageAdaptatif=0');
+  L := TStringList.Create;
+  try
+    L.LoadFromFile(FileName);
+    CheckEquals('0', L.Values['LissageAdaptatif'], 'clé écrite');
+  finally
+    L.Free;
+  end;
+  S.IsVideoAdaptive := True;
+  CheckTrue(SaveAppSettings(FileName, S));
+  CheckTrue(LoadAppSettings(FileName, kNavModeCount).IsVideoAdaptive, 'LissageAdaptatif=1');
 end;
 
 {------------------------------------------------------------------------------}

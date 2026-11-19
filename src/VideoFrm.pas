@@ -109,6 +109,7 @@ type
     FMapping: TColorMapping;
     FKernel: TEngineKernelType;
     FIsBla: Boolean;           // [Video] BLA de Fractales.ini
+    FIsAdaptive: Boolean;      // [Video] LissageAdaptatif de Fractales.ini
     FFfmpegExe: string;
     FRenderer: TVideoRenderer;
     FIsPreview: Boolean;
@@ -151,7 +152,8 @@ type
   public
     // Copie le lieu courant et la palette ; Favorites reste à l'appelant. Peut être rappelé : garde les sélections
     procedure Prepare(Favorites: TFavoriteStore; CurrentLocation: TFractalLocation; Palette: TGradientPalette;
-      const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string; IsBla: Boolean);
+      const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string;
+      IsBla, IsAdaptive: Boolean);
     procedure AddCurrentView;
     procedure StartRender(IsPreview: Boolean; const FileName: string; Divisor: Integer = 0);
     // Relance un rendu interrompu avec le scénario, la palette et la coloration gardés dans ses morceaux
@@ -286,7 +288,7 @@ end;
 {------------------------------------------------------------------------------}
 
 procedure TVideoForm.Prepare(Favorites: TFavoriteStore; CurrentLocation: TFractalLocation; Palette: TGradientPalette;
-  const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string; IsBla: Boolean);
+  const Mapping: TColorMapping; Kernel: TEngineKernelType; const FfmpegExe: string; IsBla, IsAdaptive: Boolean);
 var
   Favorite: string;
 begin
@@ -299,6 +301,7 @@ begin
   FKernel := Kernel;
   FFfmpegExe := FfmpegExe;
   FIsBla := IsBla;
+  FIsAdaptive := IsAdaptive;
   Favorite := cbFavorites.Text;
   FFavorites.List(cbFavorites.Items);
   cbFavorites.ItemIndex := cbFavorites.Items.IndexOf(Favorite);
@@ -1018,7 +1021,7 @@ begin
   if IsPreview then
     Sink := PreviewSink;
   FRenderer := TVideoRenderer.Create(FScenario, Palette, Mapping, FKernel, FFfmpegExe, FileName, IsPreview, Sink,
-    Divisor, 0, FIsBla);
+    Divisor, 0, FIsBla, FIsAdaptive);
   if (FileName <> '') and (FInterruptedFile <> '') then
   begin
     R.OutputFile := FileName;

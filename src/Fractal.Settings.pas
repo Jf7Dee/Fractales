@@ -35,6 +35,7 @@ type
     Update: TUpdateConfig;     // section [MiseAJour]
     VideoFfmpegPath: string;   // section [Video] ; vide = ffmpeg.exe à côté de l'exe
     IsVideoBla: Boolean;       // [Video] BLA : approximation bilinéaire des vidéos (1 par défaut, 0 pour comparer)
+    IsVideoAdaptive: Boolean;  // [Video] LissageAdaptatif : seuls les pixels à détail lissés (1 par défaut)
   end;
 
   // Aperçu ou génération vidéo lancé et pas encore terminé (section [RendusInterrompus]) : proposé au démarrage
@@ -72,6 +73,7 @@ const
   kInterruptedSeparator = '|';  // interdit dans un chemin Windows
   kKeyFfmpegPath = 'FfmpegPath';
   kKeyBla = 'BLA';
+  kKeyAdaptive = 'LissageAdaptatif';
   kKeyKernel = 'Kernel';
   kKeyMode = 'Mode';
   kKeyLocations = 'Locations';
@@ -105,6 +107,7 @@ begin
   Result.HiResSupersample := kDefaultSupersample;
   Result.Update := DefaultUpdateConfig;
   Result.IsVideoBla := True;
+  Result.IsVideoAdaptive := True;
 end;
 
 {------------------------------------------------------------------------------}
@@ -139,6 +142,7 @@ begin
       Result.VideoFolder := Ini.ReadString(kSectionFolders, kKeyVideos, '');
       Result.VideoFfmpegPath := Ini.ReadString(kSectionVideo, kKeyFfmpegPath, '');
       Result.IsVideoBla := Ini.ReadBool(kSectionVideo, kKeyBla, D.IsVideoBla);
+      Result.IsVideoAdaptive := Ini.ReadBool(kSectionVideo, kKeyAdaptive, D.IsVideoAdaptive);
       Result.HiResPreset := ReadBounded(Ini, kSectionHiRes, kKeyPreset, D.HiResPreset, 0, kHiResPresetCount - 1);
       Result.HiResWidth := ReadBounded(Ini, kSectionHiRes, kKeyWidth, D.HiResWidth, kMinHiResSize, kMaxHiResSize);
       Result.HiResHeight := ReadBounded(Ini, kSectionHiRes, kKeyHeight, D.HiResHeight, kMinHiResSize,
@@ -194,6 +198,7 @@ begin
       Ini.WriteString(kSectionFolders, kKeyVideos, S.VideoFolder);
       Ini.WriteString(kSectionVideo, kKeyFfmpegPath, S.VideoFfmpegPath);
       Ini.WriteBool(kSectionVideo, kKeyBla, S.IsVideoBla);
+      Ini.WriteBool(kSectionVideo, kKeyAdaptive, S.IsVideoAdaptive);
       Ini.WriteInteger(kSectionHiRes, kKeyPreset, S.HiResPreset);
       Ini.WriteInteger(kSectionHiRes, kKeyWidth, S.HiResWidth);
       Ini.WriteInteger(kSectionHiRes, kKeyHeight, S.HiResHeight);

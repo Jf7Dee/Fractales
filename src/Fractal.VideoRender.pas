@@ -29,6 +29,7 @@ type
     FMapping: TColorMapping;
     FKernel: TEngineKernelType;
     FIsBla: Boolean;
+    FIsAdaptive: Boolean;
     FFfmpegExe: string;
     FOutputFile: string;
     FIsPreview: Boolean;
@@ -72,7 +73,8 @@ type
     // Divisor : 0 = automatique (kPreviewDivisor en aperçu, 1 sinon). SegmentFrames : 0 = kSegmentFrames
     constructor Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
       Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean;
-      Sink: TVideoFrameSink = nil; Divisor: Integer = 0; SegmentFrames: Integer = 0; IsBla: Boolean = False);
+      Sink: TVideoFrameSink = nil; Divisor: Integer = 0; SegmentFrames: Integer = 0; IsBla: Boolean = False;
+      IsAdaptive: Boolean = False);
     destructor Destroy; override;
     procedure Cancel;  // à préférer à Terminate : arrête aussi FFmpeg, même pendant la finalisation de la vidéo
     property FramesTotal: Integer read FFramesTotal;
@@ -117,7 +119,7 @@ function SetThreadExecutionState(Flags: DWORD): DWORD; stdcall; external kernel3
 
 constructor TVideoRenderer.Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
   Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean; Sink: TVideoFrameSink;
-  Divisor, SegmentFrames: Integer; IsBla: Boolean);
+  Divisor, SegmentFrames: Integer; IsBla, IsAdaptive: Boolean);
 begin
   if (Scenario = nil) or (Palette = nil) then
     raise EArgumentException.Create('TVideoRenderer : scénario ou palette nil');
@@ -131,6 +133,7 @@ begin
   FMapping := Mapping;
   FKernel := Kernel;
   FIsBla := IsBla;
+  FIsAdaptive := IsAdaptive;
   FFfmpegExe := FfmpegExe;
   FOutputFile := OutputFile;
   FIsPreview := IsPreview;
@@ -218,7 +221,7 @@ begin
   Settings.Supersample := Supersample;
   Settings.FileName := '';
   Settings.IsBla := FIsBla;   // morceaux, aperçu et profil de coût : le profil prédit ainsi le vrai rendu
-  Settings.IsAdaptive := False;
+  Settings.IsAdaptive := FIsAdaptive;   // sans effet au profil de coût (Supersample 1)
   Target.Size := 0;
   R := THiResRenderer.Create(Settings, V, Formula, TColorMapper.Create(FPalette, FMapping), '', FKernel,
     kHiResBandRows, Target);
@@ -328,7 +331,7 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Tout ce qui change les images : scénario, palette, coloration, taille, découpage
+// Tout ce qui change les images : scénario, palette, coloration, taille, découpage, BLA, lissage adaptatif
 function TVideoRenderer.StampText(Formula: TFractalFormula): string;
 var
   L: TFractalLocation;
@@ -338,8 +341,8 @@ begin
   S := TStringList.Create;
   try
     L.CaptureFrom(Formula, MakeViewport(0, 0, kDefaultWidth, 1, 1), False, FPalette, FMapping);
-    S.Text := FScenario.SaveToText + L.SaveToText + Format('Taille=%dx%d'#13#10'Morceau=%d'#13#10,
-      [FWidth, FHeight, FSegmentFrames]);
+    S.Text := FScenario.SaveToText + L.SaveToText + Format('Taille=%dx%d'#13#10'Morceau=%d'#13#10 +
+      'BLA=%d'#13#10'LissageAdaptatif=%d'#13#10, [FWidth, FHeight, FSegmentFrames, Ord(FIsBla), Ord(FIsAdaptive)]);
     Result := S.Text;  // tel que TStringList le relira
   finally
     S.Free;
@@ -566,16 +569,18 @@ end;
 {------------------------------------------------------------------------------}
 
 // Le scénario des morceaux (StampText) : celui du scénario, puis le lieu à partir de [Fractal], puis la taille et le
-// découpage, sur les deux dernières lignes
+// découpage, enfin les réglages BLA et LissageAdaptatif (absents des tampons plus anciens)
 function ReadInterruptedRender(const OutputFile: string; Scenario: TVideoScenario; Location: TFractalLocation;
   out FramesDone: Integer): Boolean;
 const
   kSizeKey = 'Taille=';
   kSegmentKey = 'Morceau=';
+  kBlaKey = 'BLA=';
+  kAdaptiveKey = 'LissageAdaptatif=';
 var
   Folder: string;
   S, Part: TStringList;
-  I, LocationLine, Segment, Count: Integer;
+  I, LocationLine, Segment, Count, Last: Integer;
 begin
   if (Scenario = nil) or (Location = nil) then
     raise EArgumentException.Create('ReadInterruptedRender : scénario ou lieu nil');
@@ -590,18 +595,23 @@ begin
     try
       S.LoadFromFile(Folder + kStampName, TEncoding.UTF8);
       LocationLine := S.IndexOf('[Fractal]');
-      if (LocationLine < 1) or (S.Count < LocationLine + 3) or
-        (Copy(S[S.Count - 2], 1, Length(kSizeKey)) <> kSizeKey) or
-        (Copy(S[S.Count - 1], 1, Length(kSegmentKey)) <> kSegmentKey) then
+      // Last : ligne du découpage, avant les réglages
+      Last := S.Count - 1;
+      while (Last >= 0) and ((Copy(S[Last], 1, Length(kBlaKey)) = kBlaKey)
+        or (Copy(S[Last], 1, Length(kAdaptiveKey)) = kAdaptiveKey)) do
+        Dec(Last);
+      if (LocationLine < 1) or (Last < LocationLine + 2) or
+        (Copy(S[Last - 1], 1, Length(kSizeKey)) <> kSizeKey) or
+        (Copy(S[Last], 1, Length(kSegmentKey)) <> kSegmentKey) then
         Exit;
-      Segment := StrToIntDef(Copy(S[S.Count - 1], Length(kSegmentKey) + 1, MaxInt), 0);
+      Segment := StrToIntDef(Copy(S[Last], Length(kSegmentKey) + 1, MaxInt), 0);
       if Segment <= 0 then
         Exit;
       for I := 0 to LocationLine - 1 do
         Part.Add(S[I]);
       Scenario.LoadFromText(Part.Text);
       Part.Clear;
-      for I := LocationLine to S.Count - 3 do
+      for I := LocationLine to Last - 2 do
         Part.Add(S[I]);
       Location.LoadFromText(Part.Text);
       // une palette sans nom est relue « Sans nom » : le rendu rebâti doit redonner le même texte

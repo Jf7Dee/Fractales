@@ -104,6 +104,7 @@ type
     procedure TestCancel;
     procedure TestHiResToStream;
     procedure TestResumeAfterCancel;
+    procedure TestStampIncludesBlaAndAdaptive;
     procedure TestReadInterruptedRender;
     procedure TestVideoMaxIter;
   end;
@@ -1779,6 +1780,70 @@ begin
     SysUtils.DeleteFile(OutFile);
   end;
 end;
+
+{------------------------------------------------------------------------------}
+
+// BLA et lissage adaptatif sont dans le tampon des morceaux : une génération interrompue avec l'un des réglages
+// n'est pas reprise avec l'autre
+procedure TTestVideoRender.TestStampIncludesBlaAndAdaptive;
+var
+  Sc: TVideoScenario;
+  P: TGradientPalette;
+  R: TVideoRenderer;
+  Stamp: TStringList;
+  Ffmpeg, OutFile: string;
+  Changed: Integer;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : tampon non vérifié');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'tampon.mp4';
+  Sc := SmallScenario;
+  P := TGradientPalette.Create;
+  Stamp := TStringList.Create;
+  try
+    P.SetDefault;
+    // 0 : le BLA change ; 1 : le lissage adaptatif change
+    for Changed := 0 to 1 do
+    begin
+      SysUtils.DeleteFile(OutFile);
+      FCancelAfter := FFrames.Count + 12;   // les images des tours précédents restent dans FFrames
+      R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5, False,
+        False);
+      try
+        FCancelTarget := R;
+        R.WaitFor;
+      finally
+        FCancelTarget := nil;
+        R.Free;
+      end;
+      CheckTrue(FileExists(OutFile + kPartsSuffix + '\morceau0001.mp4'), 'morceaux gardés');
+      Stamp.LoadFromFile(OutFile + kPartsSuffix + '\scenario.txt');
+      CheckEquals('0', Stamp.Values['BLA'], 'BLA dans le tampon');
+      CheckEquals('0', Stamp.Values['LissageAdaptatif'], 'lissage adaptatif dans le tampon');
+      FCancelAfter := 0;
+      R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5,
+        Changed = 0, Changed = 1);
+      try
+        R.WaitFor;
+        CheckTrue(R.IsSucceeded, R.ErrorMessage);
+        CheckEquals(0, R.FirstFrame, Format('réglage %d changé : tout recommence', [Changed]));
+      finally
+        R.Free;
+      end;
+    end;
+  finally
+    Stamp.Free;
+    P.Free;
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 // Relu depuis les morceaux, le rendu se rebâtit à l'identique : la relance reprend au lieu de tout recommencer
 procedure TTestVideoRender.TestReadInterruptedRender;
