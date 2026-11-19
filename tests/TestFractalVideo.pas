@@ -1632,6 +1632,8 @@ begin
   Settings.Height := 48;
   Settings.Supersample := 1;
   Settings.FileName := TestTempFolder + 'jamais-cree.png';
+  Settings.IsBla := False;
+  Settings.IsAdaptive := False;
   SysUtils.DeleteFile(Settings.FileName);
   V.Width := 3;
   V.PixelWidth := 64;

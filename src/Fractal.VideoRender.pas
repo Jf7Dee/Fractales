@@ -218,6 +218,7 @@ begin
   Settings.Supersample := Supersample;
   Settings.FileName := '';
   Settings.IsBla := FIsBla;   // morceaux, aperçu et profil de coût : le profil prédit ainsi le vrai rendu
+  Settings.IsAdaptive := False;
   Target.Size := 0;
   R := THiResRenderer.Create(Settings, V, Formula, TColorMapper.Create(FPalette, FMapping), '', FKernel,
     kHiResBandRows, Target);

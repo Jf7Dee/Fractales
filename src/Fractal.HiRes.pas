@@ -3,7 +3,7 @@
 interface
 
 uses
-  Windows, SysUtils, Classes, Math, Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine,
+  Windows, SysUtils, Classes, Math, Types, Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine,
   Fractal.Buffer, Fractal.Png;
 
 const
@@ -18,6 +18,9 @@ type
     Supersample: Integer;
     FileName: string;
     IsBla: Boolean;    // approximation bilinéaire en zoom profond : vidéos seulement, jamais les images fixes
+    // lissage adaptatif (Supersample > 1) : seuls les pixels qui ont du détail sont suréchantillonnés ; vidéos
+    // seulement, les images fixes gardent le lissage complet
+    IsAdaptive: Boolean;
   end;
 
   // Rendu hors écran par bandes de lignes, écrit directement dans le PNG.
@@ -35,8 +38,15 @@ type
     FErrorMessage: string;
     FIsSucceeded: Boolean;
     FIsDone: Boolean;
+    FRefinedPixels: Int64;
+    FTotalPixels: Int64;
+    FReferenceComputeCount: Integer;
+    FBlaBuildCount: Integer;
     function ShadedSubPixel(Buffer: TIterationBuffer; X, Y, Distance: Integer): Cardinal;
     function RenderToStream(Stream: TStream): Boolean;
+    function WaitForEngine(Engine: TRenderEngine): Boolean;
+    function MarkAdaptive(Engine: TRenderEngine; out Colors: TCardinalDynArray; out Marks: TBooleanDynArray): Boolean;
+    function BandMask(const Marks: TBooleanDynArray; Row0, Rows, Margin, Bottom: Integer): TBooleanDynArray;
   protected
     procedure Execute; override;
   public
@@ -53,11 +63,20 @@ type
     property ErrorMessage: string read FErrorMessage;
     property IsSucceeded: Boolean read FIsSucceeded;
     property IsDone: Boolean read FIsDone;
+    // après le rendu : pixels suréchantillonnés (tous sans adaptatif, si Supersample > 1) et pixels de l'image ;
+    // références et tables BLA calculées par le moteur
+    property RefinedPixels: Int64 read FRefinedPixels;
+    property TotalPixels: Int64 read FTotalPixels;
+    property ReferenceComputeCount: Integer read FReferenceComputeCount;
+    property BlaBuildCount: Integer read FBlaBuildCount;
   end;
 
 function EstimateHiResBytes(const Settings: THiResSettings; IsRelief: Boolean = False): Int64;
 
 implementation
+
+uses
+  Fractal.Adaptive;
 
 const
   kWaitSliceMs = 100;
@@ -85,6 +104,9 @@ begin
   if IsRelief then
     Inc(Rows, kReliefOverlapRows);
   Result := Int64(Settings.Width) * SS * Rows * SS * kBytesPerSample + Int64(Settings.Width) * 3;
+  // adaptatif : premier passage sur toute l'image (tampon du moteur), puis ses couleurs et ses marques gardées
+  if Settings.IsAdaptive and (SS > 1) then
+    Inc(Result, Int64(Settings.Width) * Settings.Height * (kBytesPerSample + SizeOf(Cardinal) + SizeOf(Boolean)));
 end;
 
 {------------------------------------------------------------------------------}
@@ -185,20 +207,96 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Attend la fin du rendu courant ; faux si le thread est arrêté. Les erreurs de calcul lèvent une exception.
+function THiResRenderer.WaitForEngine(Engine: TRenderEngine): Boolean;
+var
+  Errors: string;
+begin
+  Result := False;
+  while not Engine.WaitUntilComplete(kWaitSliceMs) do
+    if Terminated then
+      Exit;
+  if Terminated then
+    Exit;
+  Errors := Engine.TakeErrors;
+  if Errors <> '' then
+    raise Exception.Create('Erreur de calcul : ' + Errors);
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Premier passage du lissage adaptatif : toute l'image au pas du pixel, en un seul rendu (le marquage voit ainsi les
+// voisins de chaque pixel, même au bord d'une bande). Colors : couleur finale de chaque pixel, relief compris (pente
+// entre pixels voisins, comme le lissage complet) ; Marks : pixels à suréchantillonner. Faux si le thread est arrêté.
+function THiResRenderer.MarkAdaptive(Engine: TRenderEngine; out Colors: TCardinalDynArray;
+  out Marks: TBooleanDynArray): Boolean;
+var
+  X, Y: Integer;
+begin
+  Result := False;
+  Engine.SampleMask := nil;
+  Engine.Render(FViewport.SubViewport(1, 0, FSettings.Height), FFormula, False);
+  if not WaitForEngine(Engine) then
+    Exit;
+  SetLength(Colors, FSettings.Width * FSettings.Height);
+  for Y := 0 to FSettings.Height - 1 do
+    for X := 0 to FSettings.Width - 1 do
+      if FMapper.HasRelief then
+        Colors[Y * FSettings.Width + X] := ShadedSubPixel(Engine.Buffer, X, Y, 1)
+      else
+        Colors[Y * FSettings.Width + X] := FMapper.MapValue(Engine.Buffer.Value(X, Y));
+  MarkDetail(Colors, FSettings.Width, FSettings.Height, kAdaptiveThreshold, Marks);
+  Result := True;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Masque des sous-pixels de la bande [Row0, Row0 + Rows), débordements Margin et Bottom compris : ceux des pixels
+// marqués de la bande, élargis d'un pixel avec relief (la pente lit les sous-pixels voisins, jusque dans les lignes
+// de débordement). nil si la bande n'a aucun pixel marqué.
+function THiResRenderer.BandMask(const Marks: TBooleanDynArray; Row0, Rows, Margin, Bottom: Integer): TBooleanDynArray;
+var
+  Band: TBooleanDynArray;
+  X, R, W: Integer;
+  IsAny: Boolean;
+begin
+  W := FSettings.Width;
+  SetLength(Band, W * (Rows + Margin + Bottom));
+  IsAny := False;
+  for R := 0 to Rows - 1 do
+    for X := 0 to W - 1 do
+      if Marks[(Row0 + R) * W + X] then
+      begin
+        Band[(R + Margin) * W + X] := True;
+        IsAny := True;
+      end;
+  if IsAny then
+    Result := ExpandMask(Band, W, Rows + Margin + Bottom, FSettings.Supersample, Ord(FMapper.HasRelief))
+  else
+    Result := nil;
+end;
+
+{------------------------------------------------------------------------------}
+
 function THiResRenderer.RenderToStream(Stream: TStream): Boolean;
 var
   Engine: TRenderEngine;
   Writer: TPngWriter;
   Row: array of Byte;
-  Row0, Rows, R, X, SX, SY, SS, Count, SumR, SumG, SumB, Margin, Bottom: Integer;
-  IsRelief: Boolean;
+  Row0, Rows, R, X, SX, SY, SS, Count, SumR, SumG, SumB, Margin, Bottom, Index: Integer;
+  IsRelief, IsAdaptive, IsBandRefined: Boolean;
   C: Cardinal;
-  Errors: string;
+  Colors: TCardinalDynArray;
+  Marks: TBooleanDynArray;
 begin
   Result := False;
   SS := FSettings.Supersample;
   Count := SS * SS;
   IsRelief := FMapper.HasRelief;
+  IsAdaptive := FSettings.IsAdaptive and (SS > 1);
+  FRefinedPixels := 0;
+  FTotalPixels := 0;
   SetLength(Row, FSettings.Width * 3);
   Engine := TRenderEngine.Create(CpuCount);
   try
@@ -210,6 +308,8 @@ begin
     try
       if FLocationText <> '' then
         Writer.AddText(kLocationKeyword, FLocationText);
+      if IsAdaptive and not MarkAdaptive(Engine, Colors, Marks) then
+        Exit;
       Row0 := 0;
       while Row0 < FSettings.Height do
       begin
@@ -226,19 +326,37 @@ begin
           Margin := 0;
           Bottom := 0;
         end;
-        Engine.Render(FViewport.SubViewport(SS, Row0 - Margin, Rows + Margin + Bottom), FFormula, False);
-        while not Engine.WaitUntilComplete(kWaitSliceMs) do
-          if Terminated then
+        // adaptatif : bande calculée seulement aux sous-pixels des pixels marqués (et de leurs voisins avec relief) ;
+        // aucune marque : pas de calcul, la bande garde les couleurs du premier passage
+        IsBandRefined := True;
+        if IsAdaptive then
+        begin
+          Engine.SampleMask := BandMask(Marks, Row0, Rows, Margin, Bottom);
+          IsBandRefined := Engine.SampleMask <> nil;
+        end;
+        if IsBandRefined then
+        begin
+          Engine.Render(FViewport.SubViewport(SS, Row0 - Margin, Rows + Margin + Bottom), FFormula, False);
+          Engine.SampleMask := nil;
+          if not WaitForEngine(Engine) then
             Exit;
-        if Terminated then
-          Exit;
-        Errors := Engine.TakeErrors;
-        if Errors <> '' then
-          raise Exception.Create('Erreur de calcul : ' + Errors);
+        end;
         for R := 0 to Rows - 1 do
         begin
           for X := 0 to FSettings.Width - 1 do
           begin
+            Inc(FTotalPixels);
+            Index := (Row0 + R) * FSettings.Width + X;
+            if IsAdaptive and not Marks[Index] then
+            begin
+              C := Colors[Index];
+              Row[X * 3] := (C shr 16) and $FF;
+              Row[X * 3 + 1] := (C shr 8) and $FF;
+              Row[X * 3 + 2] := C and $FF;
+              Continue;
+            end;
+            if SS > 1 then
+              Inc(FRefinedPixels);
             // anticrénelage : moyenne des couleurs (pas des valeurs) des SS x SS sous-pixels
             SumR := 0;
             SumG := 0;
@@ -269,6 +387,8 @@ begin
       Writer.Free;
     end;
   finally
+    FReferenceComputeCount := Engine.ReferenceComputeCount;
+    FBlaBuildCount := Engine.BlaBuildCount;
     Engine.Free;
   end;
 end;

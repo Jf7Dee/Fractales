@@ -3,16 +3,25 @@
 interface
 
 uses
-  Classes, SysUtils, Graphics, pngimage, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Palette,
+  Classes, SysUtils, Types, Graphics, pngimage, TestFramework, Fractal.Types, Fractal.Formulas, Fractal.Palette,
   Fractal.Png, Fractal.HiRes, Fractal.Engine, TestUtils;
 
 type
   TTestHiRes = class(TTestCase)
   private
     FMapping: TColorMapping;
+    // dernier RenderPixels
+    FRefined: Int64;
+    FTotal: Int64;
+    FReferenceCount: Integer;
+    FBlaCount: Integer;
     function MakeSettings(W, H, SS: Integer; const FileName: string): THiResSettings;
     procedure RenderPng(Size, SS: Integer; const FileName: string; ABandRows: Integer = kHiResBandRows);
     function MeanReliefShift(SS: Integer): Double;
+    function RenderPixels(const Settings: THiResSettings; const V: TViewport; F: TFractalFormula;
+      ABandRows: Integer = kHiResBandRows): TCardinalDynArray;
+    function FileCrc(const FileName: string): Cardinal;
+    procedure CompareToFull(const Adaptive, Full: TCardinalDynArray; const Context: string);
     function RunRenderer(const Settings: THiResSettings; const V: TViewport; F: TFractalFormula;
       AKernel: TEngineKernelType = ekDelphi; ABandRows: Integer = kHiResBandRows): THiResRenderer;
   protected
@@ -28,9 +37,19 @@ type
     procedure TestHiResWithoutEffectsUnchanged;
     procedure TestHiResReliefHasNoSeam;
     procedure TestHiResReliefStrengthIndependentOfSupersample;
+    procedure TestAdaptiveOffIsIdentical;
+    procedure TestAdaptiveSupersampleOneIsIdentical;
+    procedure TestAdaptiveFlatViewRefinesNothing;
+    procedure TestAdaptiveCloseToFull;
+    procedure TestAdaptiveReliefMatchesFull;
+    procedure TestAdaptiveBandEdge;
+    procedure TestAdaptiveReusesReference;
   end;
 
 implementation
+
+uses
+  Windows, Math, Fractal.Adaptive, TestFractalPerturbation;
 
 {------------------------------------------------------------------------------}
 
@@ -48,6 +67,8 @@ begin
   Result.Height := H;
   Result.Supersample := SS;
   Result.FileName := FileName;
+  Result.IsBla := False;
+  Result.IsAdaptive := False;
 end;
 
 {------------------------------------------------------------------------------}
@@ -476,6 +497,312 @@ begin
   CheckTrue(Screen > 0, 'le relief ne change aucun pixel');
   CheckTrue((Doubled >= kMinRatio * Screen) and (Doubled <= kMaxRatio * Screen),
     Format('force du relief : SS=1 %.3f, SS=2 %.3f', [Screen, Doubled]));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Rendu HD dans un fichier temporaire, relu en couleurs $RRGGBB ligne par ligne ; garde les compteurs du renderer.
+function TTestHiRes.RenderPixels(const Settings: THiResSettings; const V: TViewport; F: TFractalFormula;
+  ABandRows: Integer): TCardinalDynArray;
+var
+  R: THiResRenderer;
+  Png: TPngImage;
+  X, Y: Integer;
+  C: TColor;
+begin
+  R := RunRenderer(Settings, V, F, ekDelphi, ABandRows);
+  try
+    R.WaitFor;
+    CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    FRefined := R.RefinedPixels;
+    FTotal := R.TotalPixels;
+    FReferenceCount := R.ReferenceComputeCount;
+    FBlaCount := R.BlaBuildCount;
+  finally
+    R.Free;
+  end;
+  Png := TPngImage.Create;
+  try
+    Png.LoadFromFile(Settings.FileName);
+    SetLength(Result, Settings.Width * Settings.Height);
+    for Y := 0 to Settings.Height - 1 do
+      for X := 0 to Settings.Width - 1 do
+      begin
+        C := Png.Pixels[X, Y];
+        Result[Y * Settings.Width + X] := Cardinal(GetRValue(C)) shl 16 or Cardinal(GetGValue(C)) shl 8
+          or GetBValue(C);
+      end;
+  finally
+    Png.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TTestHiRes.FileCrc(const FileName: string): Cardinal;
+var
+  Stream: TFileStream;
+  Bytes: array of Byte;
+begin
+  Stream := TFileStream.Create(FileName, fmOpenRead);
+  try
+    SetLength(Bytes, Stream.Size);
+    Stream.ReadBuffer(Bytes[0], Stream.Size);
+  finally
+    Stream.Free;
+  end;
+  Result := PngCrc32(@Bytes[0], Length(Bytes));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Adaptatif contre lissage complet : au moins 99 % de pixels identiques, au plus un pixel sur mille dont un canal
+// s'écarte de plus du seuil + 2.
+procedure TTestHiRes.CompareToFull(const Adaptive, Full: TCardinalDynArray; const Context: string);
+var
+  I, Same, MaxDiff, Shift, Far: Integer;
+  Diff: Integer;
+begin
+  CheckEquals(Length(Full), Length(Adaptive), Context);
+  Same := 0;
+  MaxDiff := 0;
+  Far := 0;
+  for I := 0 to High(Full) do
+  begin
+    if Adaptive[I] = Full[I] then
+      Inc(Same);
+    Diff := 0;
+    Shift := 0;
+    while Shift <= 16 do
+    begin
+      Diff := Max(Diff, Abs(Integer((Adaptive[I] shr Shift) and $FF) - Integer((Full[I] shr Shift) and $FF)));
+      Inc(Shift, 8);
+    end;
+    MaxDiff := Max(MaxDiff, Diff);
+    if Diff > kAdaptiveThreshold + 2 then
+      Inc(Far);
+  end;
+  Status(Format('%s : %d %% identiques, écart max %d (%d pixels au-delà de %d), %d pixels lissés sur %d', [Context,
+    Same * 100 div Length(Full), MaxDiff, Far, kAdaptiveThreshold + 2, FRefined, FTotal]));
+  CheckTrue(Same * 100 >= 99 * Length(Full), Format('%s : %d pixels identiques sur %d', [Context, Same,
+    Length(Full)]));
+  // un détail plus fin qu'un pixel au milieu d'une zone unie échappe au premier passage (une poussière isolée, que le
+  // relief éclaire) : toléré pour un pixel sur mille
+  CheckTrue(Far * 1000 <= Length(Full), Format('%s : %d pixels à plus de %d', [Context, Far,
+    kAdaptiveThreshold + 2]));
+end;
+
+{------------------------------------------------------------------------------}
+
+// Réglage coupé : le PNG est celui du lissage complet actuel, à l'octet près (relief compris).
+procedure TTestHiRes.TestAdaptiveOffIsIdentical;
+const
+  kExpectedCrc = $43326A35;  // PNG produit avant le lissage adaptatif (relief, SS 2)
+var
+  F: TMandelbrotFormula;
+  Settings: THiResSettings;
+begin
+  FMapping.HasRelief := True;
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 200;
+    Settings := MakeSettings(40, 40, 2, TestTempFolder + 'hires-adaptive-off.png');
+    RenderPixels(Settings, MakeViewport(-0.5, 0, 3, 40, 40), F);
+    CheckEquals(IntToHex(kExpectedCrc, 8), IntToHex(FileCrc(Settings.FileName), 8));
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// SS 1 : l'adaptatif ne change rien.
+procedure TTestHiRes.TestAdaptiveSupersampleOneIsIdentical;
+var
+  F: TMandelbrotFormula;
+  Settings: THiResSettings;
+  Crc: Cardinal;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 200;
+    Settings := MakeSettings(40, 40, 1, TestTempFolder + 'hires-adaptive-ss1.png');
+    RenderPixels(Settings, MakeViewport(-0.5, 0, 3, 40, 40), F);
+    Crc := FileCrc(Settings.FileName);
+    Settings.IsAdaptive := True;
+    RenderPixels(Settings, MakeViewport(-0.5, 0, 3, 40, 40), F);
+    CheckEquals(IntToHex(Crc, 8), IntToHex(FileCrc(Settings.FileName), 8));
+    CheckEquals(0, FRefined);
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue toute intérieure (cardioïde principale) : rien à lisser, image identique au lissage complet.
+procedure TTestHiRes.TestAdaptiveFlatViewRefinesNothing;
+var
+  F: TMandelbrotFormula;
+  Settings: THiResSettings;
+  Full, Adaptive: TCardinalDynArray;
+  I: Integer;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 200;
+    Settings := MakeSettings(40, 30, 2, TestTempFolder + 'hires-adaptive-flat.png');
+    Full := RenderPixels(Settings, MakeViewport(0, 0, 0.01, 40, 30), F);
+    Settings.IsAdaptive := True;
+    Adaptive := RenderPixels(Settings, MakeViewport(0, 0, 0.01, 40, 30), F);
+    CheckEquals(0, FRefined, 'pixels lissés');
+    CheckEquals(40 * 30, FTotal, 'pixels en tout');
+    for I := 0 to High(Full) do
+      CheckEquals(Integer(Full[I]), Integer(Adaptive[I]), Format('pixel %d', [I]));
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Vue de bord (vallée des hippocampes), SS 2 et 3, avec et sans relief : proche du lissage complet, moins de
+// pixels lissés que l'image n'en compte.
+procedure TTestHiRes.TestAdaptiveCloseToFull;
+const
+  kW = 64;
+  kH = 48;
+var
+  F: TMandelbrotFormula;
+  Settings: THiResSettings;
+  V: TViewport;
+  Full: TCardinalDynArray;
+  SS, Relief: Integer;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 500;
+    V := MakeViewport(-0.745, 0.11, 0.05, kW, kH);
+    for Relief := 0 to 1 do
+      for SS := 2 to 3 do
+      begin
+        FMapping.HasRelief := Relief = 1;
+        Settings := MakeSettings(kW, kH, SS, TestTempFolder + 'hires-adaptive-close.png');
+        Full := RenderPixels(Settings, V, F);
+        Settings.IsAdaptive := True;
+        CompareToFull(RenderPixels(Settings, V, F), Full, Format('SS %d, relief %d', [SS, Relief]));
+        CheckTrue(FRefined > 0, 'aucun pixel lissé');
+        CheckTrue(FRefined < FTotal, 'tous les pixels lissés');
+      end;
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Relief, bandes de 4 lignes : identique à l'adaptatif d'une seule bande (pas de raccord) et proche du complet.
+procedure TTestHiRes.TestAdaptiveReliefMatchesFull;
+const
+  kW = 64;
+  kH = 48;
+var
+  F: TMandelbrotFormula;
+  Settings: THiResSettings;
+  V: TViewport;
+  Full, Whole, Banded: TCardinalDynArray;
+  I: Integer;
+begin
+  FMapping.HasRelief := True;
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 500;
+    V := MakeViewport(-0.745, 0.11, 0.05, kW, kH);
+    Settings := MakeSettings(kW, kH, 2, TestTempFolder + 'hires-adaptive-relief.png');
+    Full := RenderPixels(Settings, V, F, 4);
+    Settings.IsAdaptive := True;
+    Whole := RenderPixels(Settings, V, F, kH);
+    Banded := RenderPixels(Settings, V, F, 4);
+    for I := 0 to High(Whole) do
+      CheckEquals(Integer(Whole[I]), Integer(Banded[I]), Format('pixel %d, %d', [I mod kW, I div kW]));
+    CompareToFull(Banded, Full, 'relief, bandes de 4');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Bandes de 4 lignes sur une vue de bord, sans relief : de part et d'autre de chaque jonction, les pixels sont lissés
+// comme en une seule bande (le marquage voit les voisins de la bande voisine).
+procedure TTestHiRes.TestAdaptiveBandEdge;
+const
+  kW = 64;
+  kH = 48;
+  kBand = 4;
+var
+  F: TMandelbrotFormula;
+  Settings: THiResSettings;
+  V: TViewport;
+  Full, Whole, Banded: TCardinalDynArray;
+  I: Integer;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 500;
+    V := MakeViewport(-0.745, 0.11, 0.05, kW, kH);
+    Settings := MakeSettings(kW, kH, 2, TestTempFolder + 'hires-adaptive-edge.png');
+    Full := RenderPixels(Settings, V, F, kBand);
+    Settings.IsAdaptive := True;
+    Whole := RenderPixels(Settings, V, F, kH);
+    Banded := RenderPixels(Settings, V, F, kBand);
+    CheckTrue(FRefined > 0, 'aucun pixel lissé');
+    for I := 0 to High(Whole) do
+      CheckEquals(Integer(Whole[I]), Integer(Banded[I]), Format('pixel %d, %d', [I mod kW, I div kW]));
+    CompareToFull(Banded, Full, 'jonctions de bandes');
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Zoom profond avec BLA (MultiBroth_1 de JF, comme TestFractalBla) : l'adaptatif ne calcule pas plus de références
+// ni de tables que le lissage complet.
+procedure TTestHiRes.TestAdaptiveReusesReference;
+const
+  kW = 48;
+  kH = 32;
+  kMultiBroth1X = '0.6436032989752984374817305594833887051524012044957825545579532636106783601909397218300741567511592';
+  kMultiBroth1Y = '0.3192585403317653763008687900976260312288946415772095488687299432276187153103164694680194451662740';
+  kMultiBroth1Width = 2.33279729810509063E-55;
+  kMultiBroth1MaxIter = 41477;
+var
+  F: TMultibrotFormula;
+  Settings: THiResSettings;
+  V: TViewport;
+  FullReferences, FullTables: Integer;
+begin
+  F := TMultibrotFormula.Create;
+  try
+    F.SetParam(0, 3);
+    F.MaxIter := kMultiBroth1MaxIter;
+    V := MakeExactViewport(kMultiBroth1X, kMultiBroth1Y, kMultiBroth1Width, kW, kH);
+    Settings := MakeSettings(kW, kH, 2, TestTempFolder + 'hires-adaptive-deep.png');
+    Settings.IsBla := True;
+    RenderPixels(Settings, V, F, 8);
+    FullReferences := FReferenceCount;
+    FullTables := FBlaCount;
+    CheckTrue(FullReferences > 0, 'rendu non perturbé');
+    Settings.IsAdaptive := True;
+    RenderPixels(Settings, V, F, 8);
+    Status(Format('références %d / %d, tables BLA %d / %d, %d pixels lissés sur %d', [FReferenceCount,
+      FullReferences, FBlaCount, FullTables, FRefined, FTotal]));
+    CheckEquals(FullReferences, FReferenceCount, 'références');
+    CheckTrue(FBlaCount <= FullTables, Format('tables BLA : %d contre %d', [FBlaCount, FullTables]));
+  finally
+    F.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
