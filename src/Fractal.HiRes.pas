@@ -233,10 +233,16 @@ function THiResRenderer.MarkAdaptive(Engine: TRenderEngine; out Colors: TCardina
   out Marks: TBooleanDynArray): Boolean;
 var
   X, Y: Integer;
+  V, Fine: TViewport;
 begin
   Result := False;
+  // centre à la précision des sous-pixels (même centre, plus de mots si besoin) : la référence de ce passage sert
+  // ensuite à toutes les bandes suréchantillonnées
+  V := FViewport.SubViewport(1, 0, FSettings.Height);
+  Fine := FViewport.SubViewport(FSettings.Supersample, 0, FSettings.Height);
+  V.SetCenter(Fine.ExactCenterX, Fine.ExactCenterY);
   Engine.SampleMask := nil;
-  Engine.Render(FViewport.SubViewport(1, 0, FSettings.Height), FFormula, False);
+  Engine.Render(V, FFormula, False);
   if not WaitForEngine(Engine) then
     Exit;
   SetLength(Colors, FSettings.Width * FSettings.Height);

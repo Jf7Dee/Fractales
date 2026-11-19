@@ -1855,6 +1855,8 @@ var
   R: TVideoRenderer;
   Ffmpeg, OutFile: string;
   Done: Integer;
+  Stamp: TStringList;
+  Kept: string;
 begin
   Ffmpeg := FindTestFfmpeg;
   if Ffmpeg = '' then
@@ -1886,6 +1888,21 @@ begin
     CheckTrue(ReadInterruptedRender(OutFile, Read, L, Done), 'morceaux relus');
     CheckEquals(10, Done, 'deux morceaux de 5 images');
     CheckEquals(Sc.SaveToText, Read.SaveToText, 'scénario');
+    // tampon d'une version sans les lignes BLA et LissageAdaptatif : la reprise effacerait les morceaux, elle n'est
+    // pas proposée
+    Stamp := TStringList.Create;
+    try
+      Stamp.LoadFromFile(OutFile + kPartsSuffix + '\scenario.txt', TEncoding.UTF8);
+      Kept := Stamp.Text;
+      Stamp.Delete(Stamp.IndexOfName('LissageAdaptatif'));
+      Stamp.Delete(Stamp.IndexOfName('BLA'));
+      Stamp.SaveToFile(OutFile + kPartsSuffix + '\scenario.txt', TEncoding.UTF8);
+      CheckFalse(ReadInterruptedRender(OutFile, Read, L, Done), 'tampon d''une version antérieure');
+      Stamp.Text := Kept;
+      Stamp.SaveToFile(OutFile + kPartsSuffix + '\scenario.txt', TEncoding.UTF8);
+    finally
+      Stamp.Free;
+    end;
     FCancelAfter := 0;
     R := TVideoRenderer.Create(Read, L.Palette, L.Mapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5);
     try

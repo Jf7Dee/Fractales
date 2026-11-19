@@ -569,7 +569,7 @@ end;
 {------------------------------------------------------------------------------}
 
 // Le scénario des morceaux (StampText) : celui du scénario, puis le lieu à partir de [Fractal], puis la taille et le
-// découpage, enfin les réglages BLA et LissageAdaptatif (absents des tampons plus anciens)
+// découpage, enfin les réglages BLA et LissageAdaptatif
 function ReadInterruptedRender(const OutputFile: string; Scenario: TVideoScenario; Location: TFractalLocation;
   out FramesDone: Integer): Boolean;
 const
@@ -600,7 +600,9 @@ begin
       while (Last >= 0) and ((Copy(S[Last], 1, Length(kBlaKey)) = kBlaKey)
         or (Copy(S[Last], 1, Length(kAdaptiveKey)) = kAdaptiveKey)) do
         Dec(Last);
-      if (LocationLine < 1) or (Last < LocationLine + 2) or
+      // tampon d'une version antérieure (sans BLA ni LissageAdaptatif) : jamais repris (PrepareParts l'écarterait et
+      // effacerait ses morceaux), donc pas proposé
+      if (Last <> S.Count - 3) or (LocationLine < 1) or (Last < LocationLine + 2) or
         (Copy(S[Last - 1], 1, Length(kSizeKey)) <> kSizeKey) or
         (Copy(S[Last], 1, Length(kSegmentKey)) <> kSegmentKey) then
         Exit;

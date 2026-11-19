@@ -44,6 +44,7 @@ type
     procedure TestAdaptiveReliefMatchesFull;
     procedure TestAdaptiveBandEdge;
     procedure TestAdaptiveReusesReference;
+    procedure TestAdaptiveReferenceAtWordBoundary;
   end;
 
 implementation
@@ -800,6 +801,39 @@ begin
       FullReferences, FBlaCount, FullTables, FRefined, FTotal]));
     CheckEquals(FullReferences, FReferenceCount, 'références');
     CheckTrue(FBlaCount <= FullTables, Format('tables BLA : %d contre %d', [FBlaCount, FullTables]));
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Pixel juste au-dessus d'une limite de mots (-log2 + 64 = 255,5 : 8 mots) et sous-pixel juste au-dessous (9 mots),
+// centre court (Double) : la référence du premier passage doit déjà avoir la précision des bandes suréchantillonnées.
+procedure TTestHiRes.TestAdaptiveReferenceAtWordBoundary;
+const
+  kW = 48;
+  kH = 32;
+var
+  F: TMandelbrotFormula;
+  Settings: THiResSettings;
+  V: TViewport;
+  PixelSize: TFloat;
+  FullReferences: Integer;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 2000;
+    PixelSize := Power(2, -191.5);
+    // c = i : point de Misiurewicz, de la structure à toutes les échelles
+    V := MakeViewport(0, 1, kW * PixelSize, kW, kH);
+    Settings := MakeSettings(kW, kH, 2, TestTempFolder + 'hires-adaptive-words.png');
+    RenderPixels(Settings, V, F, 8);
+    FullReferences := FReferenceCount;
+    CheckTrue(FullReferences > 0, 'rendu non perturbé');
+    Settings.IsAdaptive := True;
+    RenderPixels(Settings, V, F, 8);
+    CheckEquals(FullReferences, FReferenceCount, 'références');
   finally
     F.Free;
   end;
