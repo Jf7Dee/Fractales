@@ -58,6 +58,7 @@ type
     FPartsFolder: string;
     FStartTick: Cardinal;
     FCost: array of Double;  // coût prévu cumulé : FCost[I] = images 0..I-1 ; vide = pas de profil
+    FDoneAt: array of Double;  // secondes écoulées depuis FStartTick à la fin de chaque image calculée
     FIsProfiling: Boolean;
     FProbesDone: Integer;
     FProbesTotal: Integer;
@@ -67,7 +68,7 @@ type
     FPipe: TFfmpegPipe;          // visé par Cancel depuis le fil principal, sous FPipeLock
     FPipeLock: TCriticalSection;
     function RenderFrame(const Pose: TCameraPose; Formula: TFractalFormula; Target: TStream;
-      Width, Height, Supersample: Integer): Boolean;
+      Width, Height, Supersample: Integer; TierPixelSize: TFloat = 0): Boolean;
     function Profile(Formula: TFractalFormula; Target: TStream): Boolean;
     function PartFile(Index: Integer): string;
     function PendingPartFile: string;
@@ -106,6 +107,13 @@ type
     property IsDone: Boolean read FIsDone;
   end;
 
+// Secondes restantes d'après le profil Cost (coûts prévus cumulés : Cost[I] = images 0..I-1) et DoneAt (secondes
+// écoulées à la fin de chaque image faite depuis FirstFrame). Le rapport entre durée réelle et coût prévu est pris sur
+// les Window dernières images : à l'entrée d'une zone plus chère que prévu, l'estimation suit en quelques images.
+// Fraction : part faite de l'image en cours
+function RemainingSeconds(const Cost, DoneAt: array of Double; FirstFrame, Done: Integer;
+  Fraction, Elapsed: Double; Window: Integer): Double;
+
 // Itérations d'une image : automatiques selon la profondeur, plafonnées par Limit s'il est positif
 function VideoMaxIter(const V: TViewport; Limit: Integer): Integer;
 
@@ -125,6 +133,7 @@ const
   kPollMs = 50;
   kProbeEvery = 15;   // une image du profil par demi-seconde de trajet
   kProbeDivisor = 8;  // rapportée à la pleine taille, sans lissage
+  kEtaWindowFrames = 150;  // rythme réel mesuré sur les 5 dernières secondes de vidéo
   kStampName = 'scenario.txt';  // ce qui a produit les morceaux : s'il diffère, ils sont écartés
   kListName = 'liste.txt';
   kPartName = 'morceau%.4d.mp4';
@@ -200,7 +209,7 @@ end;
 function TVideoRenderer.GetSecondsLeft: Double;
 var
   Done: Integer;
-  Fraction, DoneCost, Elapsed: Double;
+  Fraction, Elapsed: Double;
 begin
   Done := FFramesDone;
   Fraction := Min(1, FFrameProgress / kProgressMax);
@@ -209,13 +218,7 @@ begin
   if Done < FFirstFrame then
     Exit;
   if Length(FCost) > FFramesTotal then
-  begin
-    DoneCost := FCost[Done];
-    if Done < FFramesTotal then
-      DoneCost := DoneCost + (FCost[Done + 1] - FCost[Done]) * Fraction;
-    if DoneCost > FCost[FFirstFrame] then
-      Result := Elapsed * (FCost[FFramesTotal] - DoneCost) / (DoneCost - FCost[FFirstFrame]);
-  end
+    Result := RemainingSeconds(FCost, FDoneAt, FFirstFrame, Done, Fraction, Elapsed, kEtaWindowFrames)
   else if Done - FFirstFrame + Fraction > 0 then
     Result := Elapsed / (Done - FFirstFrame + Fraction) * (FFramesTotal - Done - Fraction);
 end;
@@ -224,7 +227,7 @@ end;
 
 // Faux si le rendu a été interrompu
 function TVideoRenderer.RenderFrame(const Pose: TCameraPose; Formula: TFractalFormula; Target: TStream;
-  Width, Height, Supersample: Integer): Boolean;
+  Width, Height, Supersample: Integer; TierPixelSize: TFloat): Boolean;
 var
   V: TViewport;
   Settings: THiResSettings;
@@ -241,6 +244,7 @@ begin
   Settings.FileName := '';
   Settings.IsBla := FIsBla;   // morceaux, aperçu et profil de coût : le profil prédit ainsi le vrai rendu
   Settings.IsAdaptive := FIsAdaptive;   // sans effet au profil de coût (Supersample 1)
+  Settings.TierPixelSize := TierPixelSize;
   Target.Size := 0;
   R := THiResRenderer.Create(Settings, V, Formula, TColorMapper.Create(FPalette, FMapping), '', FKernel,
     kHiResBandRows, Target);
@@ -306,8 +310,10 @@ begin
         Exit(False);
       Pose := FScenario.PoseAtFrame(Probes[K], IsPause);
       QueryPerformanceCounter(T0);
+      // au palier de la vraie image : en petit, les pixels plus gros resteraient au calcul direct alors que la vraie
+      // image passe déjà en perturbation, des dizaines de fois plus chère (mesuré : rapport 80 à 116 au lieu de 38)
       if not RenderFrame(Pose, Formula, Target, Max(2, FWidth div kProbeDivisor), Max(2, FHeight div kProbeDivisor),
-        1) then
+        1, Pose.Width / (FWidth * FScenario.Smoothing)) then
         Exit(False);
       QueryPerformanceCounter(T1);
       Costs[K] := (T1 - T0) / Frequency;
@@ -516,6 +522,7 @@ begin
         Exit;
       FFrameProgress := 0;  // la dernière image du profil ne compte pas
       FStartTick := GetTickCount;
+      SetLength(FDoneAt, FFramesTotal);
       HasFrame := False;
       for I := FFirstFrame to FFramesTotal - 1 do
       begin
@@ -541,6 +548,7 @@ begin
         if Pipe <> nil then
           Pipe.WriteFrame(Frame);
         FFrameProgress := 0;
+        FDoneAt[I] := (GetTickCount - FStartTick) / 1000;  // avant le compte : l'estimation lit les images comptées
         Inc(FFramesDone);
       end;
       // interrompu : seul le morceau en cours est perdu, les autres attendent la reprise
@@ -723,6 +731,31 @@ begin
   finally
     T.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+{------------------------------------------------------------------------------}
+
+function RemainingSeconds(const Cost, DoneAt: array of Double; FirstFrame, Done: Integer;
+  Fraction, Elapsed: Double; Window: Integer): Double;
+var
+  Total, Start: Integer;
+  StartTime, DoneCost: Double;
+begin
+  Result := 0;
+  Total := High(Cost);
+  if (Done < FirstFrame) or (Done > Total) then
+    Exit;
+  Start := Max(FirstFrame, Done - Window);
+  StartTime := 0;
+  if Start > FirstFrame then
+    StartTime := DoneAt[Start - 1];
+  DoneCost := Cost[Done];
+  if Done < Total then
+    DoneCost := DoneCost + (Cost[Done + 1] - Cost[Done]) * Fraction;
+  if DoneCost > Cost[Start] then
+    Result := (Elapsed - StartTime) * (Cost[Total] - DoneCost) / (DoneCost - Cost[Start]);
 end;
 
 {------------------------------------------------------------------------------}

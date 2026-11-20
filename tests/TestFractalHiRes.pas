@@ -45,6 +45,7 @@ type
     procedure TestAdaptiveBandEdge;
     procedure TestAdaptiveReusesReference;
     procedure TestAdaptiveReferenceAtWordBoundary;
+    procedure TestTierPixelSize;
     procedure TestBandsShareBlaTable;
   end;
 
@@ -78,6 +79,7 @@ begin
   Result.FileName := FileName;
   Result.IsBla := False;
   Result.IsAdaptive := False;
+  Result.TierPixelSize := 0;
 end;
 
 {------------------------------------------------------------------------------}
@@ -868,6 +870,29 @@ begin
     RenderPixels(Settings, V, F, kBandRows);
     CheckTrue(FReferenceCount > 0, 'rendu non perturbé');
     CheckTrue(FBlaCount <= kMaxTables, Format('%d tables BLA pour %d bandes', [FBlaCount, kH div kBandRows]));
+  finally
+    F.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestHiRes.TestTierPixelSize;
+var
+  F: TMandelbrotFormula;
+  Settings: THiResSettings;
+  V: TViewport;
+begin
+  F := TMandelbrotFormula.Create;
+  try
+    F.MaxIter := 500;
+    V := MakeViewport(-1.97, 0, 1e-10, 32, 24);
+    Settings := MakeSettings(32, 24, 1, TestTempFolder + 'hires-tier.png');
+    RenderPixels(Settings, V, F, 8);
+    CheckEquals(0, FReferenceCount, 'palier de la vue : calcul direct');
+    Settings.TierPixelSize := 1e-18;
+    RenderPixels(Settings, V, F, 8);
+    CheckTrue(FReferenceCount > 0, 'palier imposé : perturbation');
   finally
     F.Free;
   end;

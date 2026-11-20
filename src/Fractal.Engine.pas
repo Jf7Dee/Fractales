@@ -110,6 +110,7 @@ type
     FDoubleCritical: TDoubleOrbit;         // FCritical en Double, en mode Rust seulement (nil sauf Julia)
     FRefDeltaX, FRefDeltaY: TFloat;        // centre exact − référence, partie constante de δc
     FIsBlaEnabled: Boolean;                // réglage : BLA pour les rendus suivants (vidéos seulement)
+    FTierPixelSize: TFloat;                // > 0 : taille de pixel qui décide du palier, au lieu de celle de la vue
     FIsBlaActive: Boolean;                 // figé au début du rendu courant : réglage, perturbation, formule
     FBla: TBlaTable;                       // table BLA de FOrbit pour le rendu courant (vide sans BLA)
     FCriticalBla: TBlaTable;               // table BLA de FCritical (Julia), vide sinon
@@ -171,6 +172,8 @@ type
     // approximation bilinéaire (Fractal.Bla) des rendus perturbés suivants ; faux par défaut (explorateur, images
     // fixes), mis par la vidéo
     property IsBlaEnabled: Boolean read FIsBlaEnabled write FIsBlaEnabled;
+    // Profil de coût d'une vidéo : l'image calculée en petit prend le palier de la vraie image (0 = celui de la vue)
+    property TierPixelSize: TFloat read FTierPixelSize write FTierPixelSize;
     property BlaBuildCount: Integer read FBlaBuildCount;   // tables BLA de l'orbite construites (pas réutilisées)
     property ReferenceComputeCount: Integer read GetReferenceComputeCount;   // tâches référence installées
     property CriticalComputeCount: Integer read GetCriticalComputeCount;     // orbites critiques calculées, installées
@@ -356,6 +359,7 @@ var
   NewFormula: TFractalFormula;
   NewKernel: TEngineKernelType;
   IsNewPerturbation, IsReused: Boolean;
+  TierView: TViewport;
 begin
   if (FSampleMask <> nil) and (Length(FSampleMask) <> V.PixelWidth * V.PixelHeight) then
     raise EArgumentException.CreateFmt('Masque de %d pixels pour une vue de %d x %d',
@@ -364,7 +368,11 @@ begin
   NewFormula := Formula.Clone;
   NewKernel := ResolveKernel(NewFormula);
   // palier 2 dès que le palier 1 n'est plus sûr pour le noyau du rendu (psWarning) : bascule avant la pixelisation
-  IsNewPerturbation := NewFormula.IsPerturbationSupported and (V.PrecisionState(GetEpsilon(NewKernel)) <> psOk);
+  TierView := V;
+  if FTierPixelSize > 0 then
+    TierView.PixelWidth := Max(1, Round(V.Width / FTierPixelSize));
+  IsNewPerturbation := NewFormula.IsPerturbationSupported
+    and (TierView.PrecisionState(GetEpsilon(NewKernel)) <> psOk);
   if IsNewPerturbation then
     NewKernel := ResolveKernel(NewFormula, True);
   // vidéo avec BLA et DLL sans BLA (avant l'ABI 5) : le Delphi avec BLA est bien plus rapide que le Rust sans (mesuré

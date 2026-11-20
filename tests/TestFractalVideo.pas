@@ -111,6 +111,7 @@ type
     procedure TestVideoMaxIter;
     procedure TestGenerationLogText;
     procedure TestGenerationLogAppends;
+    procedure TestRemainingSeconds;
   end;
 
 implementation
@@ -1725,6 +1726,7 @@ begin
   Settings.FileName := TestTempFolder + 'jamais-cree.png';
   Settings.IsBla := False;
   Settings.IsAdaptive := False;
+  Settings.TierPixelSize := 0;
   SysUtils.DeleteFile(Settings.FileName);
   V.Width := 3;
   V.PixelWidth := 64;
@@ -2081,6 +2083,26 @@ begin
     T.Free;
     SysUtils.DeleteFile(LogFile);
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Dix images de coût prévu 1 : le rythme est mesuré sur les Window dernières images faites
+procedure TTestVideoRender.TestRemainingSeconds;
+const
+  kCost: array[0..10] of Double = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+  kSteady: array[0..9] of Double = (1, 2, 3, 4, 5, 0, 0, 0, 0, 0);
+  kSlower: array[0..9] of Double = (1, 2, 3, 4, 5, 6, 16, 26, 0, 0);
+  kResumed: array[0..9] of Double = (0, 0, 0, 0, 2, 4, 0, 0, 0, 0);
+begin
+  CheckEquals(5, RemainingSeconds(kCost, kSteady, 0, 5, 0, 5, 100), 1e-9, 'rythme régulier');
+  CheckEquals(4.5, RemainingSeconds(kCost, kSteady, 0, 5, 0.5, 5.5, 100), 1e-9, 'image en cours à moitié');
+  CheckEquals(20, RemainingSeconds(kCost, kSlower, 0, 8, 0, 26, 2), 1e-9,
+    'zone plus chère : le rythme des deux dernières images');
+  CheckEquals(6.5, RemainingSeconds(kCost, kSlower, 0, 8, 0, 26, 100), 1e-9, 'fenêtre plus large que le rendu');
+  CheckEquals(8, RemainingSeconds(kCost, kResumed, 4, 6, 0, 4, 100), 1e-9,
+    'reprise : seules les images calculées depuis comptent');
+  CheckEquals(0, RemainingSeconds(kCost, kSteady, 0, 0, 0, 0, 100), 1e-9, 'rien de fait');
 end;
 
 {------------------------------------------------------------------------------}

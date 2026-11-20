@@ -40,6 +40,7 @@ type
     procedure TestCancelIsNotComplete;
     procedure TestDestroyWhileRendering;
     procedure TestShallowRenderStaysDirect;
+    procedure TestTierPixelSizeDecidesPerturbation;
     procedure TestDeepRenderUsesPerturbation;
     procedure TestTricornDeepRender;
     procedure TestBurningShipDeepRenderAtAcceptanceDepths;
@@ -1506,6 +1507,36 @@ begin
         IsRaised := True;
     end;
     CheckTrue(IsRaised, 'masque de mauvaise longueur');
+  finally
+    F.Free;
+    E.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Image du profil de coût d'une vidéo : calculée en petit, mais au palier de la vraie image, donnée par sa taille de
+// pixel
+procedure TTestEngine.TestTierPixelSizeDecidesPerturbation;
+var
+  E: TRenderEngine;
+  F: TMandelbrotFormula;
+  V: TViewport;
+begin
+  V := MakeViewport(-1.97, 0, 1e-10, 64, 48);   // pixel de 1,6e-12 : palier 1
+  E := TRenderEngine.Create(CpuCount);
+  F := TMandelbrotFormula.Create;
+  try
+    E.TierPixelSize := 1e-18;
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs), 'délai dépassé');
+    CheckTrue(E.Status.IsPerturbation, 'palier de la taille de pixel donnée');
+    CheckEquals(1, E.ReferenceComputeCount);
+    CheckEquals('', E.TakeErrors);
+    E.TierPixelSize := 0;
+    E.Render(V, F);
+    CheckTrue(E.WaitUntilComplete(kWaitMs), 'délai dépassé');
+    CheckFalse(E.Status.IsPerturbation, '0 : palier de la vue elle-même');
   finally
     F.Free;
     E.Free;

@@ -21,6 +21,8 @@ type
     // lissage adaptatif (Supersample > 1) : seuls les pixels qui ont du détail sont suréchantillonnés ; vidéos
     // seulement, les images fixes gardent le lissage complet
     IsAdaptive: Boolean;
+    // > 0 : taille de pixel (échantillon) qui décide du palier ; profil de coût des vidéos seulement, 0 sinon
+    TierPixelSize: TFloat;
   end;
 
   // Rendu hors écran par bandes de lignes, écrit directement dans le PNG.
@@ -308,6 +310,7 @@ begin
   try
     Engine.Kernel := FKernel;
     Engine.IsBlaEnabled := FSettings.IsBla;
+    Engine.TierPixelSize := FSettings.TierPixelSize;
     // les bandes partagent une seule orbite, même échappée : sinon chacune en recalculerait jusqu'à neuf
     Engine.IsEscapedReferenceReusable := True;
     Writer := TPngWriter.Create(Stream, FSettings.Width, FSettings.Height);

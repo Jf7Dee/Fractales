@@ -240,6 +240,7 @@ begin
   Settings.Supersample := cbSupersample.ItemIndex + 1;
   Settings.IsBla := False;   // image fixe : calcul exact
   Settings.IsAdaptive := False;   // image fixe : lissage complet
+  Settings.TierPixelSize := 0;
   Settings.FileName := Trim(edFile.Text);
   if Settings.FileName = '' then
   begin
