@@ -62,6 +62,7 @@ type
     FComputeRowPerturbed2Bla: TRustComputeRowPerturbed2BlaFunc;   // nil avant la version 5
     FPerturbationSupported: TRustPerturbationSupportedFunc;   // nil hors versions 3 et 4
     FAbiVersion: Cardinal;
+    FFileName: string;
     FStatus: string;
     function FindExport(const Name: AnsiString): Pointer;
     procedure LoadParams(Formula: TFractalFormula; out Params: TRustKernelParams);
@@ -83,6 +84,8 @@ type
       const Bla, CriticalBla: TBlaTable; DCX0, DDX, DCY: Double; Count: Integer; Output: System.PSingle);
     procedure ComputeRow(Formula: TFractalFormula; X0, DX, Y: Double; Count: Integer; Output: System.PSingle);
     property Status: string read FStatus;
+    property FileName: string read FFileName;
+    property AbiVersion: Cardinal read FAbiVersion;   // 0 si la DLL n'est pas chargée
   end;
 
 function DefaultRustKernel: TRustKernel;
@@ -130,6 +133,7 @@ var
   ErrorCode: Cardinal;
 begin
   inherited Create;
+  FFileName := AFileName;
   if not FileExists(AFileName) then
   begin
     FStatus := Format('Moteur Rust absent : %s introuvable.', [ExtractFileName(AFileName)]);
