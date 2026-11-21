@@ -125,6 +125,9 @@ type
     procedure TestPauseAfterGapIsRendered;
     procedure TestJoinAfterRanges;
     procedure TestPartsWithoutStampAreRefused;
+    procedure TestFingerprintIsStable;
+    procedure TestPartCarriesFingerprint;
+    procedure TestJoinRefusesForeignPart;
   end;
 
 implementation
@@ -1450,6 +1453,9 @@ begin
   Args := FfmpegArguments('C:\Vidéos\voyage.mp4', 30);
   for I := Low(kParts) to High(kParts) do
     CheckTrue(Pos(kParts[I], Args) > 0, kParts[I] + ' absent de : ' + Args);
+  CheckEquals(0, Pos('-metadata', Args), 'pas de commentaire sans empreinte');
+  Args := FfmpegArguments('C:\Vidéos\voyage.mp4', 30, 'FRACTALES-0123456789ABCDEF');
+  CheckTrue(Pos('-metadata comment=FRACTALES-', Args) > 0, 'commentaire absent de : ' + Args);
 end;
 
 {------------------------------------------------------------------------------}
@@ -2651,6 +2657,134 @@ begin
     RemovePartsFolder(OutFile);
   end;
 end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoRender.TestFingerprintIsStable;
+var
+  A, B: string;
+begin
+  A := StampFingerprint('Largeur=640'#13#10'Hauteur=360');
+  CheckEquals(26, Length(A), 'FRACTALES- et 16 chiffres');
+  CheckEquals('FRACTALES-', Copy(A, 1, 10));
+  CheckEquals(A, StampFingerprint('Largeur=640'#13#10'Hauteur=360'), 'même tampon');
+  B := StampFingerprint('Largeur=640'#13#10'Hauteur=361');
+  CheckTrue(A <> B, 'tampons différents');
+  CheckEquals('FRACTALES-AF63DC4C8601EC8C', StampFingerprint('a'), 'FNV-1a 64 bits de "a"');
+end;
+
+{------------------------------------------------------------------------------}
+
+// Le marqueur doit survivre dans le .mp4 : vérifié sur un vrai morceau
+procedure TTestVideoRender.TestPartCarriesFingerprint;
+var
+  Sc: TVideoScenario;
+  P: TGradientPalette;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile, Stamp: string;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : empreinte non vérifiée');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'empreinte.mp4';
+  SysUtils.DeleteFile(OutFile);
+  RemovePartsFolder(OutFile);
+  Sc := SmallScenario;
+  P := TGradientPalette.Create;
+  try
+    P.SetDefault;
+    R := RunRange(Sc, Ffmpeg, OutFile, 0, 0);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    Stamp := RenderStamp(Sc, P, DefaultColorMapping, R.FrameWidth, R.FrameHeight, 5, False, False, ekDelphi);
+    CheckTrue(PartHasFingerprint(OutFile + kPartsSuffix + '\morceau0000.mp4', StampFingerprint(Stamp)),
+      'empreinte du tampon');
+    CheckFalse(PartHasFingerprint(OutFile + kPartsSuffix + '\morceau0000.mp4', StampFingerprint(Stamp + 'x')),
+      'autre empreinte');
+    CheckFalse(PartHasFingerprint(OutFile + kPartsSuffix + '\absent.mp4', StampFingerprint(Stamp)), 'fichier absent');
+  finally
+    P.Free;
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+    RemovePartsFolder(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Les morceaux 2 à 4 d'un autre rendu (autre palette, même taille), glissés dans le dossier du rendu A sous son
+// tampon : l'assemblage les refuse, sans vidéo ni suppression
+procedure TTestVideoRender.TestJoinRefusesForeignPart;
+var
+  Sc: TVideoScenario;
+  P: TGradientPalette;
+  R: TVideoRenderer;
+  Ffmpeg, OutA, OutB, FolderA, FolderB: string;
+  I: Integer;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : morceau étranger non vérifié');
+    Exit;
+  end;
+  OutA := TestTempFolder + 'rendu-a.mp4';
+  OutB := TestTempFolder + 'rendu-b.mp4';
+  FolderA := OutA + kPartsSuffix + '\';
+  FolderB := OutB + kPartsSuffix + '\';
+  SysUtils.DeleteFile(OutA);
+  SysUtils.DeleteFile(OutB);
+  RemovePartsFolder(OutA);
+  RemovePartsFolder(OutB);
+  Sc := SmallScenario;
+  P := TGradientPalette.Create;
+  try
+    R := RunRange(Sc, Ffmpeg, OutA, 0, 1);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    P.SetDefault;
+    P.SetStopColor(0, $0000FF);
+    R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutB, False, Collect, 8, 5, False, False,
+      2, 4);
+    try
+      R.WaitFor;
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    for I := 2 to 4 do
+      CheckTrue(CopyFile(PChar(FolderB + Format('morceau%.4d.mp4', [I])),
+        PChar(FolderA + Format('morceau%.4d.mp4', [I])), False), 'copie du morceau ' + IntToStr(I));
+    R := RunRange(Sc, Ffmpeg, OutA, 0, -1);
+    try
+      CheckFalse(R.IsSucceeded, 'assemblage refusé');
+      CheckTrue(Pos('morceau0002', R.ErrorMessage) > 0, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    CheckFalse(FileExists(OutA), 'pas de vidéo');
+    for I := 0 to 4 do
+      CheckTrue(FileExists(FolderA + Format('morceau%.4d.mp4', [I])), 'morceau conservé ' + IntToStr(I));
+  finally
+    P.Free;
+    Sc.Free;
+    SysUtils.DeleteFile(OutA);
+    SysUtils.DeleteFile(OutB);
+    RemovePartsFolder(OutA);
+    RemovePartsFolder(OutB);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
 
 {------------------------------------------------------------------------------}
 

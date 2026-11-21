@@ -64,6 +64,7 @@ type
     FPlanCount: Integer;      // Length(FPlan), lu par l'estimation
     FPlanDone: Integer;       // images de FPlan faites
     FPartsFolder: string;
+    FFingerprint: string;     // l'empreinte du tampon, inscrite dans chaque morceau
     FStartTick: Cardinal;
     FCost: array of Double;  // coût prévu cumulé de FPlan : FCost[J] = images FPlan[0..J-1] ; vide = pas de profil
     FDoneAt: array of Double;  // secondes écoulées depuis FStartTick à la fin de chaque image de FPlan
@@ -137,6 +138,13 @@ function KernelStampText(Kernel: TEngineKernelType): string;
 // lissage adaptatif), puis la version de Fractales et le noyau. Une machine de rendu et une autre se comparent par là
 function RenderStamp(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
   Width, Height, SegmentFrames: Integer; IsBla, IsAdaptive: Boolean; Kernel: TEngineKernelType): string;
+
+// L'empreinte d'un tampon : FRACTALES- et 16 chiffres hexadécimaux (FNV-1a 64 bits sur l'UTF-8 du tampon). Inscrite
+// dans les métadonnées de chaque morceau : un morceau copié d'une autre machine dit de quel rendu il vient
+function StampFingerprint(const Stamp: string): string;
+
+// Vrai si le fichier contient les octets ASCII de Fingerprint ; faux s'il est absent ou illisible
+function PartHasFingerprint(const PartFile, Fingerprint: string): Boolean;
 
 // Ce qui sépare deux tampons, en un texte pour l'utilisateur ; vide s'ils sont identiques. Par ordre de priorité : la
 // version de Fractales, le noyau, puis le scénario ou les réglages
@@ -410,6 +418,7 @@ var
 begin
   Stamp := RenderStamp(FScenario, FPalette, FMapping, FWidth, FHeight, FSegmentFrames, FIsBla, FIsAdaptive,
     FKernel);
+  FFingerprint := StampFingerprint(Stamp);
   Difference := PartsStampDifference(FOutputFile, Stamp);
   if Difference <> '' then
     raise EVideoEncoderError.CreateFmt('Ces morceaux viennent d''un autre rendu (%s) : %s', [Difference, FPartsFolder]);
@@ -498,7 +507,7 @@ end;
 procedure TVideoRenderer.OpenPart(var Pipe: TFfmpegPipe);
 begin
   SysUtils.DeleteFile(PendingPartFile);
-  Pipe := TFfmpegPipe.Create(FFfmpegExe, PendingPartFile, kVideoFps);
+  Pipe := TFfmpegPipe.Create(FFfmpegExe, PendingPartFile, kVideoFps, FFingerprint);
   SetPipe(Pipe);
 end;
 
@@ -523,6 +532,10 @@ var
   Pipe: TFfmpegPipe;
   I: Integer;
 begin
+  // tous les morceaux sont vérifiés avant FFmpeg : un morceau d'un autre rendu ne doit pas finir dans la vidéo
+  for I := 0 to (FFramesTotal - 1) div FSegmentFrames do
+    if not PartHasFingerprint(PartFile(I), FFingerprint) then
+      raise EVideoEncoderError.CreateFmt('Le morceau %s vient d''un autre rendu', [ExtractFileName(PartFile(I))]);
   List := TStringList.Create;
   try
     for I := 0 to (FFramesTotal - 1) div FSegmentFrames do
@@ -706,6 +719,59 @@ begin
     L.Free;
     Formula.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// FNV-1a 64 bits : la multiplication tourne sur 64 bits, sans contrôle de débordement
+{$IFOPT Q+}{$DEFINE FINGERPRINT_Q}{$ENDIF}
+{$Q-}
+function StampFingerprint(const Stamp: string): string;
+const
+  kOffsetBasis: UInt64 = $CBF29CE484222325;
+  kPrime: UInt64 = $100000001B3;
+var
+  Bytes: UTF8String;
+  Hash: UInt64;
+  I: Integer;
+begin
+  Bytes := UTF8Encode(Stamp);
+  Hash := kOffsetBasis;
+  for I := 1 to Length(Bytes) do
+    Hash := (Hash xor Byte(Bytes[I])) * kPrime;
+  Result := 'FRACTALES-' + IntToHex(Int64(Hash), 16);
+end;
+{$IFDEF FINGERPRINT_Q}{$Q+}{$ENDIF}
+
+{------------------------------------------------------------------------------}
+
+function PartHasFingerprint(const PartFile, Fingerprint: string): Boolean;
+var
+  Needle: AnsiString;
+  Data: TFileStream;
+  Buffer: AnsiString;
+begin
+  Result := False;
+  Needle := AnsiString(Fingerprint);
+  if (Needle = '') or not FileExists(PartFile) then
+    Exit;
+  try
+    Data := TFileStream.Create(PartFile, fmOpenRead or fmShareDenyNone);
+    try
+      // un morceau fait quelques Mo : lu d'un bloc, aucune empreinte à cheval sur deux lectures n'est manquée
+      SetLength(Buffer, Data.Size);
+      if Length(Buffer) > 0 then
+        Data.ReadBuffer(Buffer[1], Length(Buffer));
+    finally
+      Data.Free;
+    end;
+  except
+    on EInOutError do
+      Exit;
+    on EStreamError do
+      Exit;
+  end;
+  Result := Pos(Needle, Buffer) > 0;
 end;
 
 {------------------------------------------------------------------------------}

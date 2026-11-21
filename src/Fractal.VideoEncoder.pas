@@ -27,7 +27,7 @@ type
     function LogTail: string;
     procedure Fail(const Text: string);
   public
-    constructor Create(const FfmpegExe, OutputFile: string; Fps: Integer);
+    constructor Create(const FfmpegExe, OutputFile: string; Fps: Integer; const Comment: string = '');
     // FFmpeg avec ses propres arguments, sans images sur son entrée : Finish attend simplement sa fin
     constructor CreateWithArguments(const FfmpegExe, OutputFile, Arguments: string);
     destructor Destroy; override;
@@ -38,7 +38,8 @@ type
   end;
 
 function FindFfmpeg(const ExeFolder, ConfiguredPath: string): string;
-function FfmpegArguments(const OutputFile: string; Fps: Integer): string;
+// Comment non vide : écrit dans les métadonnées du fichier (sans espace : il n'est pas entre guillemets)
+function FfmpegArguments(const OutputFile: string; Fps: Integer; const Comment: string = ''): string;
 function FfmpegConcatArguments(const ListFile, OutputFile: string): string;
 
 implementation
@@ -66,11 +67,16 @@ end;
 
 // H.264 en yuv420p : lisible partout (téléphones, Facebook, Instagram) ; débit élevé, les fractales compressent mal.
 // yuv420p exige des dimensions paires : une ligne ou une colonne impaire est retirée (aperçu réduit)
-function FfmpegArguments(const OutputFile: string; Fps: Integer): string;
+function FfmpegArguments(const OutputFile: string; Fps: Integer; const Comment: string = ''): string;
+var
+  Metadata: string;
 begin
+  Metadata := '';
+  if Comment <> '' then
+    Metadata := '-metadata comment=' + Comment + ' ';
   Result := Format('-y -hide_banner -loglevel error -f image2pipe -framerate %d -c:v png -i - ' +
     '-vf "crop=trunc(iw/2)*2:trunc(ih/2)*2" ' +
-    '-c:v libx264 -preset slow -crf 16 -pix_fmt yuv420p -movflags +faststart "%s"', [Fps, OutputFile]);
+    '-c:v libx264 -preset slow -crf 16 -pix_fmt yuv420p %s-movflags +faststart "%s"', [Fps, Metadata, OutputFile]);
 end;
 
 {------------------------------------------------------------------------------}
@@ -84,9 +90,9 @@ end;
 
 {------------------------------------------------------------------------------}
 
-constructor TFfmpegPipe.Create(const FfmpegExe, OutputFile: string; Fps: Integer);
+constructor TFfmpegPipe.Create(const FfmpegExe, OutputFile: string; Fps: Integer; const Comment: string = '');
 begin
-  CreateWithArguments(FfmpegExe, OutputFile, FfmpegArguments(OutputFile, Fps));
+  CreateWithArguments(FfmpegExe, OutputFile, FfmpegArguments(OutputFile, Fps, Comment));
 end;
 
 {------------------------------------------------------------------------------}
