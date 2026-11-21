@@ -11,7 +11,8 @@ interface
 
 uses
   Windows, SysUtils, Classes, Math, Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine,
-  Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.Persistence, SyncObjs;
+  Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.Persistence, Fractal.Update,
+  Fractal.RustKernel, SyncObjs;
 
 const
   kPreviewDivisor = 4;  // l'aperçu est rendu au quart de la taille
@@ -72,8 +73,7 @@ type
     function Profile(Formula: TFractalFormula; Target: TStream): Boolean;
     function PartFile(Index: Integer): string;
     function PendingPartFile: string;
-    function StampText(Formula: TFractalFormula): string;
-    procedure PrepareParts(Formula: TFractalFormula);
+    procedure PrepareParts;
     procedure RemoveParts;
     procedure SetPipe(Pipe: TFfmpegPipe);
     procedure OpenPart(var Pipe: TFfmpegPipe);
@@ -116,6 +116,18 @@ function RemainingSeconds(const Cost, DoneAt: array of Double; FirstFrame, Done:
 
 // Itérations d'une image : automatiques selon la profondeur, plafonnées par Limit s'il est positif
 function VideoMaxIter(const V: TViewport; Limit: Integer): Integer;
+
+// Le noyau de calcul dans le tampon : Delphi, ou la DLL Rust (version de son fichier et ABI) si elle est chargée
+function KernelStampText(Kernel: TEngineKernelType): string;
+
+// Le tampon complet d'un rendu : tout ce qui change les images (scénario, palette, coloration, taille, découpage, BLA,
+// lissage adaptatif), puis la version de Fractales et le noyau. Une machine de rendu et une autre se comparent par là
+function RenderStamp(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
+  Width, Height, SegmentFrames: Integer; IsBla, IsAdaptive: Boolean; Kernel: TEngineKernelType): string;
+
+// Ce qui sépare deux tampons, en un texte pour l'utilisateur ; vide s'ils sont identiques. Par ordre de priorité : la
+// version de Fractales, le noyau, puis le scénario ou les réglages
+function StampDifference(const Expected, Found: string): string;
 
 // Rendu interrompu vers OutputFile : scénario, palette et coloration relus dans le dossier des morceaux, et nombre
 // d'images déjà faites. Faux si le dossier ou son scénario manque ou est illisible
@@ -356,36 +368,16 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Tout ce qui change les images : scénario, palette, coloration, taille, découpage, BLA, lissage adaptatif
-function TVideoRenderer.StampText(Formula: TFractalFormula): string;
-var
-  L: TFractalLocation;
-  S: TStringList;
-begin
-  L := TFractalLocation.Create;
-  S := TStringList.Create;
-  try
-    L.CaptureFrom(Formula, MakeViewport(0, 0, kDefaultWidth, 1, 1), False, FPalette, FMapping);
-    S.Text := FScenario.SaveToText + L.SaveToText + Format('Taille=%dx%d'#13#10'Morceau=%d'#13#10 +
-      'BLA=%d'#13#10'LissageAdaptatif=%d'#13#10, [FWidth, FHeight, FSegmentFrames, Ord(FIsBla), Ord(FIsAdaptive)]);
-    Result := S.Text;  // tel que TStringList le relira
-  finally
-    S.Free;
-    L.Free;
-  end;
-end;
-
-{------------------------------------------------------------------------------}
-
 // Reprend les morceaux d'une génération interrompue s'ils viennent du même rendu, sinon repart de zéro
-procedure TVideoRenderer.PrepareParts(Formula: TFractalFormula);
+procedure TVideoRenderer.PrepareParts;
 var
   Stamp: string;
   S: TStringList;
   IsSameRender: Boolean;
   Count: Integer;
 begin
-  Stamp := StampText(Formula);
+  Stamp := RenderStamp(FScenario, FPalette, FMapping, FWidth, FHeight, FSegmentFrames, FIsBla, FIsAdaptive,
+    FKernel);
   S := TStringList.Create;
   try
     IsSameRender := False;
@@ -517,7 +509,7 @@ begin
     try
       Formula := FScenario.CreateFormula;
       if FOutputFile <> '' then
-        PrepareParts(Formula);
+        PrepareParts;
       if not Profile(Formula, Frame) then
         Exit;
       FFrameProgress := 0;  // la dernière image du profil ne compte pas
@@ -595,8 +587,110 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Le scénario des morceaux (StampText) : celui du scénario, puis le lieu à partir de [Fractal], puis la taille et le
-// découpage, enfin les réglages BLA et LissageAdaptatif
+const
+  kVersionKey = 'Version=';
+  kKernelKey = 'Noyau=';
+
+{------------------------------------------------------------------------------}
+
+function KernelStampText(Kernel: TEngineKernelType): string;
+var
+  V: TFileVersion;
+  Rust: TRustKernel;
+begin
+  Result := 'Delphi';
+  if Kernel <> ekRust then
+    Exit;
+  Rust := DefaultRustKernel;
+  if (Rust = nil) or not Rust.IsAvailable then
+    Exit;
+  if TryReadFileVersion(Rust.FileName, V) then
+    Result := Format('Rust %s ABI %d', [VersionToString(V), Rust.AbiVersion])
+  else
+    Result := Format('Rust sans version ABI %d', [Rust.AbiVersion]);
+end;
+
+{------------------------------------------------------------------------------}
+
+function RenderStamp(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
+  Width, Height, SegmentFrames: Integer; IsBla, IsAdaptive: Boolean; Kernel: TEngineKernelType): string;
+const
+  kPlatform = {$IFDEF WIN64}'Win64'{$ELSE}'Win32'{$ENDIF};
+var
+  L: TFractalLocation;
+  S: TStringList;
+  Formula: TFractalFormula;
+  V: TFileVersion;
+  VersionText: string;
+begin
+  if (Scenario = nil) or (Palette = nil) then
+    raise EArgumentException.Create('RenderStamp : scénario ou palette nil');
+  if TryReadFileVersion(ParamStr(0), V) then
+    VersionText := VersionToString(V)
+  else
+    VersionText := 'inconnue';
+  Formula := Scenario.CreateFormula;
+  L := TFractalLocation.Create;
+  S := TStringList.Create;
+  try
+    L.CaptureFrom(Formula, MakeViewport(0, 0, kDefaultWidth, 1, 1), False, Palette, Mapping);
+    S.Text := Scenario.SaveToText + L.SaveToText + Format('Taille=%dx%d'#13#10'Morceau=%d'#13#10 +
+      'BLA=%d'#13#10'LissageAdaptatif=%d'#13#10 + kVersionKey + '%s %s'#13#10 + kKernelKey + '%s'#13#10,
+      [Width, Height, SegmentFrames, Ord(IsBla), Ord(IsAdaptive), VersionText, kPlatform, KernelStampText(Kernel)]);
+    Result := S.Text;  // tel que TStringList le relira
+  finally
+    S.Free;
+    L.Free;
+    Formula.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// La valeur de la dernière ligne commençant par Key (le lieu a sa propre ligne Version=) ; vide s'il n'y en a pas
+function StampValue(Lines: TStrings; const Key: string): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := Lines.Count - 1 downto 0 do
+    if Copy(Lines[I], 1, Length(Key)) = Key then
+    begin
+      Result := Copy(Lines[I], Length(Key) + 1, MaxInt);
+      Exit;
+    end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function StampDifference(const Expected, Found: string): string;
+var
+  A, B: TStringList;
+begin
+  Result := '';
+  A := TStringList.Create;
+  B := TStringList.Create;
+  try
+    A.Text := Expected;
+    B.Text := Found;
+    if A.Text = B.Text then
+      Exit;
+    if StampValue(A, kVersionKey) <> StampValue(B, kVersionKey) then
+      Result := 'différence de version de Fractales'
+    else if StampValue(A, kKernelKey) <> StampValue(B, kKernelKey) then
+      Result := 'différence de noyau de calcul'
+    else
+      Result := 'différence de scénario ou réglages';
+  finally
+    B.Free;
+    A.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Le scénario des morceaux (RenderStamp) : celui du scénario, puis le lieu à partir de [Fractal], puis la taille et le
+// découpage, enfin les réglages BLA et LissageAdaptatif, la version de Fractales et le noyau
 function ReadInterruptedRender(const OutputFile: string; Scenario: TVideoScenario; Location: TFractalLocation;
   out FramesDone: Integer): Boolean;
 const
@@ -604,6 +698,7 @@ const
   kSegmentKey = 'Morceau=';
   kBlaKey = 'BLA=';
   kAdaptiveKey = 'LissageAdaptatif=';
+  kTrailerLines = 4;  // BLA, LissageAdaptatif, Version, Noyau
 var
   Folder: string;
   S, Part: TStringList;
@@ -625,11 +720,13 @@ begin
       // Last : ligne du découpage, avant les réglages
       Last := S.Count - 1;
       while (Last >= 0) and ((Copy(S[Last], 1, Length(kBlaKey)) = kBlaKey)
-        or (Copy(S[Last], 1, Length(kAdaptiveKey)) = kAdaptiveKey)) do
+        or (Copy(S[Last], 1, Length(kAdaptiveKey)) = kAdaptiveKey)
+        or (Copy(S[Last], 1, Length(kVersionKey)) = kVersionKey)
+        or (Copy(S[Last], 1, Length(kKernelKey)) = kKernelKey)) do
         Dec(Last);
-      // tampon d'une version antérieure (sans BLA ni LissageAdaptatif) : jamais repris (PrepareParts l'écarterait et
+      // tampon d'une version antérieure (sans les quatre lignes finales) : jamais repris (PrepareParts l'écarterait et
       // effacerait ses morceaux), donc pas proposé
-      if (Last <> S.Count - 3) or (LocationLine < 1) or (Last < LocationLine + 2) or
+      if (Last <> S.Count - 1 - kTrailerLines) or (LocationLine < 1) or (Last < LocationLine + 2) or
         (Copy(S[Last - 1], 1, Length(kSizeKey)) <> kSizeKey) or
         (Copy(S[Last], 1, Length(kSegmentKey)) <> kSegmentKey) then
         Exit;

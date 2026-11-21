@@ -108,6 +108,9 @@ type
     procedure TestResumeAfterCancel;
     procedure TestStampIncludesBlaAndAdaptive;
     procedure TestReadInterruptedRender;
+    procedure TestStampIncludesVersionAndKernel;
+    procedure TestStampDifference;
+    procedure TestReadInterruptedRefusesOldStamp;
     procedure TestVideoMaxIter;
     procedure TestGenerationLogText;
     procedure TestGenerationLogAppends;
@@ -1937,6 +1940,105 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// La version de Fractales et le noyau sont les deux dernières lignes du tampon : ils changent les images
+procedure TTestVideoRender.TestStampIncludesVersionAndKernel;
+var
+  Sc: TVideoScenario;
+  P: TGradientPalette;
+  S: TStringList;
+begin
+  Sc := SmallScenario;
+  P := TGradientPalette.Create;
+  S := TStringList.Create;
+  try
+    P.SetDefault;
+    S.Text := RenderStamp(Sc, P, DefaultColorMapping, 64, 36, 5, False, False, ekDelphi);
+    CheckTrue(S.Count > 2, 'tampon complet');
+    CheckEquals('Version=', Copy(S[S.Count - 2], 1, 8), 'avant-dernière ligne');
+    CheckEquals('Noyau=Delphi', S[S.Count - 1], 'dernière ligne');
+    CheckEquals('LissageAdaptatif', S.Names[S.Count - 3], 'le reste est inchangé');
+  finally
+    S.Free;
+    P.Free;
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// La différence nomme sa cause, dans l'ordre : version, noyau, puis scénario ou réglages
+procedure TTestVideoRender.TestStampDifference;
+var
+  Sc: TVideoScenario;
+  P: TGradientPalette;
+  S: TStringList;
+  Base: string;
+begin
+  Sc := SmallScenario;
+  P := TGradientPalette.Create;
+  S := TStringList.Create;
+  try
+    P.SetDefault;
+    Base := RenderStamp(Sc, P, DefaultColorMapping, 64, 36, 5, False, False, ekDelphi);
+    CheckEquals('', StampDifference(Base, Base), 'identiques');
+    S.Text := Base;
+    S[S.Count - 2] := 'Version=9.9.9.9 Win32';
+    CheckTrue(Pos('version de Fractales', StampDifference(Base, S.Text)) > 0, 'version');
+    S.Text := Base;
+    S[S.Count - 1] := 'Noyau=Rust 9.9.9.9 ABI 9';
+    CheckTrue(Pos('noyau', StampDifference(Base, S.Text)) > 0, 'noyau');
+    S.Text := Base;
+    S[S.Count - 6] := 'Taille=1x1';
+    CheckTrue(Pos('scénario ou réglages', StampDifference(Base, S.Text)) > 0, 'scénario ou réglages');
+  finally
+    S.Free;
+    P.Free;
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Un tampon sans ses lignes Version et Noyau (ancien format) n'est jamais proposé à la reprise
+procedure TTestVideoRender.TestReadInterruptedRefusesOldStamp;
+var
+  Sc, Read: TVideoScenario;
+  P: TGradientPalette;
+  L: TFractalLocation;
+  S: TStringList;
+  OutFile, Folder: string;
+  Done: Integer;
+begin
+  OutFile := TestTempFolder + 'ancien.mp4';
+  Folder := OutFile + kPartsSuffix + PathDelim;
+  Sc := SmallScenario;
+  Read := TVideoScenario.Create;
+  L := TFractalLocation.Create;
+  P := TGradientPalette.Create;
+  S := TStringList.Create;
+  try
+    P.SetDefault;
+    ForceDirectories(Folder);
+    S.Text := RenderStamp(Sc, P, DefaultColorMapping, 64, 36, 5, False, False, ekDelphi);
+    S.SaveToFile(Folder + 'scenario.txt', TEncoding.UTF8);
+    CheckTrue(ReadInterruptedRender(OutFile, Read, L, Done), 'tampon complet relu');
+    S.Delete(S.Count - 1);
+    S.Delete(S.Count - 1);
+    S.SaveToFile(Folder + 'scenario.txt', TEncoding.UTF8);
+    CheckFalse(ReadInterruptedRender(OutFile, Read, L, Done), 'ancien format refusé');
+  finally
+    S.Free;
+    P.Free;
+    L.Free;
+    Read.Free;
+    Sc.Free;
+    SysUtils.DeleteFile(Folder + 'scenario.txt');
+    RemoveDir(Folder);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 // Relu depuis les morceaux, le rendu se rebâtit à l'identique : la relance reprend au lieu de tout recommencer
 procedure TTestVideoRender.TestReadInterruptedRender;
 var
@@ -1983,14 +2085,14 @@ begin
     CheckEquals(Sc.SaveToText, Read.SaveToText, 'scénario');
     CheckTrue(Read.HasColors, 'couleurs du scénario relues');
     CheckEquals(3.25, L.Mapping.Repeats, 1e-12, 'couleurs du lieu');
-    // tampon d'une version sans les lignes BLA et LissageAdaptatif : la reprise effacerait les morceaux, elle n'est
+    // tampon d'une version sans les lignes Version et Noyau : la reprise effacerait les morceaux, elle n'est
     // pas proposée
     Stamp := TStringList.Create;
     try
       Stamp.LoadFromFile(OutFile + kPartsSuffix + '\scenario.txt', TEncoding.UTF8);
       Kept := Stamp.Text;
-      Stamp.Delete(Stamp.IndexOfName('LissageAdaptatif'));
-      Stamp.Delete(Stamp.IndexOfName('BLA'));
+      Stamp.Delete(Stamp.IndexOfName('Noyau'));
+      Stamp.Delete(Stamp.IndexOfName('Version'));
       Stamp.SaveToFile(OutFile + kPartsSuffix + '\scenario.txt', TEncoding.UTF8);
       CheckFalse(ReadInterruptedRender(OutFile, Read, L, Done), 'tampon d''une version antérieure');
       Stamp.Text := Kept;
