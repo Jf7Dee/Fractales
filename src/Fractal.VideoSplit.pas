@@ -45,6 +45,12 @@ function SplitSeconds(const Cost: array of Double; SegmentFrames, FirstSegment, 
 procedure SaveSplitFile(const FileName: string; const Machines: TSplitMachines; SegmentFrames, FramesTotal: Integer);
 function LoadSplitFile(const FileName: string; SegmentFrames: Integer): TSplitMachines;
 
+// Vrai si des morceaux d'un autre rendu ne s'effacent qu'après confirmation : jamais pour un aperçu, qui n'est pas réparti
+function ShouldConfirmReplaceParts(IsPreview: Boolean): Boolean;
+
+// Texte affiché quand un rendu est interrompu ; IsPartial : une plage, non la vidéo entière
+function CancelledCaption(IsPartial: Boolean): string;
+
 implementation
 
 const
@@ -208,6 +214,23 @@ begin
     Fields.Free;
     Lines.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function ShouldConfirmReplaceParts(IsPreview: Boolean): Boolean;
+begin
+  Result := not IsPreview;
+end;
+
+{------------------------------------------------------------------------------}
+
+function CancelledCaption(IsPartial: Boolean): string;
+begin
+  if IsPartial then
+    Result := 'Interrompu : « Reprendre des morceaux… » (ou la proposition au prochain démarrage) reprend cette plage.'
+  else
+    Result := 'Interrompu : relancer la même vidéo reprendra où elle s''est arrêtée.';
 end;
 
 end.

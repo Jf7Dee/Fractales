@@ -151,6 +151,8 @@ type
     procedure TestSplitFileRoundTrip;
     procedure TestProfileOnly;
     procedure TestProfileOnlyTouchesNoParts;
+    procedure TestShouldConfirmReplaceParts;
+    procedure TestCancelledCaption;
   end;
 
 implementation
@@ -2942,6 +2944,25 @@ begin
   CheckEquals(1, M[0].LastSegment);
   CheckEquals(2, M[1].FirstSegment);
   CheckEquals(7, M[1].LastSegment);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Un aperçu n'est jamais réparti : ses morceaux s'effacent sans demander ; ceux d'un rendu complet, après confirmation
+procedure TTestVideoSplit.TestShouldConfirmReplaceParts;
+begin
+  CheckFalse(ShouldConfirmReplaceParts(True), 'aperçu');
+  CheckTrue(ShouldConfirmReplaceParts(False), 'rendu complet');
+end;
+
+{------------------------------------------------------------------------------}
+
+// Une plage interrompue ne se reprend pas en relançant la vidéo : le texte renvoie à « Reprendre des morceaux… »
+procedure TTestVideoSplit.TestCancelledCaption;
+begin
+  CheckTrue(Pos('relancer la même vidéo', CancelledCaption(False)) > 0, 'vidéo entière');
+  CheckEquals(0, Pos('relancer', CancelledCaption(True)), 'plage');
+  CheckTrue(Pos('Reprendre des morceaux', CancelledCaption(True)) > 0, 'plage');
 end;
 
 {------------------------------------------------------------------------------}

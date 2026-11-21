@@ -213,7 +213,7 @@ function ChooseInterruptedRender(const SettingsFile: string; out Chosen: TInterr
 implementation
 
 uses
-  VideoSplitDlg;
+  Fractal.VideoSplit, VideoSplitDlg;
 
 {$R *.dfm}
 
@@ -1233,7 +1233,9 @@ begin
     Max(2, Height div Divisor), kSegmentFrames, FIsBla, FIsAdaptive, FKernel));
   if Difference = '' then
     Exit;
-  Result := MessageDlg(Format(kMsgReplaceParts, [Difference]), mtConfirmation, [mbYes, mbNo], 0) = mrYes;
+  // un aperçu n'est jamais réparti : ses morceaux s'effacent sans demander
+  Result := not ShouldConfirmReplaceParts(IsPreview) or
+    (MessageDlg(Format(kMsgReplaceParts, [Difference]), mtConfirmation, [mbYes, mbNo], 0) = mrYes);
   if Result then
     RemovePartsFolder(FileName);
 end;
@@ -1296,7 +1298,7 @@ begin
     RemoveInterruptedRender(FInterruptedFile, FOutputFile);
   UpdateControls;
   if IsCancelled and (FOutputFile <> '') then
-    lblProgress.Caption := 'Interrompu : relancer la même vidéo reprendra où elle s''est arrêtée.'
+    lblProgress.Caption := CancelledCaption(IsPartial)
   else if IsCancelled then
     lblProgress.Caption := 'Interrompu.'
   else if not IsSucceeded then
