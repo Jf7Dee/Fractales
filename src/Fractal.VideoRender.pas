@@ -19,6 +19,7 @@ const
   kPreviewDivisor = 4;  // l'aperçu est rendu au quart de la taille
   kSegmentFrames = 50;  // un morceau = 1,7 s de vidéo ; une interruption en perd au plus un
   kPartsSuffix = '.morceaux';
+  kStampName = 'scenario.txt';  // dans le dossier des morceaux : ce qui les a produits ; s'il diffère, ils sont écartés
 
 type
   // Appelé dans le fil de rendu, une fois par image
@@ -184,7 +185,6 @@ const
   kProbeEvery = 15;   // une image du profil par demi-seconde de trajet
   kProbeDivisor = 8;  // rapportée à la pleine taille, sans lissage
   kEtaWindowFrames = 150;  // rythme réel mesuré sur les 5 dernières secondes de vidéo
-  kStampName = 'scenario.txt';  // ce qui a produit les morceaux : s'il diffère, ils sont écartés
   kListName = 'liste.txt';
   kPartName = 'morceau%.4d.mp4';
   kPendingPartName = 'morceau-en-cours.mp4';

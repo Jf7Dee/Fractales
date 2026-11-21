@@ -1142,6 +1142,13 @@ begin
     Form.AddCurrentView;
     if Form.Scenario.Count <> 2 then
       raise Exception.CreateFmt('vue suivie : %d étapes au lieu de 2', [Form.Scenario.Count]);
+    // répartition : les deux commandes sont là, et actives quand rien ne tourne (la reprise écrit : FFmpeg requis)
+    if not (Form.FindComponent('btnSplit') is TButton) or not (Form.FindComponent('btnResumeParts') is TButton) then
+      raise Exception.Create('répartition : commandes « Répartir » ou « Reprendre des morceaux » absentes');
+    if not TButton(Form.FindComponent('btnSplit')).Enabled then
+      raise Exception.Create('répartition : « Répartir » grisé alors que rien ne tourne');
+    if TButton(Form.FindComponent('btnResumeParts')).Enabled <> (Ffmpeg <> '') then
+      raise Exception.Create('répartition : « Reprendre des morceaux » mal activé selon FFmpeg');
     if not (Form.Scenario[1].Pose.Width < Form.Scenario[0].Pose.Width) then
       raise Exception.Create('vue suivie : « Ajouter la vue » a repris la vue de l''ouverture');
     MenuImageVideoClick(nil);
@@ -2312,7 +2319,11 @@ begin
   if not ChooseInterruptedRender(SettingsFilePath, R) then
     Exit;
   MenuImageVideoClick(nil);
-  if not TVideoForm(FVideoForm).ResumeRender(R) then
+  if TVideoForm(FVideoForm).ResumeRender(R) then
+    Exit;
+  if TVideoForm(FVideoForm).LastError <> '' then  // refus motivé : version, noyau ou réglages différents
+    MessageDlg(TVideoForm(FVideoForm).LastError, mtWarning, [mbOK], 0)
+  else
     MessageDlg('Ce rendu ne peut plus être repris.', mtWarning, [mbOK], 0);
 end;
 

@@ -61,6 +61,8 @@ type
     dlgSave: TSaveDialog;
     dlgVideo: TSaveDialog;
     btnReplay: TButton;
+    btnSplit: TButton;
+    btnResumeParts: TButton;
     gbColors: TGroupBox;
     lblColors: TLabel;
     pbPalette: TPaintBox;
@@ -107,6 +109,8 @@ type
     procedure btnShowStepClick(Sender: TObject);
     procedure btnReplaceStepClick(Sender: TObject);
     procedure lvStepsDblClick(Sender: TObject);
+    procedure btnSplitClick(Sender: TObject);
+    procedure btnResumePartsClick(Sender: TObject);
   private
     FScenario: TVideoScenario;
     FFavorites: TFavoriteStore;
@@ -130,6 +134,7 @@ type
     FRenderStart: TDateTime;     // lancement du rendu en cours, pour le journal de génération
     FRenderScenarioFile: string; // scénario et format du rendu en cours, pour le journal
     FRenderFormat: TVideoFormat;
+    FRangeFirstFrame, FRangeLastFrame: Integer;  // plage d'images du rendu en cours, pour l'affichage et le journal
     FLogError: string;           // journal de génération non écrit : affiché avec l'issue
     FSavedText: string;      // texte du scénario au dernier enregistrement ou à l'ouverture ; sert à IsModified
     FOnRequestSnapshot: TNotifyEvent;
@@ -162,8 +167,10 @@ type
     function IsRendering: Boolean;
     procedure MarkSaved;
     function ConfirmDiscard: Boolean;
+    function ConfirmReplaceParts(IsPreview: Boolean; const FileName: string; Divisor: Integer;
+      Palette: TGradientPalette; const Mapping: TColorMapping): Boolean;
     procedure LaunchRender(IsPreview: Boolean; const FileName: string; Divisor: Integer; Palette: TGradientPalette;
-      const Mapping: TColorMapping);
+      const Mapping: TColorMapping; IsBla, IsAdaptive: Boolean; FirstSegment, LastSegment: Integer);
   public
     // Copie le lieu courant et la palette ; Favorites reste à l'appelant. Peut être rappelé : garde les sélections
     procedure Prepare(Favorites: TFavoriteStore; CurrentLocation: TFractalLocation; Palette: TGradientPalette;
@@ -173,7 +180,9 @@ type
     // « Remplacer les couleurs par celles de la vue » : palette et effets de la fenêtre principale dans le scénario
     procedure ReplaceColors;
     procedure StartRender(IsPreview: Boolean; const FileName: string; Divisor: Integer = 0);
-    // Relance un rendu interrompu avec le scénario, la palette et la coloration gardés dans ses morceaux
+    // Relance un rendu interrompu avec le scénario, la palette, la coloration et les réglages BLA et lissage gardés
+    // dans ses morceaux, pour la plage R.FirstSegment..R.LastSegment. Faux si rien n'est repris ; LastError dit
+    // pourquoi quand c'est une différence de tampon (version, noyau, réglages)
     function ResumeRender(const R: TInterruptedRender): Boolean;
     function WaitForRender(TimeoutMs: Cardinal): Boolean;  // pour le test de fumée
     // Vrai si le scénario a des étapes et diffère de son dernier enregistrement (ou de son ouverture)
@@ -203,6 +212,9 @@ function ChooseInterruptedRender(const SettingsFile: string; out Chosen: TInterr
 
 implementation
 
+uses
+  VideoSplitDlg;
+
 {$R *.dfm}
 
 const
@@ -230,6 +242,19 @@ const
   kStampExtension = '.scenario';  // scénario au moment de l'aperçu : l'aperçu ne vaut que pour lui
   kMsgReplayFailed = 'Impossible d''ouvrir l''aperçu dans le lecteur vidéo de Windows.';
   kFORM_CAPTION = 'Vidéo';
+  kMsgReplaceParts = 'Ces morceaux viennent d''un autre rendu (%s). Les effacer ?';
+  kMsgCannotResume = 'Ces morceaux ne peuvent pas être calculés ici : %s.';
+  kMsgSameKernelHint = ' Choisissez dans la fenêtre principale le même moteur de calcul que celui des morceaux.';
+  kMsgNotResumable = 'Ce dossier ne contient pas de morceaux reprenables (tampon absent, illisible ou d''une ' +
+    'ancienne version).';
+  kMsgSplitReady = 'Répartition enregistrée dans :'#13#10'%s'#13#10#13#10'Copiez ce dossier sur chaque machine, puis ' +
+    '« Reprendre des morceaux » y calcule sa plage.';
+  kMsgRangeDone = 'Plage terminée : images %d à %d.'#13#10'Rapatriez les morceaux, puis « Reprendre des morceaux » ' +
+    'sans plage assemble la vidéo.';
+  kTitleSplitVideo = 'Vidéo à répartir';
+  kStampBlaKey = 'BLA=';
+  kStampAdaptiveKey = 'LissageAdaptatif=';
+  kStampSizeKey = 'Taille=';
 
 {------------------------------------------------------------------------------}
 
@@ -258,6 +283,62 @@ function TryParseSeconds(const S: string; out Value: Double): Boolean;
 begin
   Value := InvariantToFloat(StringReplace(Trim(S), ',', '.', []), NaN);
   Result := not IsNan(Value) and (Value >= 0) and (Value <= kMaxStepSeconds);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Les images de la plage de morceaux FirstSegment..LastSegment (-1 = jusqu'au dernier) d'une vidéo de Total images,
+// ramenée aux morceaux de la vidéo comme le fait TVideoRenderer
+procedure FrameRange(Total, FirstSegment, LastSegment: Integer; out FirstFrame, LastFrame: Integer);
+var
+  LastOfVideo, First, Last: Integer;
+begin
+  LastOfVideo := Max(0, Total - 1) div kSegmentFrames;
+  if LastSegment = -1 then
+    LastSegment := LastOfVideo;
+  First := EnsureRange(FirstSegment, 0, LastOfVideo);
+  Last := EnsureRange(LastSegment, First, LastOfVideo);
+  FirstFrame := First * kSegmentFrames;
+  LastFrame := Min((Last + 1) * kSegmentFrames, Total) - 1;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Ce que le tampon des morceaux de OutputFile dit des réglages de la machine qui l'a écrit : BLA, lissage adaptatif
+// et largeur des images. Faux si le tampon est absent ou illisible
+function ReadStampSettings(const OutputFile: string; out IsBla, IsAdaptive: Boolean; out StampWidth: Integer):
+  Boolean;
+var
+  Lines: TStringList;
+  I: Integer;
+  Size: string;
+begin
+  Result := False;
+  IsBla := False;
+  IsAdaptive := False;
+  StampWidth := 0;
+  Lines := TStringList.Create;
+  try
+    try
+      Lines.LoadFromFile(OutputFile + kPartsSuffix + PathDelim + kStampName, TEncoding.UTF8);
+    except
+      on E: Exception do
+        Exit;
+    end;
+    for I := 0 to Lines.Count - 1 do  // la dernière ligne de chaque clé : le lieu et le scénario ont les leurs
+      if Copy(Lines[I], 1, Length(kStampBlaKey)) = kStampBlaKey then
+        IsBla := Copy(Lines[I], Length(kStampBlaKey) + 1, MaxInt) = '1'
+      else if Copy(Lines[I], 1, Length(kStampAdaptiveKey)) = kStampAdaptiveKey then
+        IsAdaptive := Copy(Lines[I], Length(kStampAdaptiveKey) + 1, MaxInt) = '1'
+      else if Copy(Lines[I], 1, Length(kStampSizeKey)) = kStampSizeKey then
+      begin
+        Size := Copy(Lines[I], Length(kStampSizeKey) + 1, MaxInt);
+        StampWidth := StrToIntDef(Copy(Size, 1, Pos('x', Size) - 1), 0);
+      end;
+    Result := True;
+  finally
+    Lines.Free;
+  end;
 end;
 
 {------------------------------------------------------------------------------}
@@ -827,6 +908,8 @@ begin
   btnRender.Enabled := IsIdle and (FScenario.Count >= 2) and (FFfmpegExe <> '');
   btnCancel.Enabled := not IsIdle;
   btnReplay.Enabled := IsIdle and IsPreviewCurrent;
+  btnSplit.Enabled := IsIdle and (FScenario.Count >= 2);
+  btnResumeParts.Enabled := IsIdle and (FFfmpegExe <> '');
   btnReplaceColors.Enabled := IsIdle;
 
   Action_Open.Enabled := IsIdle;
@@ -1060,26 +1143,49 @@ begin
   if IsRendering then
     Exit;
   RequestSnapshot;  // moteur du moment ; palette et coloration de la fenêtre principale si le scénario n'en a pas
-  LaunchRender(IsPreview, FileName, Divisor, RenderPalette, RenderMapping);
+  if not ConfirmReplaceParts(IsPreview, FileName, Divisor, RenderPalette, RenderMapping) then
+    Exit;
+  LaunchRender(IsPreview, FileName, Divisor, RenderPalette, RenderMapping, FIsBla, FIsAdaptive, 0, -1);
 end;
 
 {------------------------------------------------------------------------------}
 
+// Un dossier de morceaux d'un autre rendu n'est jamais effacé ici : seule une génération lancée normalement le fait,
+// après confirmation. BLA et lissage adaptatif viennent du tampon (comme la palette), pas de Fractales.ini
 function TVideoForm.ResumeRender(const R: TInterruptedRender): Boolean;
 var
   Read: TVideoScenario;
   L: TFractalLocation;
-  Done: Integer;
+  Done, StampWidth, Width, Height, Divisor: Integer;
+  IsBla, IsAdaptive: Boolean;
+  Difference: string;
 begin
   Result := False;
+  FLastError := '';
   if IsRendering then
     Exit;
   RequestSnapshot;  // moteur et FFmpeg du moment
   Read := TVideoScenario.Create;
   L := TFractalLocation.Create;
   try
-    if not ReadInterruptedRender(R.OutputFile, Read, L, Done) then
+    if not ReadInterruptedRender(R.OutputFile, Read, L, Done) or
+      not ReadStampSettings(R.OutputFile, IsBla, IsAdaptive, StampWidth) then
       Exit;
+    // la taille des images est celle des morceaux : un dossier copié ne dit pas de quelle réduction elle vient
+    VideoFormatSize(Read.Format, Width, Height);
+    Divisor := R.Divisor;
+    if StampWidth > 0 then
+      Divisor := Max(1, Round(Width / StampWidth));
+    Difference := PartsStampDifference(R.OutputFile, RenderStamp(Read, L.Palette, L.Mapping,
+      Max(2, Width div Max(1, Divisor)), Max(2, Height div Max(1, Divisor)), kSegmentFrames, IsBla, IsAdaptive,
+      FKernel));
+    if Difference <> '' then
+    begin
+      FLastError := Format(kMsgCannotResume, [Difference]);
+      if Pos('noyau', Difference) > 0 then
+        FLastError := FLastError + kMsgSameKernelHint;
+      Exit;
+    end;
     FScenario.Assign(Read);
     FScenarioFile := R.ScenarioFile;
     // comparé au fichier tel qu'il est sur le disque ; sans fichier lisible, le scénario repris compte comme modifié
@@ -1097,7 +1203,8 @@ begin
     else
       dlgVideo.FileName := R.OutputFile;
     RefreshList(0);
-    LaunchRender(R.IsPreview, R.OutputFile, R.Divisor, L.Palette, L.Mapping);
+    LaunchRender(R.IsPreview, R.OutputFile, Divisor, L.Palette, L.Mapping, IsBla, IsAdaptive, R.FirstSegment,
+      R.LastSegment);
     Result := True;
   finally
     L.Free;
@@ -1107,8 +1214,35 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Une génération normale vers une vidéo dont le dossier de morceaux a le tampon d'un autre rendu : les anciens morceaux
+// ne servent plus, mais ils ont pu coûter des heures ; on ne les efface qu'avec l'accord de l'utilisateur. Faux = il
+// renonce au lancement
+function TVideoForm.ConfirmReplaceParts(IsPreview: Boolean; const FileName: string; Divisor: Integer;
+  Palette: TGradientPalette; const Mapping: TColorMapping): Boolean;
+var
+  Width, Height: Integer;
+  Difference: string;
+begin
+  Result := True;
+  if FileName = '' then
+    Exit;
+  VideoFormatSize(FScenario.Format, Width, Height);
+  if Divisor <= 0 then
+    Divisor := IfThen(IsPreview, kPreviewDivisor, 1);
+  Difference := PartsStampDifference(FileName, RenderStamp(FScenario, Palette, Mapping, Max(2, Width div Divisor),
+    Max(2, Height div Divisor), kSegmentFrames, FIsBla, FIsAdaptive, FKernel));
+  if Difference = '' then
+    Exit;
+  Result := MessageDlg(Format(kMsgReplaceParts, [Difference]), mtConfirmation, [mbYes, mbNo], 0) = mrYes;
+  if Result then
+    RemovePartsFolder(FileName);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.LaunchRender(IsPreview: Boolean; const FileName: string; Divisor: Integer;
-  Palette: TGradientPalette; const Mapping: TColorMapping);
+  Palette: TGradientPalette; const Mapping: TColorMapping; IsBla, IsAdaptive: Boolean; FirstSegment,
+  LastSegment: Integer);
 var
   Sink: TVideoFrameSink;
   R: TInterruptedRender;
@@ -1125,18 +1259,19 @@ begin
   if IsPreview then
     Sink := PreviewSink;
   FRenderer := TVideoRenderer.Create(FScenario, Palette, Mapping, FKernel, FFfmpegExe, FileName, IsPreview, Sink,
-    Divisor, 0, FIsBla, FIsAdaptive);
+    Divisor, 0, IsBla, IsAdaptive, FirstSegment, LastSegment);
+  FrameRange(FScenario.TotalFrames, FirstSegment, LastSegment, FRangeFirstFrame, FRangeLastFrame);
   if (FileName <> '') and (FInterruptedFile <> '') then
   begin
     R.OutputFile := FileName;
     R.IsPreview := IsPreview;
     R.Divisor := Divisor;
     R.ScenarioFile := FScenarioFile;
-    R.FirstSegment := 0;  // toute la vidéo, jusqu'à ce que l'interface choisisse une plage
-    R.LastSegment := -1;
+    R.FirstSegment := FirstSegment;
+    R.LastSegment := LastSegment;
     AddInterruptedRender(FInterruptedFile, R);  // retiré quand le rendu aboutit
   end;
-  pbProgress.Max := Max(1, FRenderer.FramesTotal);
+  pbProgress.Max := Max(1, FRenderer.FramesInRange);
   pbProgress.Position := 0;
   lblProgress.Caption := '';
   tmrProgress.Enabled := True;
@@ -1147,11 +1282,12 @@ end;
 
 procedure TVideoForm.FinishRender;
 var
-  IsSucceeded, IsCancelled: Boolean;
+  IsSucceeded, IsCancelled, IsPartial: Boolean;
 begin
   tmrProgress.Enabled := False;
   ShowPreviewFrame;
   IsSucceeded := FRenderer.IsSucceeded;
+  IsPartial := not FRenderer.IsWholeVideo;
   FLastError := FRenderer.ErrorMessage;
   IsCancelled := not IsSucceeded and (FLastError = '');
   LogGeneration;
@@ -1177,6 +1313,11 @@ begin
       lblProgress.Caption := 'Aperçu terminé : « Revoir l''aperçu » le rejoue.';
       UpdateControls;
     end;
+  end
+  else if IsPartial then
+  begin
+    lblProgress.Caption := 'Plage terminée.';
+    MessageDlg(Format(kMsgRangeDone, [FRangeFirstFrame, FRangeLastFrame]), mtInformation, [mbOK], 0);
   end
   else
   begin
@@ -1207,8 +1348,13 @@ begin
   Entry.FramesTotal := FRenderer.FramesTotal;
   Entry.FramesDone := FRenderer.FramesDone;
   Entry.FirstFrame := FRenderer.FirstFrame;
-  Entry.RangeFirstFrame := -1;  // toute la vidéo, jusqu'à ce que l'interface choisisse une plage
+  Entry.RangeFirstFrame := -1;  // toute la vidéo
   Entry.RangeLastFrame := -1;
+  if not FRenderer.IsWholeVideo then
+  begin
+    Entry.RangeFirstFrame := FRangeFirstFrame;
+    Entry.RangeLastFrame := FRangeLastFrame;
+  end;
   Entry.ErrorMessage := FRenderer.ErrorMessage;
   if FRenderer.IsSucceeded then
     Entry.Outcome := goSucceeded
@@ -1276,11 +1422,14 @@ begin
   end
   else
   begin
-    pbProgress.Max := Max(1, FRenderer.FramesTotal);
+    pbProgress.Max := Max(1, FRenderer.FramesInRange);
     pbProgress.Position := FRenderer.FramesDone;
-    lblProgress.Caption := Format('Image %d sur %d, reste environ %s', [FRenderer.FramesDone, FRenderer.FramesTotal,
-      ClockText(FRenderer.SecondsLeft)]);
-    if FRenderer.FirstFrame > 0 then
+    lblProgress.Caption := Format('Image %d sur %d, reste environ %s', [FRenderer.FramesDone,
+      FRenderer.FramesInRange, ClockText(FRenderer.SecondsLeft)]);
+    if not FRenderer.IsWholeVideo then  // une plage : l'image de départ est celle de la plage
+      lblProgress.Caption := lblProgress.Caption + Format(' (plage : images %d à %d)', [FRangeFirstFrame,
+        FRangeLastFrame])
+    else if FRenderer.FirstFrame > 0 then
       lblProgress.Caption := lblProgress.Caption + Format(' (reprise à l''image %d)', [FRenderer.FirstFrame]);
 
     if FIsPreview then
@@ -1288,7 +1437,7 @@ begin
     else
       sStatus := ' : génération de ' + ExtractFileName(FOutputFile);
 
-    Caption := kFORM_CAPTION + sStatus +  Format(' (%d %%)', [FRenderer.FramesDone * 100 div Max(1, FRenderer.FramesTotal)]);
+    Caption := kFORM_CAPTION + sStatus +  Format(' (%d %%)', [FRenderer.FramesDone * 100 div Max(1, FRenderer.FramesInRange)]);
   end;
 
   if FRenderer.IsDone then
@@ -1345,6 +1494,51 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// « Répartir… » : la vidéo se choisit comme pour « Créer la vidéo », puis la fenêtre de répartition prend le relais
+procedure TVideoForm.btnSplitClick(Sender: TObject);
+begin
+  if IsRendering or (FScenario.Count < 2) then
+    Exit;
+  if FScenarioFile <> '' then
+    dlgVideo.FileName := ChangeFileExt(ExtractFileName(FScenarioFile), '.mp4');
+  dlgVideo.Title := kTitleSplitVideo;
+  try
+    if not ExecuteInFolder(dlgVideo, FVideoFolder) then
+      Exit;
+  finally
+    dlgVideo.Title := '';
+  end;
+  RequestSnapshot;  // moteur du moment ; couleurs de la fenêtre principale si le scénario n'en a pas
+  if ShowSplitDialog(FScenario, RenderPalette, RenderMapping, FKernel, FIsBla, FIsAdaptive, FFfmpegExe,
+    dlgVideo.FileName) then
+    MessageDlg(Format(kMsgSplitReady, [dlgVideo.FileName + kPartsSuffix]), mtInformation, [mbOK], 0);
+end;
+
+{------------------------------------------------------------------------------}
+
+// « Reprendre des morceaux… » : le scénario de la fenêtre est remplacé par celui du dossier choisi
+procedure TVideoForm.btnResumePartsClick(Sender: TObject);
+var
+  Folder: string;
+  First, Last: Integer;
+  R: TInterruptedRender;
+begin
+  if IsRendering or not ConfirmDiscard then
+    Exit;
+  if not ShowResumePartsDialog(Folder, First, Last) then
+    Exit;
+  R.OutputFile := Copy(Folder, 1, Length(Folder) - Length(kPartsSuffix));  // la vidéo : le dossier sans .morceaux
+  R.IsPreview := False;
+  R.Divisor := 0;  // relu de la taille du tampon
+  R.ScenarioFile := '';  // un dossier copié n'a pas son .fscn : scénario non enregistré
+  R.FirstSegment := First;
+  R.LastSegment := Last;
+  if not ResumeRender(R) then
+    MessageDlg(IfThen(FLastError <> '', FLastError, kMsgNotResumable), mtWarning, [mbOK], 0);
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TVideoForm.btnCancelClick(Sender: TObject);
 begin
   if FRenderer <> nil then
@@ -1377,7 +1571,10 @@ end;
 
 {------------------------------------------------------------------------------}
 
-function InterruptedRenderName(const R: TInterruptedRender): string;
+// Total : nombre d'images de la vidéo, pour dire la plage d'un rendu partiel
+function InterruptedRenderName(const R: TInterruptedRender; Total: Integer): string;
+var
+  First, Last: Integer;
 begin
   if not R.IsPreview then
     Result := 'vidéo ' + ExtractFileName(R.OutputFile)
@@ -1385,6 +1582,9 @@ begin
     Result := 'aperçu de ' + ChangeFileExt(ExtractFileName(R.ScenarioFile), '')
   else
     Result := 'aperçu d''un scénario sans nom';
+  FrameRange(Total, R.FirstSegment, R.LastSegment, First, Last);
+  if (First > 0) or (Last < Total - 1) then
+    Result := Result + Format(' (plage : images %d à %d)', [First, Last]);
 end;
 
 {------------------------------------------------------------------------------}
@@ -1444,6 +1644,7 @@ function ChooseInterruptedRender(const SettingsFile: string; out Chosen: TInterr
 var
   Renders, Kept: TInterruptedRenders;
   Percents: array of Integer;
+  Names: array of string;
   Items: TStringList;
   Read: TVideoScenario;
   L: TFractalLocation;
@@ -1461,8 +1662,10 @@ begin
         N := Length(Kept);
         SetLength(Kept, N + 1);
         SetLength(Percents, N + 1);
+        SetLength(Names, N + 1);
         Kept[N] := Renders[I];
         Percents[N] := Done * 100 div Max(1, Read.TotalFrames);
+        Names[N] := InterruptedRenderName(Renders[I], Read.TotalFrames);
       end
       else
         RemoveInterruptedRender(SettingsFile, Renders[I].OutputFile);  // morceaux effacés ou illisibles
@@ -1474,7 +1677,7 @@ begin
     Exit;
   if Length(Kept) = 1 then
   begin
-    if MessageDlg(Format(kMsgResumeOne, [Percents[0], InterruptedRenderName(Kept[0])]), mtConfirmation,
+    if MessageDlg(Format(kMsgResumeOne, [Percents[0], Names[0]]), mtConfirmation,
       [mbYes, mbNo], 0) <> mrYes then
       Exit;
     Index := 0;
@@ -1484,7 +1687,7 @@ begin
     Items := TStringList.Create;
     try
       for I := 0 to High(Kept) do
-        Items.Add(Format('%d %% : %s', [Percents[I], InterruptedRenderName(Kept[I])]));
+        Items.Add(Format('%d %% : %s', [Percents[I], Names[I]]));
       Index := PickFromList(Items);
     finally
       Items.Free;
