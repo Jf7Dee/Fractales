@@ -110,6 +110,7 @@ type
     procedure TestReadInterruptedRender;
     procedure TestStampIncludesVersionAndKernel;
     procedure TestStampDifference;
+    procedure TestPartsStampDifference;
     procedure TestReadInterruptedRefusesOldStamp;
     procedure TestVideoMaxIter;
     procedure TestGenerationLogText;
@@ -1851,7 +1852,7 @@ begin
     CheckTrue(FileExists(OutFile), 'vidéo assemblée');
     CheckFalse(DirectoryExists(OutFile + kPartsSuffix), 'morceaux supprimés');
     // scénario modifié : les morceaux d'avant ne valent plus rien
-    FCancelAfter := 4;
+    FCancelAfter := FFrames.Count + 4;  // les images du tour précédent restent dans FFrames
     R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 3);
     try
       FCancelTarget := R;
@@ -1864,8 +1865,19 @@ begin
     R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 4, 3);
     try
       R.WaitFor;
+      CheckFalse(R.IsSucceeded, 'autre taille : refusé');
+      CheckTrue(Pos('autre rendu', R.ErrorMessage) > 0, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    CheckTrue(FileExists(OutFile + kPartsSuffix + '\morceau0000.mp4'), 'morceaux jamais effacés');
+    RemovePartsFolder(OutFile);
+    CheckFalse(DirectoryExists(OutFile + kPartsSuffix), 'dossier effacé à la demande');
+    R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 4, 3);
+    try
+      R.WaitFor;
       CheckTrue(R.IsSucceeded, R.ErrorMessage);
-      CheckEquals(0, R.FirstFrame, 'autre taille : tout recommence');
+      CheckEquals(0, R.FirstFrame, 'après effacement : tout recommence');
     finally
       R.Free;
     end;
@@ -1924,6 +1936,17 @@ begin
         Changed = 0, Changed = 1);
       try
         R.WaitFor;
+        CheckFalse(R.IsSucceeded, Format('réglage %d changé : refusé', [Changed]));
+        CheckTrue(Pos('autre rendu', R.ErrorMessage) > 0, R.ErrorMessage);
+      finally
+        R.Free;
+      end;
+      CheckTrue(FileExists(OutFile + kPartsSuffix + '\morceau0001.mp4'), 'morceaux jamais effacés');
+      RemovePartsFolder(OutFile);
+      R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5,
+        Changed = 0, Changed = 1);
+      try
+        R.WaitFor;
         CheckTrue(R.IsSucceeded, R.ErrorMessage);
         CheckEquals(0, R.FirstFrame, Format('réglage %d changé : tout recommence', [Changed]));
       finally
@@ -1961,6 +1984,32 @@ begin
     S.Free;
     P.Free;
     Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Sans dossier ni tampon, aucune différence ; avec le même tampon aucune ; avec un autre, un texte
+procedure TTestVideoRender.TestPartsStampDifference;
+var
+  OutFile, Folder: string;
+  S: TStringList;
+begin
+  OutFile := TestTempFolder + 'difference.mp4';
+  Folder := OutFile + kPartsSuffix;
+  RemovePartsFolder(OutFile);
+  CheckEquals('', PartsStampDifference(OutFile, 'A=1'), 'dossier absent');
+  ForceDirectories(Folder);
+  S := TStringList.Create;
+  try
+    CheckEquals('', PartsStampDifference(OutFile, 'A=1'), 'dossier sans tampon');
+    S.Text := 'A=1';
+    S.SaveToFile(Folder + '\scenario.txt', TEncoding.UTF8);
+    CheckEquals('', PartsStampDifference(OutFile, 'A=1'), 'même tampon');
+    CheckTrue(PartsStampDifference(OutFile, 'A=2') <> '', 'autre tampon');
+  finally
+    S.Free;
+    RemovePartsFolder(OutFile);
   end;
 end;
 

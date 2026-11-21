@@ -74,7 +74,6 @@ type
     function PartFile(Index: Integer): string;
     function PendingPartFile: string;
     procedure PrepareParts;
-    procedure RemoveParts;
     procedure SetPipe(Pipe: TFfmpegPipe);
     procedure OpenPart(var Pipe: TFfmpegPipe);
     procedure ClosePart(var Pipe: TFfmpegPipe; Index: Integer);
@@ -128,6 +127,14 @@ function RenderStamp(Scenario: TVideoScenario; Palette: TGradientPalette; const 
 // Ce qui sépare deux tampons, en un texte pour l'utilisateur ; vide s'ils sont identiques. Par ordre de priorité : la
 // version de Fractales, le noyau, puis le scénario ou les réglages
 function StampDifference(const Expected, Found: string): string;
+
+// Ce qui sépare le tampon du dossier des morceaux de OutputFile et Stamp, en un texte pour l'utilisateur ; vide si le
+// dossier n'existe pas, n'a pas de tampon, ou a ce tampon
+function PartsStampDifference(const OutputFile, Stamp: string): string;
+
+// Efface le dossier des morceaux de OutputFile, avec son contenu. Le rendu ne l'appelle jamais de lui-même : seule la
+// jonction réussie, ou un lancement que l'utilisateur a confirmé
+procedure RemovePartsFolder(const OutputFile: string);
 
 // Rendu interrompu vers OutputFile : scénario, palette et coloration relus dans le dossier des morceaux, et nombre
 // d'images déjà faites. Faux si le dossier ou son scénario manque ou est illisible
@@ -368,28 +375,22 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Reprend les morceaux d'une génération interrompue s'ils viennent du même rendu, sinon repart de zéro
+// Reprend les morceaux d'une génération interrompue s'ils viennent du même rendu ; ceux d'un autre rendu sont refusés,
+// sans rien effacer
 procedure TVideoRenderer.PrepareParts;
 var
-  Stamp: string;
+  Stamp, Difference: string;
   S: TStringList;
-  IsSameRender: Boolean;
   Count: Integer;
 begin
   Stamp := RenderStamp(FScenario, FPalette, FMapping, FWidth, FHeight, FSegmentFrames, FIsBla, FIsAdaptive,
     FKernel);
+  Difference := PartsStampDifference(FOutputFile, Stamp);
+  if Difference <> '' then
+    raise EVideoEncoderError.CreateFmt('Ces morceaux viennent d''un autre rendu (%s) : %s', [Difference, FPartsFolder]);
   S := TStringList.Create;
   try
-    IsSameRender := False;
     if FileExists(FPartsFolder + kStampName) then
-    try
-      S.LoadFromFile(FPartsFolder + kStampName);
-      IsSameRender := S.Text = Stamp;
-    except
-      on E: EStreamError do
-        IsSameRender := False;
-    end;
-    if IsSameRender then
     begin
       Count := 0;
       while FileExists(PartFile(Count)) do
@@ -399,7 +400,6 @@ begin
     end
     else
     begin
-      RemoveParts;
       if not ForceDirectories(FPartsFolder) then
         raise EVideoEncoderError.CreateFmt('Dossier des morceaux impossible à créer : %s', [FPartsFolder]);
       S.Text := Stamp;
@@ -408,23 +408,6 @@ begin
   finally
     S.Free;
   end;
-end;
-
-{------------------------------------------------------------------------------}
-
-procedure TVideoRenderer.RemoveParts;
-var
-  Found: TSearchRec;
-begin
-  if FindFirst(FPartsFolder + '*', faAnyFile and not faDirectory, Found) = 0 then
-  try
-    repeat
-      SysUtils.DeleteFile(FPartsFolder + Found.Name);
-    until FindNext(Found) <> 0;
-  finally
-    SysUtils.FindClose(Found);
-  end;
-  RemoveDir(ExcludeTrailingPathDelimiter(FPartsFolder));
 end;
 
 {------------------------------------------------------------------------------}
@@ -487,7 +470,7 @@ begin
     SetPipe(nil);
     Pipe.Free;
   end;
-  RemoveParts;
+  RemovePartsFolder(FOutputFile);
 end;
 
 {------------------------------------------------------------------------------}
@@ -685,6 +668,53 @@ begin
     B.Free;
     A.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function PartsStampDifference(const OutputFile, Stamp: string): string;
+var
+  StampFile: string;
+  S: TStringList;
+begin
+  Result := '';
+  StampFile := OutputFile + kPartsSuffix + PathDelim + kStampName;
+  if not FileExists(StampFile) then
+    Exit;
+  S := TStringList.Create;
+  try
+    try
+      S.LoadFromFile(StampFile);
+    except
+      on E: EStreamError do
+      begin
+        Result := 'différence de scénario ou réglages';  // tampon illisible : traité comme un autre rendu
+        Exit;
+      end;
+    end;
+    Result := StampDifference(Stamp, S.Text);
+  finally
+    S.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure RemovePartsFolder(const OutputFile: string);
+var
+  Folder: string;
+  Found: TSearchRec;
+begin
+  Folder := OutputFile + kPartsSuffix + PathDelim;
+  if FindFirst(Folder + '*', faAnyFile and not faDirectory, Found) = 0 then
+  try
+    repeat
+      SysUtils.DeleteFile(Folder + Found.Name);
+    until FindNext(Found) <> 0;
+  finally
+    SysUtils.FindClose(Found);
+  end;
+  RemoveDir(ExcludeTrailingPathDelimiter(Folder));
 end;
 
 {------------------------------------------------------------------------------}
