@@ -34,6 +34,7 @@ uses
   Fractal.VideoScenario in 'src\Fractal.VideoScenario.pas',
   Fractal.VideoEncoder in 'src\Fractal.VideoEncoder.pas',
   Fractal.VideoRender in 'src\Fractal.VideoRender.pas',
+  Fractal.VideoSplit in 'src\Fractal.VideoSplit.pas',
   VideoFrm in 'src\VideoFrm.pas' {VideoForm};
 
 {$R *.res}

@@ -13,7 +13,7 @@ interface
 uses
   Windows, SysUtils, Classes, Math, Fractal.Types, Fractal.Formulas, Fractal.Palette, Fractal.Engine,
   Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder, Fractal.Persistence, Fractal.Update,
-  Fractal.RustKernel, SyncObjs;
+  Fractal.RustKernel, SyncObjs, Types;
 
 const
   kPreviewDivisor = 4;  // l'aperçu est rendu au quart de la taille
@@ -46,6 +46,7 @@ type
     FKernel: TEngineKernelType;
     FIsBla: Boolean;
     FIsAdaptive: Boolean;
+    FIsProfileOnly: Boolean;
     FFfmpegExe: string;
     FOutputFile: string;
     FIsPreview: Boolean;
@@ -89,6 +90,7 @@ type
     procedure ClosePart(var Pipe: TFfmpegPipe; Index: Integer);
     procedure JoinParts;
     function GetSecondsLeft: Double;
+    function GetCost: TDoubleDynArray;
   protected
     procedure Execute; override;
   public
@@ -98,10 +100,13 @@ type
     // FirstSegment..LastSegment : la plage de morceaux à rendre, -1 = jusqu'au dernier ; hors bornes, ramenée aux
     // morceaux de la vidéo. Les morceaux déjà présents sont sautés ; la vidéo n'est assemblée que pour une plage
     // qui la couvre entière
+    // IsProfileOnly : ne calcule que le profil de coût de toute la vidéo (plage et OutputFile ignorés, aucun dossier
+    // de morceaux touché, aucune image envoyée) puis s'arrête ; le résultat est Cost
     constructor Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
       Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean;
       Sink: TVideoFrameSink = nil; Divisor: Integer = 0; SegmentFrames: Integer = 0; IsBla: Boolean = False;
-      IsAdaptive: Boolean = False; FirstSegment: Integer = 0; LastSegment: Integer = -1);
+      IsAdaptive: Boolean = False; FirstSegment: Integer = 0; LastSegment: Integer = -1;
+      IsProfileOnly: Boolean = False);
     destructor Destroy; override;
     procedure Cancel;  // à préférer à Terminate : arrête aussi FFmpeg, même pendant la finalisation de la vidéo
     property FramesTotal: Integer read FFramesTotal;
@@ -119,6 +124,9 @@ type
     property ErrorMessage: string read FErrorMessage;
     property IsSucceeded: Boolean read FIsSucceeded;
     property IsDone: Boolean read FIsDone;
+    // coût prévu cumulé de toute la vidéo (profil seul) : Cost[I] = images 0..I-1, TotalFrames + 1 valeurs ; à lire
+    // une fois le fil terminé
+    property Cost: TDoubleDynArray read GetCost;
   end;
 
 // Secondes restantes d'après le profil Cost (coûts prévus cumulés : Cost[I] = images 0..I-1) et DoneAt (secondes
@@ -188,7 +196,8 @@ function SetThreadExecutionState(Flags: DWORD): DWORD; stdcall; external kernel3
 
 constructor TVideoRenderer.Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
   Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean; Sink: TVideoFrameSink;
-  Divisor, SegmentFrames: Integer; IsBla, IsAdaptive: Boolean; FirstSegment, LastSegment: Integer);
+  Divisor, SegmentFrames: Integer; IsBla, IsAdaptive: Boolean; FirstSegment, LastSegment: Integer;
+  IsProfileOnly: Boolean);
 var
   LastOfVideo: Integer;
 begin
@@ -206,7 +215,9 @@ begin
   FIsBla := IsBla;
   FIsAdaptive := IsAdaptive;
   FFfmpegExe := FfmpegExe;
-  FOutputFile := OutputFile;
+  FIsProfileOnly := IsProfileOnly;
+  if not IsProfileOnly then  // le profil seul ne touche à aucun dossier de morceaux
+    FOutputFile := OutputFile;
   FIsPreview := IsPreview;
   FSink := Sink;
   if Divisor <= 0 then
@@ -221,10 +232,15 @@ begin
     LastSegment := LastOfVideo;
   FFirstSegment := EnsureRange(FirstSegment, 0, LastOfVideo);
   FLastSegment := EnsureRange(LastSegment, FFirstSegment, LastOfVideo);
+  if IsProfileOnly then  // toute la vidéo : la répartition a besoin du coût entier
+  begin
+    FFirstSegment := 0;
+    FLastSegment := LastOfVideo;
+  end;
   FIsWholeVideo := (FFirstSegment = 0) and (FLastSegment = LastOfVideo);
   FFramesInRange := Max(0, Min((FLastSegment + 1) * FSegmentFrames, FFramesTotal) - FFirstSegment * FSegmentFrames);
-  if OutputFile <> '' then
-    FPartsFolder := OutputFile + kPartsSuffix + PathDelim;
+  if FOutputFile <> '' then
+    FPartsFolder := FOutputFile + kPartsSuffix + PathDelim;
   inherited Create(False);
 end;
 
@@ -250,6 +266,17 @@ begin
   finally
     FPipeLock.Leave;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+function TVideoRenderer.GetCost: TDoubleDynArray;
+var
+  I: Integer;
+begin
+  SetLength(Result, Length(FCost));
+  for I := 0 to High(FCost) do
+    Result[I] := FCost[I];
 end;
 
 {------------------------------------------------------------------------------}
@@ -579,6 +606,13 @@ begin
       BuildPlan;
       if not Profile(Formula, Frame) then
         Exit;
+      if FIsProfileOnly then
+      begin
+        if Length(FCost) = 0 then  // que des pauses : Profile n'a rien mesuré, tout est gratuit
+          SetLength(FCost, FFramesTotal + 1);
+        FIsSucceeded := True;
+        Exit;
+      end;
       FFrameProgress := 0;  // la dernière image du profil ne compte pas
       FStartTick := GetTickCount;
       SetLength(FDoneAt, Length(FPlan));

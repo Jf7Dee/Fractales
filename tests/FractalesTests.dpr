@@ -26,6 +26,7 @@ uses
   Fractal.VideoScenario in '..\src\Fractal.VideoScenario.pas',
   Fractal.VideoEncoder in '..\src\Fractal.VideoEncoder.pas',
   Fractal.VideoRender in '..\src\Fractal.VideoRender.pas',
+  Fractal.VideoSplit in '..\src\Fractal.VideoSplit.pas',
   TestFractalTypes in 'TestFractalTypes.pas',
   TestFractalHighFloat in 'TestFractalHighFloat.pas',
   TestFractalPerturbation in 'TestFractalPerturbation.pas',

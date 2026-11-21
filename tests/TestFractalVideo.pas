@@ -3,9 +3,9 @@
 interface
 
 uses
-  Windows, SysUtils, Classes, Math, TestFramework, Fractal.HighFloat, Fractal.Types, Fractal.Persistence,
+  Windows, SysUtils, Classes, Types, Math, TestFramework, Fractal.HighFloat, Fractal.Types, Fractal.Persistence,
   Fractal.Formulas, Fractal.Palette, Fractal.Engine, Fractal.HiRes, Fractal.VideoPath, Fractal.VideoScenario, Fractal.VideoEncoder,
-  Fractal.VideoRender, TestUtils;
+  Fractal.VideoRender, Fractal.VideoSplit, TestUtils;
 
 type
   TDoubles = array of Double;
@@ -128,6 +128,29 @@ type
     procedure TestFingerprintIsStable;
     procedure TestPartCarriesFingerprint;
     procedure TestJoinRefusesForeignPart;
+  end;
+
+  TTestVideoSplit = class(TTestCase)
+  private
+    FFrames: TList;
+    procedure Collect(Png: TStream);
+    function UniformCost(Frames: Integer): TDoubles;
+    function SmallScenario: TVideoScenario;
+    function StartProfile(Scenario: TVideoScenario; const OutFile: string; FirstSegment,
+      LastSegment: Integer): TVideoRenderer;
+  protected
+    procedure SetUp; override;
+    procedure TearDown; override;
+  published
+    procedure TestProposeSplitEqualSpeeds;
+    procedure TestProposeSplitFollowsCost;
+    procedure TestProposeSplitSpeeds;
+    procedure TestProposeSplitMoreMachinesThanSegments;
+    procedure TestMoveSplitBoundary;
+    procedure TestSplitSeconds;
+    procedure TestSplitFileRoundTrip;
+    procedure TestProfileOnly;
+    procedure TestProfileOnlyTouchesNoParts;
   end;
 
 implementation
@@ -2786,6 +2809,273 @@ end;
 
 {------------------------------------------------------------------------------}
 
+procedure TTestVideoSplit.SetUp;
+begin
+  FFrames := TList.Create;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TearDown;
+begin
+  FFrames.Free;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.Collect(Png: TStream);
+begin
+  FFrames.Add(nil);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Une image coûte 1 : Cost[I] = I
+function TTestVideoSplit.UniformCost(Frames: Integer): TDoubles;
+var
+  I: Integer;
+begin
+  SetLength(Result, Frames + 1);
+  for I := 0 to Frames do
+    Result[I] := I;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Mandelbrot, deux étapes : trajet 0,5 s (15 images) puis pause 0,2 s (6 images), carré
+function TTestVideoSplit.SmallScenario: TVideoScenario;
+var
+  L: TFractalLocation;
+  S: TVideoStep;
+begin
+  Result := TVideoScenario.Create;
+  L := TFractalLocation.Create;
+  try
+    L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'CenterX=-0.75'#13#10'CenterY=0.1'#13#10 +
+      'Width=2.5'#13#10);
+    Result.AddLocation('ensemble', L);
+    L.LoadFromText('[Fractal]'#13#10'Formula=Mandelbrot'#13#10'CenterX=-0.745'#13#10'CenterY=0.113'#13#10 +
+      'Width=0.05'#13#10);
+    Result.AddLocation('vallée', L);
+  finally
+    L.Free;
+  end;
+  S := Result[1];
+  S.TravelSeconds := 0.5;
+  S.PauseSeconds := 0.2;
+  Result[1] := S;
+  Result.Format := vf1x1;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Profil seul au huitième, morceaux de 5 images, sans FFmpeg ; attend la fin
+function TTestVideoSplit.StartProfile(Scenario: TVideoScenario; const OutFile: string; FirstSegment,
+  LastSegment: Integer): TVideoRenderer;
+var
+  P: TGradientPalette;
+begin
+  P := TGradientPalette.Create;
+  try
+    P.SetDefault;
+    Result := TVideoRenderer.Create(Scenario, P, DefaultColorMapping, ekDelphi, '', OutFile, False, Collect, 8, 5,
+      False, False, FirstSegment, LastSegment, True);
+  finally
+    P.Free;
+  end;
+  Result.WaitFor;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestProposeSplitEqualSpeeds;
+var
+  M: TSplitMachines;
+begin
+  M := ProposeSplit(UniformCost(100), 10, [1, 1]);
+  CheckEquals(2, Length(M));
+  CheckEquals(0, M[0].FirstSegment);
+  CheckEquals(4, M[0].LastSegment);
+  CheckEquals(5, M[1].FirstSegment);
+  CheckEquals(9, M[1].LastSegment);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestProposeSplitFollowsCost;
+var
+  Cost: TDoubles;
+  M: TSplitMachines;
+  I: Integer;
+begin
+  SetLength(Cost, 101);  // les 2 derniers morceaux (20 images) coûtent 8 fois plus
+  Cost[0] := 0;
+  for I := 1 to 100 do
+    Cost[I] := Cost[I - 1] + IfThen(I > 80, 8, 1);
+  M := ProposeSplit(Cost, 10, [1, 1]);
+  Check(M[0].LastSegment - M[0].FirstSegment > M[1].LastSegment - M[1].FirstSegment,
+    'la première machine a plus de morceaux');
+  CheckEquals(M[0].LastSegment + 1, M[1].FirstSegment, 'sans trou ni chevauchement');
+  CheckEquals(9, M[1].LastSegment);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestProposeSplitSpeeds;
+var
+  M: TSplitMachines;
+begin
+  M := ProposeSplit(UniformCost(80), 10, [1, 3]);
+  CheckEquals(0, M[0].FirstSegment);
+  CheckEquals(1, M[0].LastSegment);
+  CheckEquals(2, M[1].FirstSegment);
+  CheckEquals(7, M[1].LastSegment);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestProposeSplitMoreMachinesThanSegments;
+var
+  IsRaised: Boolean;
+begin
+  IsRaised := False;
+  try
+    ProposeSplit(UniformCost(20), 10, [1, 1, 1]);
+  except
+    on EArgumentException do
+      IsRaised := True;
+  end;
+  Check(IsRaised, 'EArgumentException attendue');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestMoveSplitBoundary;
+var
+  M: TSplitMachines;
+begin
+  M := ProposeSplit(UniformCost(100), 10, [1, 1]);  // 0..4 et 5..9
+  MoveSplitBoundary(M, 1, 7);
+  CheckEquals(6, M[0].LastSegment, 'fin de la précédente');
+  CheckEquals(7, M[1].FirstSegment, 'début déplacé');
+  CheckEquals(9, M[1].LastSegment);
+  MoveSplitBoundary(M, 1, 10);  // viderait la seconde
+  CheckEquals(7, M[1].FirstSegment, 'inchangé : seconde vide');
+  CheckEquals(6, M[0].LastSegment);
+  MoveSplitBoundary(M, 1, 0);  // viderait la première
+  CheckEquals(7, M[1].FirstSegment, 'inchangé : première vide');
+  CheckEquals(6, M[0].LastSegment);
+  MoveSplitBoundary(M, 0, 3);  // la première machine n'a pas de borne de début à déplacer
+  CheckEquals(0, M[0].FirstSegment);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestSplitSeconds;
+var
+  Cost: TDoubles;
+begin
+  Cost := UniformCost(100);  // une image coûte 1 s
+  CheckEquals(10 * 64.0, SplitSeconds(Cost, 10, 2, 2, 1, 1), 1e-9, 'un morceau, lissage 1');
+  CheckEquals(20 * 64.0 * 4 / 2, SplitSeconds(Cost, 10, 0, 1, 2, 2), 1e-9, 'deux morceaux, lissage 2, vitesse 2');
+  CheckEquals(10 * 64.0, SplitSeconds(Cost, 10, 9, 9, 1, 1), 1e-9, 'dernier morceau');
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestSplitFileRoundTrip;
+var
+  M, R: TSplitMachines;
+  FileName: string;
+  I: Integer;
+begin
+  SetLength(M, 3);
+  M[0].Name := 'Portable de Zoé';
+  M[0].Speed := 0.5;
+  M[0].FirstSegment := 0;
+  M[0].LastSegment := 1;
+  M[1].Name := 'Bureau Étienne';
+  M[1].Speed := 2.25;
+  M[1].FirstSegment := 2;
+  M[1].LastSegment := 5;
+  M[2].Name := 'Machine à côté';
+  M[2].Speed := 1;
+  M[2].FirstSegment := 6;
+  M[2].LastSegment := 9;
+  FileName := IncludeTrailingPathDelimiter(GetEnvironmentVariable('TEMP')) + 'TestSplit_' + kSplitFileName;
+  SaveSplitFile(FileName, M, 10, 95);  // le dernier morceau n'a que 5 images
+  try
+    R := LoadSplitFile(FileName, 10);
+  finally
+    SysUtils.DeleteFile(FileName);
+  end;
+  CheckEquals(3, Length(R));
+  for I := 0 to 2 do
+  begin
+    CheckEquals(M[I].Name, R[I].Name, 'nom ' + IntToStr(I));
+    CheckEquals(M[I].Speed, R[I].Speed, 1e-12, 'vitesse ' + IntToStr(I));
+    CheckEquals(M[I].FirstSegment, R[I].FirstSegment, 'début ' + IntToStr(I));
+    CheckEquals(M[I].LastSegment, R[I].LastSegment, 'fin ' + IntToStr(I));
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestProfileOnly;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  Cost: TDoubleDynArray;
+  I: Integer;
+begin
+  Sc := SmallScenario;
+  try
+    R := StartProfile(Sc, '', 1, 1);  // la plage demandée est ignorée : tout le profil
+    try
+      Check(R.IsSucceeded, 'réussi : ' + R.ErrorMessage);
+      Cost := R.Cost;
+      CheckEquals(Integer(Sc.TotalFrames) + 1, Length(Cost), 'une valeur par image, plus le zéro');
+      CheckEquals(0, Cost[0], 1e-12);
+      for I := 1 to High(Cost) do
+        Check(Cost[I] >= Cost[I - 1], 'cumulé croissant à ' + IntToStr(I));
+      Check(Cost[High(Cost)] > 0, 'coût total positif');
+      CheckEquals(0, FFrames.Count, 'aucune image envoyée au récepteur');
+      CheckEquals(0, R.RenderCount, 'rien de rendu');
+    finally
+      R.Free;
+    end;
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TTestVideoSplit.TestProfileOnlyTouchesNoParts;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  OutFile: string;
+begin
+  OutFile := IncludeTrailingPathDelimiter(GetEnvironmentVariable('TEMP')) + 'TestProfileOnly.mp4';
+  RemovePartsFolder(OutFile);
+  Sc := SmallScenario;
+  try
+    R := StartProfile(Sc, OutFile, 0, -1);
+    try
+      Check(R.IsSucceeded, 'réussi : ' + R.ErrorMessage);
+      Check(not DirectoryExists(OutFile + kPartsSuffix), 'aucun dossier de morceaux créé');
+      Check(not FileExists(OutFile), 'aucune vidéo');
+    finally
+      R.Free;
+    end;
+  finally
+    Sc.Free;
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
 {------------------------------------------------------------------------------}
 
 initialization
@@ -2793,5 +3083,6 @@ initialization
   RegisterTest(TTestVideoScenario.Suite);
   RegisterTest(TTestVideoEncoder.Suite);
   RegisterTest(TTestVideoRender.Suite);
+  RegisterTest(TTestVideoSplit.Suite);
 
 end.
