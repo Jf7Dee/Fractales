@@ -2699,10 +2699,10 @@ begin
     R := RunRange(Sc, Ffmpeg, OutFile, 0, 0);
     try
       CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      Stamp := RenderStamp(Sc, P, DefaultColorMapping, R.FrameWidth, R.FrameHeight, 5, False, False, ekDelphi);
     finally
       R.Free;
     end;
-    Stamp := RenderStamp(Sc, P, DefaultColorMapping, R.FrameWidth, R.FrameHeight, 5, False, False, ekDelphi);
     CheckTrue(PartHasFingerprint(OutFile + kPartsSuffix + '\morceau0000.mp4', StampFingerprint(Stamp)),
       'empreinte du tampon');
     CheckFalse(PartHasFingerprint(OutFile + kPartsSuffix + '\morceau0000.mp4', StampFingerprint(Stamp + 'x')),
