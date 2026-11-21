@@ -122,6 +122,7 @@ type
     procedure TestRangeRendersOnlyItsSegments;
     procedure TestRangeAlreadyDone;
     procedure TestSegmentStartingInPauseIsRendered;
+    procedure TestPauseAfterGapIsRendered;
     procedure TestJoinAfterRanges;
     procedure TestPartsWithoutStampAreRefused;
   end;
@@ -2511,6 +2512,55 @@ begin
 end;
 
 {------------------------------------------------------------------------------}
+
+// Pause sur les images 15 à 20 : avec le morceau 2 présent, la plage 1..3 calcule les morceaux 1 et 3. L'image 15,
+// en tête du morceau 3, est calculée : elle ne reprend pas l'image 9, la dernière du morceau 1
+procedure TTestVideoRender.TestPauseAfterGapIsRendered;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile: string;
+  Before: Integer;
+  IsPause: Boolean;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : pause après un morceau présent non vérifiée');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'plage-trou-pause.mp4';
+  SysUtils.DeleteFile(OutFile);
+  RemovePartsFolder(OutFile);
+  Sc := SmallScenario;
+  try
+    Sc.PoseAtFrame(14, IsPause);
+    CheckFalse(IsPause, 'image 14 : fin du trajet');
+    Sc.PoseAtFrame(15, IsPause);
+    CheckTrue(IsPause, 'image 15 : pause');
+    R := RunRange(Sc, Ffmpeg, OutFile, 2, 2);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    Before := FFrames.Count;
+    R := RunRange(Sc, Ffmpeg, OutFile, 1, 3);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(10, FFrames.Count - Before, 'morceaux 1 et 3');
+    finally
+      R.Free;
+    end;
+    CheckTrue(Copy(FrameBytes(Before + 5), 1, 4) = #137'PNG', 'image 15 : calculée');
+    CheckFalse(FrameBytes(Before + 5) = FrameBytes(Before + 4), 'image 15 : pas l''image 9 du morceau 1');
+    CheckTrue(FrameBytes(Before + 6) = FrameBytes(Before + 5), 'image 16 : la pause reprend l''image 15');
+  finally
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+    RemovePartsFolder(OutFile);
+  end;
+end;
 
 // Deux plages qui couvrent la vidéo, puis un rendu complet : rien à calculer, la vidéo est assemblée
 procedure TTestVideoRender.TestJoinAfterRanges;
