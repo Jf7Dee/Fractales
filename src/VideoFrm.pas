@@ -1132,6 +1132,8 @@ begin
     R.IsPreview := IsPreview;
     R.Divisor := Divisor;
     R.ScenarioFile := FScenarioFile;
+    R.FirstSegment := 0;  // toute la vidéo, jusqu'à ce que l'interface choisisse une plage
+    R.LastSegment := -1;
     AddInterruptedRender(FInterruptedFile, R);  // retiré quand le rendu aboutit
   end;
   pbProgress.Max := Max(1, FRenderer.FramesTotal);
@@ -1205,6 +1207,8 @@ begin
   Entry.FramesTotal := FRenderer.FramesTotal;
   Entry.FramesDone := FRenderer.FramesDone;
   Entry.FirstFrame := FRenderer.FirstFrame;
+  Entry.RangeFirstFrame := -1;  // toute la vidéo, jusqu'à ce que l'interface choisisse une plage
+  Entry.RangeLastFrame := -1;
   Entry.ErrorMessage := FRenderer.ErrorMessage;
   if FRenderer.IsSucceeded then
     Entry.Outcome := goSucceeded

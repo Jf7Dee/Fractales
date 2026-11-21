@@ -44,6 +44,7 @@ type
     IsPreview: Boolean;
     Divisor: Integer;      // taille de l'aperçu, comme TVideoRenderer ; 0 = automatique
     ScenarioFile: string;  // '' = scénario jamais enregistré
+    FirstSegment, LastSegment: Integer;  // plage de morceaux rendue ; 0 et -1 = toute la vidéo
   end;
 
   TInterruptedRenders = array of TInterruptedRender;
@@ -169,7 +170,8 @@ begin
   for I := 0 to High(Renders) do
     Ini.WriteString(kSectionInterrupted, kKeyInterrupted + IntToStr(I + 1),
       Renders[I].OutputFile + kInterruptedSeparator + IntToStr(Ord(Renders[I].IsPreview)) + kInterruptedSeparator +
-      IntToStr(Renders[I].Divisor) + kInterruptedSeparator + Renders[I].ScenarioFile);
+      IntToStr(Renders[I].Divisor) + kInterruptedSeparator + Renders[I].ScenarioFile + kInterruptedSeparator +
+      IntToStr(Renders[I].FirstSegment) + kInterruptedSeparator + IntToStr(Renders[I].LastSegment));
 end;
 
 {------------------------------------------------------------------------------}
@@ -283,7 +285,7 @@ begin
         for I := 0 to Keys.Count - 1 do
         begin
           Fields.DelimitedText := Ini.ReadString(kSectionInterrupted, Keys[I], '');
-          if (Fields.Count <> 4) or (Fields[0] = '') then
+          if ((Fields.Count <> 4) and (Fields.Count <> 6)) or (Fields[0] = '') then
             Continue;  // ligne abîmée : oubliée
           N := Length(Result);
           SetLength(Result, N + 1);
@@ -291,6 +293,13 @@ begin
           Result[N].IsPreview := Fields[1] = '1';
           Result[N].Divisor := StrToIntDef(Fields[2], 0);
           Result[N].ScenarioFile := Fields[3];
+          Result[N].FirstSegment := 0;  // entrée à 4 champs (ancien format) : toute la vidéo
+          Result[N].LastSegment := -1;
+          if Fields.Count = 6 then
+          begin
+            Result[N].FirstSegment := StrToIntDef(Fields[4], 0);
+            Result[N].LastSegment := StrToIntDef(Fields[5], -1);
+          end;
         end;
       finally
         Ini.Free;

@@ -34,6 +34,7 @@ type
     FramesTotal: Integer;
     FramesDone: Integer;
     FirstFrame: Integer;   // > 0 : génération reprise
+    RangeFirstFrame, RangeLastFrame: Integer;  // plage d'images rendue ; -1 = toute la vidéo
     Outcome: TGenerationOutcome;
     ErrorMessage: string;
   end;
@@ -994,12 +995,15 @@ function GenerationLogText(const Entry: TGenerationLogEntry): string;
 const
   kStamp = 'yyyy-mm-dd hh:nn:ss';
 var
-  Outcome, Scenario, Resumed: string;
+  Outcome, Scenario, Resumed, Range: string;
   Width, Height: Integer;
+  IsPartial: Boolean;
 begin
+  IsPartial := (Entry.RangeFirstFrame >= 0) and (Entry.RangeLastFrame >= 0);
   case Entry.Outcome of
-    goSucceeded: Outcome := 'terminée';
-    goCancelled: Outcome := Format('interrompue à l''image %d', [Entry.FramesDone]);
+    goSucceeded: if IsPartial then Outcome := 'plage terminée' else Outcome := 'terminée';
+    // FramesDone est un compte d'images faites (morceaux déjà présents compris), pas un numéro d'image
+    goCancelled: Outcome := Format('interrompue, %d images faites', [Entry.FramesDone]);
   else
     Outcome := 'échec, ' + Entry.ErrorMessage;
   end;
@@ -1009,12 +1013,15 @@ begin
   Resumed := '';
   if Entry.FirstFrame > 0 then
     Resumed := Format(' (reprise à l''image %d)', [Entry.FirstFrame]);
+  Range := '';
+  if IsPartial then
+    Range := Format('  Plage : images %d à %d', [Entry.RangeFirstFrame, Entry.RangeLastFrame]) + #13#10;
   VideoFormatSize(Entry.VideoFormat, Width, Height);
   Result := Format('%s → %s (%s) : %s', [FormatDateTime(kStamp, Entry.StartTime), FormatDateTime(kStamp, Entry.EndTime),
       DurationText(Round((Entry.EndTime - Entry.StartTime) * SecsPerDay)), Outcome]) + #13#10 +
     '  Scénario : ' + Scenario + #13#10 +
     Format('  Vidéo : %s, %d × %d, %d images%s', [VideoFormatName(Entry.VideoFormat), Width, Height,
-      Entry.FramesTotal, Resumed]) + #13#10;
+      Entry.FramesTotal, Resumed]) + #13#10 + Range;
 end;
 
 {------------------------------------------------------------------------------}

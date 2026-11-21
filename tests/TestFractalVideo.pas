@@ -2235,6 +2235,8 @@ begin
   Result.FramesTotal := 5400;
   Result.FramesDone := 5400;
   Result.FirstFrame := 0;
+  Result.RangeFirstFrame := -1;
+  Result.RangeLastFrame := -1;
   Result.Outcome := goSucceeded;
   Result.ErrorMessage := '';
 end;
@@ -2253,16 +2255,26 @@ begin
   E.StartTime := EncodeDate(2026, 11, 19) + EncodeTime(22, 0, 0, 0);
   E.EndTime := E.StartTime + EncodeTime(0, 4, 5, 0);
   E.FirstFrame := 1200;
-  E.FramesDone := 1350;
+  E.FramesDone := 150;
   E.Outcome := goCancelled;
   E.ScenarioFile := '';
-  CheckEquals('2026-11-19 22:00:00 → 2026-11-19 22:04:05 (4 min 05 s) : interrompue à l''image 1350'#13#10 +
+  CheckEquals('2026-11-19 22:00:00 → 2026-11-19 22:04:05 (4 min 05 s) : interrompue, 150 images faites'#13#10 +
     '  Scénario : (non enregistré)'#13#10 +
     '  Vidéo : Horizontal 16:9, 1920 × 1080, 5400 images (reprise à l''image 1200)'#13#10, GenerationLogText(E),
     'interrompue, reprise');
 
+  E := SampleLogEntry;
+  E.RangeFirstFrame := 150;
+  E.RangeLastFrame := 299;
+  Check(Pos('  Plage : images 150 à 299'#13#10, GenerationLogText(E)) > 0, 'plage notée');
+  Check(Pos(') : plage terminée', GenerationLogText(E)) > 0, 'plage terminée');
+  CheckEquals(0, Pos('Plage', GenerationLogText(SampleLogEntry)), 'toute la vidéo : pas de ligne Plage');
+
+  E.StartTime := EncodeDate(2026, 11, 19) + EncodeTime(22, 0, 0, 0);
   E.EndTime := E.StartTime + EncodeTime(0, 0, 12, 0);
   E.FirstFrame := 0;
+  E.RangeFirstFrame := -1;
+  E.RangeLastFrame := -1;
   E.Outcome := goFailed;
   E.ErrorMessage := 'FFmpeg a échoué';
   CheckEquals('2026-11-19 22:00:00 → 2026-11-19 22:00:12 (12 s) : échec, FFmpeg a échoué',
