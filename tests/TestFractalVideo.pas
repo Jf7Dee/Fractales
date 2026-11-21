@@ -96,6 +96,8 @@ type
     function FindTestFfmpeg: string;
     function SmallScenario: TVideoScenario;
     function StartRender(Scenario: TVideoScenario; IsPreview: Boolean; Divisor: Integer): TVideoRenderer;
+    function RunRange(Scenario: TVideoScenario; const Ffmpeg, OutFile: string;
+      FirstSegment, LastSegment: Integer): TVideoRenderer;
     function FrameBytes(Index: Integer): RawByteString;
   protected
     procedure SetUp; override;
@@ -116,6 +118,12 @@ type
     procedure TestGenerationLogText;
     procedure TestGenerationLogAppends;
     procedure TestRemainingSeconds;
+    procedure TestResumeFillsGap;
+    procedure TestRangeRendersOnlyItsSegments;
+    procedure TestRangeAlreadyDone;
+    procedure TestSegmentStartingInPauseIsRendered;
+    procedure TestJoinAfterRanges;
+    procedure TestPartsWithoutStampAreRefused;
   end;
 
 implementation
@@ -1614,6 +1622,25 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Rend Scenario vers OutFile en morceaux de 5 images, au huitième, de FirstSegment à LastSegment, et attend la fin
+function TTestVideoRender.RunRange(Scenario: TVideoScenario; const Ffmpeg, OutFile: string;
+  FirstSegment, LastSegment: Integer): TVideoRenderer;
+var
+  P: TGradientPalette;
+begin
+  P := TGradientPalette.Create;
+  try
+    P.SetDefault;
+    Result := TVideoRenderer.Create(Scenario, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5,
+      False, False, FirstSegment, LastSegment);
+  finally
+    P.Free;
+  end;
+  Result.WaitFor;
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure TTestVideoRender.TestVideoMaxIter;
 var
   V: TViewport;
@@ -2254,6 +2281,325 @@ begin
   CheckEquals(8, RemainingSeconds(kCost, kResumed, 4, 6, 0, 4, 100), 1e-9,
     'reprise : seules les images calculées depuis comptent');
   CheckEquals(0, RemainingSeconds(kCost, kSteady, 0, 0, 0, 0, 100), 1e-9, 'rien de fait');
+end;
+
+{------------------------------------------------------------------------------}
+
+// Morceaux de 5 images : annulé à la 17e, le rendu garde 3 morceaux ; sans le deuxième, la relance calcule les
+// morceaux 1, 3 et 4 (5 + 5 + 1 images), puis assemble la vidéo
+procedure TTestVideoRender.TestResumeFillsGap;
+var
+  Sc, Read: TVideoScenario;
+  P: TGradientPalette;
+  L: TFractalLocation;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile: string;
+  Before, Done: Integer;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : morceau manquant non vérifié');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'trou.mp4';
+  SysUtils.DeleteFile(OutFile);
+  RemovePartsFolder(OutFile);
+  Sc := SmallScenario;
+  Read := TVideoScenario.Create;
+  L := TFractalLocation.Create;
+  P := TGradientPalette.Create;
+  try
+    P.SetDefault;
+    FCancelAfter := 17;  // les morceaux 0 à 2 sont fermés, le 3 est perdu
+    R := TVideoRenderer.Create(Sc, P, DefaultColorMapping, ekDelphi, Ffmpeg, OutFile, False, Collect, 8, 5);
+    try
+      FCancelTarget := R;
+      R.WaitFor;
+      CheckFalse(R.IsSucceeded, 'annulé');
+    finally
+      FCancelTarget := nil;
+      R.Free;
+    end;
+    FCancelAfter := 0;
+    CheckTrue(FileExists(OutFile + kPartsSuffix + '\morceau0002.mp4'), 'trois morceaux gardés');
+    CheckFalse(FileExists(OutFile + kPartsSuffix + '\morceau0003.mp4'), 'morceau en cours perdu');
+    CheckTrue(SysUtils.DeleteFile(OutFile + kPartsSuffix + '\morceau0001.mp4'), 'morceau 1 retiré');
+    CheckTrue(ReadInterruptedRender(OutFile, Read, L, Done), 'morceaux relus');
+    CheckEquals(10, Done, 'morceaux 0 et 2, où qu''ils soient');
+    Before := FFrames.Count;
+    R := RunRange(Sc, Ffmpeg, OutFile, 0, -1);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(11, FFrames.Count - Before, 'morceaux 1, 3 et 4');
+      CheckEquals(5, R.FirstFrame, 'première image calculée');
+      CheckEquals(21, R.FramesDone);
+      CheckEquals(21, R.FramesInRange);
+      CheckTrue(R.IsWholeVideo);
+    finally
+      R.Free;
+    end;
+    CheckTrue(FileExists(OutFile), 'vidéo assemblée');
+  finally
+    P.Free;
+    L.Free;
+    Read.Free;
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+    RemovePartsFolder(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Morceaux 1 et 2 seulement : 10 images calculées, pas d'assemblage
+procedure TTestVideoRender.TestRangeRendersOnlyItsSegments;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile: string;
+  Before: Integer;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : plage non vérifiée');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'plage.mp4';
+  SysUtils.DeleteFile(OutFile);
+  RemovePartsFolder(OutFile);
+  Sc := SmallScenario;
+  try
+    Before := FFrames.Count;
+    R := RunRange(Sc, Ffmpeg, OutFile, 1, 2);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(10, FFrames.Count - Before, 'morceaux 1 et 2');
+      CheckEquals(10, R.FramesInRange);
+      CheckEquals(10, R.FramesDone);
+      CheckEquals(5, R.FirstFrame, 'première image du morceau 1');
+      CheckFalse(R.IsWholeVideo);
+    finally
+      R.Free;
+    end;
+    CheckFalse(FileExists(OutFile + kPartsSuffix + '\morceau0000.mp4'), 'morceau 0 hors plage');
+    CheckTrue(FileExists(OutFile + kPartsSuffix + '\morceau0001.mp4'), 'morceau 1');
+    CheckTrue(FileExists(OutFile + kPartsSuffix + '\morceau0002.mp4'), 'morceau 2');
+    CheckFalse(FileExists(OutFile + kPartsSuffix + '\morceau0003.mp4'), 'morceau 3 hors plage');
+    CheckFalse(FileExists(OutFile), 'pas d''assemblage');
+  finally
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+    RemovePartsFolder(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Une plage déjà faite ne calcule rien ; des bornes hors de la vidéo sont ramenées à ses morceaux
+procedure TTestVideoRender.TestRangeAlreadyDone;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile: string;
+  Before: Integer;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : plage faite non vérifiée');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'plage-faite.mp4';
+  SysUtils.DeleteFile(OutFile);
+  RemovePartsFolder(OutFile);
+  Sc := SmallScenario;
+  try
+    R := RunRange(Sc, Ffmpeg, OutFile, 1, 2);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    Before := FFrames.Count;
+    R := RunRange(Sc, Ffmpeg, OutFile, 1, 2);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(0, FFrames.Count - Before, 'rien à calculer');
+      CheckEquals(10, R.FramesDone, 'morceaux présents');
+      CheckEquals(0, R.SecondsLeft, 0, 'plus rien à attendre');
+    finally
+      R.Free;
+    end;
+    Before := FFrames.Count;
+    R := RunRange(Sc, Ffmpeg, OutFile, -3, 2);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(5, FFrames.Count - Before, 'ramenée aux morceaux 0 à 2 : seul le 0 manque');
+      CheckEquals(15, R.FramesInRange);
+      CheckEquals(0, R.FirstFrame);
+    finally
+      R.Free;
+    end;
+    Before := FFrames.Count;
+    R := RunRange(Sc, Ffmpeg, OutFile, 3, 99);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(6, FFrames.Count - Before, 'ramenée aux morceaux 3 et 4');
+      CheckEquals(6, R.FramesInRange);
+      CheckFalse(R.IsWholeVideo);
+    finally
+      R.Free;
+    end;
+    CheckFalse(FileExists(OutFile), 'pas d''assemblage hors d''un rendu complet');
+  finally
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+    RemovePartsFolder(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Pause de départ sur les images 0 à 7 : le morceau 1 commence dans la pause, sa première image est calculée
+procedure TTestVideoRender.TestSegmentStartingInPauseIsRendered;
+var
+  Sc: TVideoScenario;
+  S: TVideoStep;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile: string;
+  Before: Integer;
+  IsPause: Boolean;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : morceau en pause non vérifié');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'plage-pause.mp4';
+  SysUtils.DeleteFile(OutFile);
+  RemovePartsFolder(OutFile);
+  Sc := SmallScenario;
+  try
+    S := Sc[0];
+    S.PauseSeconds := 8 / kVideoFps;
+    Sc[0] := S;
+    Sc.PoseAtFrame(4, IsPause);
+    CheckTrue(IsPause, 'image 4 : pause');
+    Sc.PoseAtFrame(7, IsPause);
+    CheckTrue(IsPause, 'image 7 : pause');
+    Sc.PoseAtFrame(8, IsPause);
+    CheckFalse(IsPause, 'image 8 : départ');
+    Before := FFrames.Count;
+    R := RunRange(Sc, Ffmpeg, OutFile, 1, 1);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(5, FFrames.Count - Before, 'images 5 à 9');
+    finally
+      R.Free;
+    end;
+    CheckTrue(Copy(FrameBytes(Before), 1, 4) = #137'PNG', 'image 5 : calculée');
+    CheckTrue(FrameBytes(Before + 1) = FrameBytes(Before), 'image 6 : la pause reprend l''image 5');
+    CheckTrue(FileExists(OutFile + kPartsSuffix + '\morceau0001.mp4'), 'morceau 1');
+  finally
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+    RemovePartsFolder(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Deux plages qui couvrent la vidéo, puis un rendu complet : rien à calculer, la vidéo est assemblée
+procedure TTestVideoRender.TestJoinAfterRanges;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  Ffmpeg, OutFile: string;
+  Before: Integer;
+begin
+  Ffmpeg := FindTestFfmpeg;
+  if Ffmpeg = '' then
+  begin
+    Status('FFmpeg absent : assemblage des plages non vérifié');
+    Exit;
+  end;
+  OutFile := TestTempFolder + 'plages.mp4';
+  SysUtils.DeleteFile(OutFile);
+  RemovePartsFolder(OutFile);
+  Sc := SmallScenario;
+  try
+    R := RunRange(Sc, Ffmpeg, OutFile, 0, 1);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    R := RunRange(Sc, Ffmpeg, OutFile, 2, 4);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+    finally
+      R.Free;
+    end;
+    CheckFalse(FileExists(OutFile), 'pas d''assemblage après une plage');
+    Before := FFrames.Count;
+    R := RunRange(Sc, Ffmpeg, OutFile, 0, -1);
+    try
+      CheckTrue(R.IsSucceeded, R.ErrorMessage);
+      CheckEquals(0, FFrames.Count - Before, 'tous les morceaux sont là');
+      CheckEquals(21, R.FramesDone);
+    finally
+      R.Free;
+    end;
+    CheckTrue(FileExists(OutFile), 'vidéo assemblée');
+    CheckFalse(DirectoryExists(OutFile + kPartsSuffix), 'morceaux supprimés après l''assemblage');
+  finally
+    Sc.Free;
+    SysUtils.DeleteFile(OutFile);
+    RemovePartsFolder(OutFile);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Des morceaux sans tampon peuvent venir de n'importe quel rendu : refusés, et jamais effacés
+procedure TTestVideoRender.TestPartsWithoutStampAreRefused;
+var
+  Sc: TVideoScenario;
+  R: TVideoRenderer;
+  S: TStringList;
+  OutFile, Folder: string;
+  Before: Integer;
+begin
+  OutFile := TestTempFolder + 'sans-tampon.mp4';
+  Folder := OutFile + kPartsSuffix + PathDelim;
+  SysUtils.DeleteFile(OutFile);
+  RemovePartsFolder(OutFile);
+  ForceDirectories(Folder);
+  Sc := SmallScenario;
+  S := TStringList.Create;
+  try
+    S.Text := 'pas une vidéo';
+    S.SaveToFile(Folder + 'morceau0003.mp4');
+    Before := FFrames.Count;
+    R := RunRange(Sc, FindTestFfmpeg, OutFile, 0, -1);
+    try
+      CheckFalse(R.IsSucceeded, 'refusé');
+      CheckTrue(Pos('autre rendu', R.ErrorMessage) > 0, R.ErrorMessage);
+      CheckTrue(Pos('tampon', R.ErrorMessage) > 0, R.ErrorMessage);
+      CheckEquals(0, FFrames.Count - Before, 'rien calculé');
+    finally
+      R.Free;
+    end;
+    CheckTrue(FileExists(Folder + 'morceau0003.mp4'), 'morceau jamais effacé');
+    CheckFalse(FileExists(Folder + 'scenario.txt'), 'pas de tampon inventé');
+  finally
+    S.Free;
+    Sc.Free;
+    RemovePartsFolder(OutFile);
+  end;
 end;
 
 {------------------------------------------------------------------------------}

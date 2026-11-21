@@ -5,7 +5,8 @@
 // Avant le rendu, une image sur kProbeEvery est calculée en petit : ce profil de coût guide l'estimation du temps
 // restant, car une image coûte très différemment selon la profondeur et la part d'intérieur à l'écran.
 // La vidéo est encodée par morceaux, dans un dossier à côté d'elle, puis assemblée : une génération interrompue
-// (mise à jour de Windows, panne, Interrompre) reprend au premier morceau manquant si rien n'a changé depuis.
+// (mise à jour de Windows, panne, Interrompre) ne calcule que les morceaux manquants si rien n'a changé depuis. Une
+// plage de morceaux peut être calculée seule, sur une autre machine : l'assemblage attend un rendu de toute la vidéo.
 
 interface
 
@@ -56,10 +57,16 @@ type
     FFrameProgress: Integer;  // avancement de l'image en cours, 0..kProgressMax
     FSegmentFrames: Integer;
     FFirstFrame: Integer;     // première image calculée : les précédentes viennent des morceaux d'une génération interrompue
+    FFirstSegment, FLastSegment: Integer;  // la plage de morceaux à rendre
+    FFramesInRange: Integer;
+    FIsWholeVideo: Boolean;
+    FPlan: array of Integer;  // les images à calculer dans cette session, dans l'ordre : celles des morceaux absents
+    FPlanCount: Integer;      // Length(FPlan), lu par l'estimation
+    FPlanDone: Integer;       // images de FPlan faites
     FPartsFolder: string;
     FStartTick: Cardinal;
-    FCost: array of Double;  // coût prévu cumulé : FCost[I] = images 0..I-1 ; vide = pas de profil
-    FDoneAt: array of Double;  // secondes écoulées depuis FStartTick à la fin de chaque image calculée
+    FCost: array of Double;  // coût prévu cumulé de FPlan : FCost[J] = images FPlan[0..J-1] ; vide = pas de profil
+    FDoneAt: array of Double;  // secondes écoulées depuis FStartTick à la fin de chaque image de FPlan
     FIsProfiling: Boolean;
     FProbesDone: Integer;
     FProbesTotal: Integer;
@@ -74,6 +81,8 @@ type
     function PartFile(Index: Integer): string;
     function PendingPartFile: string;
     procedure PrepareParts;
+    function HasPartFiles: Boolean;
+    procedure BuildPlan;
     procedure SetPipe(Pipe: TFfmpegPipe);
     procedure OpenPart(var Pipe: TFfmpegPipe);
     procedure ClosePart(var Pipe: TFfmpegPipe; Index: Integer);
@@ -84,20 +93,25 @@ type
   public
     // Le scénario et la palette sont copiés : le fil travaille sur ses propres instances.
     // OutputFile vide : pas de FFmpeg (le récepteur seul reçoit les images).
-    // Divisor : 0 = automatique (kPreviewDivisor en aperçu, 1 sinon). SegmentFrames : 0 = kSegmentFrames
+    // Divisor : 0 = automatique (kPreviewDivisor en aperçu, 1 sinon). SegmentFrames : 0 = kSegmentFrames.
+    // FirstSegment..LastSegment : la plage de morceaux à rendre, -1 = jusqu'au dernier ; hors bornes, ramenée aux
+    // morceaux de la vidéo. Les morceaux déjà présents sont sautés ; la vidéo n'est assemblée que pour une plage
+    // qui la couvre entière
     constructor Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
       Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean;
       Sink: TVideoFrameSink = nil; Divisor: Integer = 0; SegmentFrames: Integer = 0; IsBla: Boolean = False;
-      IsAdaptive: Boolean = False);
+      IsAdaptive: Boolean = False; FirstSegment: Integer = 0; LastSegment: Integer = -1);
     destructor Destroy; override;
     procedure Cancel;  // à préférer à Terminate : arrête aussi FFmpeg, même pendant la finalisation de la vidéo
     property FramesTotal: Integer read FFramesTotal;
-    property FramesDone: Integer read FFramesDone;
+    property FramesDone: Integer read FFramesDone;  // images de la plage faites : morceaux présents, puis calculées
+    property FramesInRange: Integer read FFramesInRange;
+    property IsWholeVideo: Boolean read FIsWholeVideo;  // la plage couvre toute la vidéo : elle sera assemblée
     property RenderCount: Integer read FRenderCount;  // images réellement calculées (pauses réutilisées)
     property IsProfiling: Boolean read FIsProfiling;   // pré-calcul du profil de coût en cours
     property ProbesDone: Integer read FProbesDone;
     property ProbesTotal: Integer read FProbesTotal;
-    property FirstFrame: Integer read FFirstFrame;  // > 0 : génération reprise
+    property FirstFrame: Integer read FFirstFrame;  // première image calculée dans la session ; > 0 : reprise ou plage
     property SecondsLeft: Double read GetSecondsLeft;
     property FrameWidth: Integer read FWidth;
     property FrameHeight: Integer read FHeight;
@@ -137,7 +151,7 @@ function PartsStampDifference(const OutputFile, Stamp: string): string;
 procedure RemovePartsFolder(const OutputFile: string);
 
 // Rendu interrompu vers OutputFile : scénario, palette et coloration relus dans le dossier des morceaux, et nombre
-// d'images déjà faites. Faux si le dossier ou son scénario manque ou est illisible
+// d'images des morceaux présents, où qu'ils soient. Faux si le dossier ou son scénario manque ou est illisible
 function ReadInterruptedRender(const OutputFile: string; Scenario: TVideoScenario; Location: TFractalLocation;
   out FramesDone: Integer): Boolean;
 
@@ -166,7 +180,9 @@ function SetThreadExecutionState(Flags: DWORD): DWORD; stdcall; external kernel3
 
 constructor TVideoRenderer.Create(Scenario: TVideoScenario; Palette: TGradientPalette; const Mapping: TColorMapping;
   Kernel: TEngineKernelType; const FfmpegExe, OutputFile: string; IsPreview: Boolean; Sink: TVideoFrameSink;
-  Divisor, SegmentFrames: Integer; IsBla, IsAdaptive: Boolean);
+  Divisor, SegmentFrames: Integer; IsBla, IsAdaptive: Boolean; FirstSegment, LastSegment: Integer);
+var
+  LastOfVideo: Integer;
 begin
   if (Scenario = nil) or (Palette = nil) then
     raise EArgumentException.Create('TVideoRenderer : scénario ou palette nil');
@@ -192,6 +208,13 @@ begin
   FHeight := Max(2, FHeight div Divisor);
   FFramesTotal := FScenario.TotalFrames;
   FSegmentFrames := IfThen(SegmentFrames > 0, SegmentFrames, kSegmentFrames);
+  LastOfVideo := Max(0, FFramesTotal - 1) div FSegmentFrames;
+  if LastSegment = -1 then
+    LastSegment := LastOfVideo;
+  FFirstSegment := EnsureRange(FirstSegment, 0, LastOfVideo);
+  FLastSegment := EnsureRange(LastSegment, FFirstSegment, LastOfVideo);
+  FIsWholeVideo := (FFirstSegment = 0) and (FLastSegment = LastOfVideo);
+  FFramesInRange := Max(0, Min((FLastSegment + 1) * FSegmentFrames, FFramesTotal) - FFirstSegment * FSegmentFrames);
   if OutputFile <> '' then
     FPartsFolder := OutputFile + kPartsSuffix + PathDelim;
   inherited Create(False);
@@ -224,22 +247,22 @@ end;
 {------------------------------------------------------------------------------}
 
 // L'image en cours compte pour sa part déjà calculée : sans elle, l'estimation monte pendant chaque image et
-// redescend d'un coup à la suivante. Les images reprises d'une génération interrompue ne comptent pas
+// redescend d'un coup à la suivante. Seules comptent les images à calculer dans la session (FPlan) : les morceaux
+// déjà présents n'entrent ni dans le rythme ni dans le reste
 function TVideoRenderer.GetSecondsLeft: Double;
 var
-  Done: Integer;
+  Done, Count: Integer;
   Fraction, Elapsed: Double;
 begin
-  Done := FFramesDone;
+  Done := FPlanDone;
+  Count := FPlanCount;
   Fraction := Min(1, FFrameProgress / kProgressMax);
   Elapsed := (GetTickCount - FStartTick) / 1000;
   Result := 0;
-  if Done < FFirstFrame then
-    Exit;
-  if Length(FCost) > FFramesTotal then
-    Result := RemainingSeconds(FCost, FDoneAt, FFirstFrame, Done, Fraction, Elapsed, kEtaWindowFrames)
-  else if Done - FFirstFrame + Fraction > 0 then
-    Result := Elapsed / (Done - FFirstFrame + Fraction) * (FFramesTotal - Done - Fraction);
+  if Length(FCost) > Count then
+    Result := RemainingSeconds(FCost, FDoneAt, 0, Done, Fraction, Elapsed, kEtaWindowFrames)
+  else if Done + Fraction > 0 then
+    Result := Elapsed / (Done + Fraction) * (Count - Done - Fraction);
 end;
 
 {------------------------------------------------------------------------------}
@@ -284,13 +307,14 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Mesure le coût d'une image sur kProbeEvery, en petit, puis remplit FCost en interpolant entre ces mesures ;
-// une pause ne coûte rien. Faux si le rendu a été interrompu
+// Mesure le coût d'une image sur kProbeEvery parmi celles de FPlan, en petit, puis remplit FCost en interpolant entre
+// ces mesures ; une pause ne coûte rien, sauf en tête de morceau où elle est calculée. Faux si le rendu a été
+// interrompu
 function TVideoRenderer.Profile(Formula: TFractalFormula; Target: TStream): Boolean;
 var
   Probes: array of Integer;
   Costs: array of Double;
-  I, K, LastMove: Integer;
+  I, J, K, LastMove: Integer;
   IsPause: Boolean;
   Pose: TCameraPose;
   Frequency, T0, T1: Int64;
@@ -298,10 +322,11 @@ var
 begin
   Result := True;
   LastMove := -1;
-  for I := FFirstFrame to FFramesTotal - 1 do
+  for J := 0 to High(FPlan) do
   begin
+    I := FPlan[J];
     FScenario.PoseAtFrame(I, IsPause);
-    if not IsPause then
+    if not IsPause or (I mod FSegmentFrames = 0) then
     begin
       if (I mod kProbeEvery = 0) or (Length(Probes) = 0) then
       begin
@@ -341,21 +366,22 @@ begin
   finally
     FIsProfiling := False;
   end;
-  SetLength(FCost, FFramesTotal + 1);
+  SetLength(FCost, Length(FPlan) + 1);
   FCost[0] := 0;
   K := 0;
-  for I := 0 to FFramesTotal - 1 do
+  for J := 0 to High(FPlan) do
   begin
+    I := FPlan[J];
     FScenario.PoseAtFrame(I, IsPause);
     while (K < High(Probes)) and (Probes[K + 1] <= I) do
       Inc(K);
-    if IsPause then
+    if IsPause and (I mod FSegmentFrames <> 0) then
       Cost := 0
     else if (K = High(Probes)) or (I <= Probes[K]) then
       Cost := Costs[K]
     else
       Cost := Costs[K] + (Costs[K + 1] - Costs[K]) * (I - Probes[K]) / (Probes[K + 1] - Probes[K]);
-    FCost[I + 1] := FCost[I] + Cost;
+    FCost[J + 1] := FCost[J] + Cost;
   end;
 end;
 
@@ -375,13 +401,12 @@ end;
 
 {------------------------------------------------------------------------------}
 
-// Reprend les morceaux d'une génération interrompue s'ils viennent du même rendu ; ceux d'un autre rendu sont refusés,
-// sans rien effacer
+// Reprend les morceaux d'une génération interrompue s'ils viennent du même rendu ; ceux d'un autre rendu, ou sans
+// tampon pour le dire, sont refusés, sans rien effacer
 procedure TVideoRenderer.PrepareParts;
 var
   Stamp, Difference: string;
   S: TStringList;
-  Count: Integer;
 begin
   Stamp := RenderStamp(FScenario, FPalette, FMapping, FWidth, FHeight, FSegmentFrames, FIsBla, FIsAdaptive,
     FKernel);
@@ -390,16 +415,11 @@ begin
     raise EVideoEncoderError.CreateFmt('Ces morceaux viennent d''un autre rendu (%s) : %s', [Difference, FPartsFolder]);
   S := TStringList.Create;
   try
-    if FileExists(FPartsFolder + kStampName) then
+    if not FileExists(FPartsFolder + kStampName) then
     begin
-      Count := 0;
-      while FileExists(PartFile(Count)) do
-        Inc(Count);
-      FFirstFrame := Min(Count * FSegmentFrames, FFramesTotal);
-      FFramesDone := FFirstFrame;
-    end
-    else
-    begin
+      if HasPartFiles then
+        raise EVideoEncoderError.CreateFmt('Ces morceaux viennent peut-être d''un autre rendu (tampon %s absent) : %s',
+          [kStampName, FPartsFolder]);
       if not ForceDirectories(FPartsFolder) then
         raise EVideoEncoderError.CreateFmt('Dossier des morceaux impossible à créer : %s', [FPartsFolder]);
       S.Text := Stamp;
@@ -408,6 +428,56 @@ begin
   finally
     S.Free;
   end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// Un morceau terminé dans le dossier, quel que soit son numéro ; le morceau en cours, tronqué, ne compte pas
+function TVideoRenderer.HasPartFiles: Boolean;
+var
+  Found: TSearchRec;
+begin
+  Result := False;
+  if FindFirst(FPartsFolder + 'morceau*.mp4', faAnyFile and not faDirectory, Found) = 0 then
+  try
+    repeat
+      if not SameText(Found.Name, kPendingPartName) then
+        Exit(True);
+    until FindNext(Found) <> 0;
+  finally
+    SysUtils.FindClose(Found);
+  end;
+end;
+
+{------------------------------------------------------------------------------}
+
+// FPlan : les images des morceaux de la plage absents du dossier, dans l'ordre ; celles des morceaux présents comptent
+// déjà comme faites. Sans FFmpeg, toute la plage est à calculer
+procedure TVideoRenderer.BuildPlan;
+var
+  Segment, I, First, Last, Count: Integer;
+begin
+  SetLength(FPlan, FFramesInRange);
+  Count := 0;
+  for Segment := FFirstSegment to FLastSegment do
+  begin
+    First := Segment * FSegmentFrames;
+    Last := Min(First + FSegmentFrames, FFramesTotal) - 1;
+    if (FOutputFile <> '') and FileExists(PartFile(Segment)) then
+      Inc(FFramesDone, Last - First + 1)
+    else
+      for I := First to Last do
+      begin
+        FPlan[Count] := I;
+        Inc(Count);
+      end;
+  end;
+  SetLength(FPlan, Count);
+  if Count > 0 then
+    FFirstFrame := FPlan[0]
+  else
+    FFirstFrame := Min((FLastSegment + 1) * FSegmentFrames, FFramesTotal);  // rien ne manque
+  FPlanCount := Count;  // l'estimation ne lit que ce compte, jamais FPlan
 end;
 
 {------------------------------------------------------------------------------}
@@ -480,7 +550,7 @@ var
   Formula: TFractalFormula;
   Pipe: TFfmpegPipe;
   Frame: TMemoryStream;
-  I: Integer;
+  I, J, Part: Integer;
   Pose: TCameraPose;
   IsPause, HasFrame: Boolean;
 begin
@@ -493,21 +563,30 @@ begin
       Formula := FScenario.CreateFormula;
       if FOutputFile <> '' then
         PrepareParts;
+      BuildPlan;
       if not Profile(Formula, Frame) then
         Exit;
       FFrameProgress := 0;  // la dernière image du profil ne compte pas
       FStartTick := GetTickCount;
-      SetLength(FDoneAt, FFramesTotal);
+      SetLength(FDoneAt, Length(FPlan));
       HasFrame := False;
-      for I := FFirstFrame to FFramesTotal - 1 do
+      Part := -1;
+      for J := 0 to High(FPlan) do
       begin
         if Terminated then
           Break;
-        if (FOutputFile <> '') and (I mod FSegmentFrames = 0) then
+        I := FPlan[J];
+        // chaque morceau recommence : l'image qui le précède n'est peut-être pas calculée dans cette session
+        if I mod FSegmentFrames = 0 then
         begin
-          if Pipe <> nil then
-            ClosePart(Pipe, I div FSegmentFrames - 1);
-          OpenPart(Pipe);
+          HasFrame := False;
+          if FOutputFile <> '' then
+          begin
+            if Pipe <> nil then
+              ClosePart(Pipe, Part);
+            OpenPart(Pipe);
+          end;
+          Part := I div FSegmentFrames;
         end;
         Pose := FScenario.PoseAtFrame(I, IsPause);
         // une pause montre l'étape, déjà rendue par l'image précédente (fin de trajet ou pause)
@@ -523,7 +602,8 @@ begin
         if Pipe <> nil then
           Pipe.WriteFrame(Frame);
         FFrameProgress := 0;
-        FDoneAt[I] := (GetTickCount - FStartTick) / 1000;  // avant le compte : l'estimation lit les images comptées
+        FDoneAt[J] := (GetTickCount - FStartTick) / 1000;  // avant le compte : l'estimation lit les images comptées
+        Inc(FPlanDone);
         Inc(FFramesDone);
       end;
       // interrompu : seul le morceau en cours est perdu, les autres attendent la reprise
@@ -535,10 +615,10 @@ begin
       else
       begin
         if Pipe <> nil then
-          ClosePart(Pipe, (FFramesTotal - 1) div FSegmentFrames);
-        if FOutputFile <> '' then
+          ClosePart(Pipe, Part);
+        if (FOutputFile <> '') and FIsWholeVideo then
           JoinParts;
-        FIsSucceeded := True;  // la vidéo est complète, même si une annulation arrive maintenant
+        FIsSucceeded := True;  // la plage est complète, même si une annulation arrive maintenant
       end;
     except
       on E: Exception do
@@ -732,7 +812,7 @@ const
 var
   Folder: string;
   S, Part: TStringList;
-  I, LocationLine, Segment, Count, Last: Integer;
+  I, LocationLine, Segment, Last: Integer;
 begin
   if (Scenario = nil) or (Location = nil) then
     raise EArgumentException.Create('ReadInterruptedRender : scénario ou lieu nil');
@@ -778,10 +858,9 @@ begin
       on E: Exception do
         Exit;  // illisible : rien à reprendre
     end;
-    Count := 0;
-    while FileExists(Folder + Format(kPartName, [Count])) do
-      Inc(Count);
-    FramesDone := Min(Count * Segment, Scenario.TotalFrames);
+    for I := 0 to (Scenario.TotalFrames - 1) div Segment do
+      if FileExists(Folder + Format(kPartName, [I])) then
+        Inc(FramesDone, Min(Segment, Scenario.TotalFrames - I * Segment));
     Result := True;
   finally
     Part.Free;
