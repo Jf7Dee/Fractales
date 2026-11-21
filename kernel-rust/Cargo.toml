@@ -1,6 +1,6 @@
 [package]
 name = "fractal_kernel"
-version = "0.1.0"
+version = "0.2.0"  # gravée dans la DLL (build.rs) : à monter à chaque livraison
 edition = "2021"
 
 [lib]
@@ -8,6 +8,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wide = "0.7"
+
+[build-dependencies]
+embed-resource = "2.4"   # ressource de version Windows (rc.exe du SDK)
 
 # pas de panic = "abort" : fk_compute_row rattrape les paniques avec catch_unwind
 [profile.release]

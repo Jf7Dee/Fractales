@@ -1014,12 +1014,14 @@ begin
   Installed[3] := 1;
   Form := TAboutForm.Create(nil);
   try
-    Form.Prepare(True, Installed, 'http://localhost/manifeste.ini');
+    Form.Prepare(True, Installed, 'http://localhost/manifeste.ini', 'Noyau Rust : ABI 5', 'Moteur Rust : détail');
     if Form.lblVersion.Caption <> 'Version 0.5.0.1' then
       raise Exception.Create('version de la fenêtre « À propos » : ' + Form.lblVersion.Caption);
+    if (Form.lblKernel.Caption <> 'Noyau Rust : ABI 5') or (Form.lblKernel.Hint <> 'Moteur Rust : détail') then
+      raise Exception.Create('noyau Rust de la fenêtre « À propos » : ' + Form.lblKernel.Caption);
     if not Form.btnCheck.Enabled then
       raise Exception.Create('bouton de recherche grisé alors que la version est connue');
-    Form.Prepare(False, Installed, 'http://localhost/manifeste.ini');
+    Form.Prepare(False, Installed, 'http://localhost/manifeste.ini', '', '');
     if (Form.lblVersion.Caption <> 'Version inconnue') or Form.btnCheck.Enabled then
       raise Exception.Create('version inconnue : texte ou bouton de recherche incorrect');
   finally
@@ -1032,6 +1034,14 @@ begin
     raise Exception.Create('texte d''échec : ' + CheckResultText(ucFailed, 'InternetOpenUrl : erreur réseau 12007'));
   if CheckResultText(ucInvalid, '') <> kUpdateInvalidText then
     raise Exception.Create('texte « manifeste invalide » : ' + CheckResultText(ucInvalid, ''));
+  Installed[1] := 2;
+  Installed[3] := 0;
+  if KernelVersionText(True, 5, True, Installed) <> 'Noyau Rust : version 0.2.0.0, ABI 5' then
+    raise Exception.Create('texte du noyau versionné : ' + KernelVersionText(True, 5, True, Installed));
+  if KernelVersionText(True, 5, False, Installed) <> 'Noyau Rust : ABI 5 (DLL sans numéro de version)' then
+    raise Exception.Create('texte du noyau sans version : ' + KernelVersionText(True, 5, False, Installed));
+  if KernelVersionText(False, 0, False, Installed) <> 'Noyau Rust : non chargé, calcul en Delphi' then
+    raise Exception.Create('texte du noyau absent : ' + KernelVersionText(False, 0, False, Installed));
   FSmokeLog.Add('Fenêtre À propos OK');
 end;
 
@@ -2623,13 +2633,19 @@ var
   HasVersion: Boolean;
   IsUpdateAvailable: Boolean;
   Manifest: TUpdateManifest;
+  Kernel: TRustKernel;
+  HasKernelVersion: Boolean;
+  KernelVersion: TFileVersion;
 begin
   // La recherche demandée ici ne dépend pas du mode : même avec Mode=Aucune, elle propose sans installer
   FUpdateConfig := FSettings.Update;
   HasVersion := TryReadFileVersion(ParamStr(0), FInstalledVersion);
+  Kernel := DefaultRustKernel;
+  HasKernelVersion := Kernel.IsAvailable and TryReadFileVersion(Kernel.FileName, KernelVersion);
   Dlg := TAboutForm.Create(Self);
   try
-    Dlg.Prepare(HasVersion, FInstalledVersion, FUpdateConfig.ManifestUrl);
+    Dlg.Prepare(HasVersion, FInstalledVersion, FUpdateConfig.ManifestUrl,
+      KernelVersionText(Kernel.IsAvailable, Kernel.AbiVersion, HasKernelVersion, KernelVersion), Kernel.Status);
     FIsAboutShowing := True;
     try
       Dlg.ShowModal;

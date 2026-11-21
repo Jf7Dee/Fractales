@@ -12,6 +12,7 @@ type
     imgBanner: TImage;
     lblTitle: TLabel;
     lblVersion: TLabel;
+    lblKernel: TLabel;
     lblStatus: TLabel;
     btnCheck: TButton;
     btnClose: TButton;
@@ -28,14 +29,20 @@ type
     FThread: TUpdateCheckThread;
     procedure CheckDone(Sender: TObject);
   public
-    // Remplit la fenêtre ; à appeler avant ShowModal. Sans version lisible, la recherche est impossible
-    procedure Prepare(HasVersion: Boolean; const Installed: TFileVersion; const ManifestUrl: string);
+    // Remplit la fenêtre ; à appeler avant ShowModal. Sans version lisible, la recherche est impossible.
+    // KernelText : ligne du noyau Rust (KernelVersionText) ; KernelDetail : son infobulle (état du chargement)
+    procedure Prepare(HasVersion: Boolean; const Installed: TFileVersion; const ManifestUrl, KernelText,
+      KernelDetail: string);
     // Vrai si la fenêtre s'est fermée sur une version plus récente : l'appelant propose alors de l'installer
     property IsUpdateAvailable: Boolean read FIsUpdateAvailable;
     property Manifest: TUpdateManifest read FManifest;
   end;
 
 function CheckResultText(CheckResult: TUpdateCheckResult; const ErrorText: string): string;
+// La DLL du noyau Rust fait partie du tout : sa version (ressource du fichier) et son ABI. HasVersion faux : DLL
+// d'avant la ressource de version
+function KernelVersionText(IsLoaded: Boolean; AbiVersion: Cardinal; HasVersion: Boolean;
+  const Version: TFileVersion): string;
 
 implementation
 
@@ -65,7 +72,21 @@ end;
 
 {------------------------------------------------------------------------------}
 
-procedure TAboutForm.Prepare(HasVersion: Boolean; const Installed: TFileVersion; const ManifestUrl: string);
+function KernelVersionText(IsLoaded: Boolean; AbiVersion: Cardinal; HasVersion: Boolean;
+  const Version: TFileVersion): string;
+begin
+  if not IsLoaded then
+    Result := 'Noyau Rust : non chargé, calcul en Delphi'
+  else if HasVersion then
+    Result := Format('Noyau Rust : version %s, ABI %d', [VersionToString(Version), AbiVersion])
+  else
+    Result := Format('Noyau Rust : ABI %d (DLL sans numéro de version)', [AbiVersion]);
+end;
+
+{------------------------------------------------------------------------------}
+
+procedure TAboutForm.Prepare(HasVersion: Boolean; const Installed: TFileVersion; const ManifestUrl, KernelText,
+  KernelDetail: string);
 begin
   FInstalled := Installed;
   FManifestUrl := ManifestUrl;
@@ -74,6 +95,8 @@ begin
     lblVersion.Caption := Format(kVersionFormat, [VersionToString(Installed)])
   else
     lblVersion.Caption := kVersionUnknown;
+  lblKernel.Caption := KernelText;
+  lblKernel.Hint := KernelDetail;
   lblStatus.Caption := '';
   btnCheck.Enabled := HasVersion;
 end;

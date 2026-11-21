@@ -3,7 +3,7 @@ object AboutForm: TAboutForm
   Top = 0
   BorderStyle = bsDialog
   Caption = #192' propos de Fractales'
-  ClientHeight = 188
+  ClientHeight = 206
   ClientWidth = 380
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
@@ -1284,9 +1284,18 @@ object AboutForm: TAboutForm
     ParentFont = False
     Transparent = True
   end
+  object lblKernel: TLabel
+    Left = 12
+    Top = 108
+    Width = 356
+    Height = 15
+    AutoSize = False
+    ParentShowHint = False
+    ShowHint = True
+  end
   object lblStatus: TLabel
     Left = 12
-    Top = 110
+    Top = 128
     Width = 356
     Height = 34
     AutoSize = False
@@ -1294,7 +1303,7 @@ object AboutForm: TAboutForm
   end
   object btnCheck: TButton
     Left = 112
-    Top = 152
+    Top = 170
     Width = 175
     Height = 26
     Caption = 'Rechercher une mise '#224' jour'
@@ -1304,7 +1313,7 @@ object AboutForm: TAboutForm
   end
   object btnClose: TButton
     Left = 293
-    Top = 152
+    Top = 170
     Width = 75
     Height = 26
     Cancel = True

@@ -47,6 +47,10 @@ Puis, dans ce dossier :
 
 Copier `target\i686-pc-windows-msvc\release\fractal_kernel.dll` dans `bin\`, à côté de `Fractales.exe`.
 
+La version de `Cargo.toml` est gravée dans la DLL par `build.rs` (ressource de version Windows, compilée par
+`rc.exe` du SDK Windows) : elle apparaît dans les propriétés du fichier et dans la fenêtre « À propos ». La monter
+à chaque livraison de la DLL.
+
 - `cargo test` tourne en 64 bits (cible par défaut) : il vérifie l'algorithme, dont `perturbed_matches_direct`
   (au moins 98 % de verdicts communs entre la perturbation et le calcul direct, pour Mandelbrot, Tricorn, Burning
   Ship, Multibrot p = 3 et p = 10, et Julia par `fk_compute_row_perturbed2`), `abi_version_is_4`, `diff_abs_cases`,
