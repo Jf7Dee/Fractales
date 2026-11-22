@@ -58,6 +58,21 @@ end;
 
 {------------------------------------------------------------------------------}
 
+// Le nom Windows de cet ordinateur ; vide s'il est illisible
+function LocalComputerName: string;
+var
+  Buffer: array[0..MAX_COMPUTERNAME_LENGTH] of Char;
+  Size: DWORD;
+begin
+  Size := Length(Buffer);
+  if GetComputerName(Buffer, Size) then
+    SetString(Result, Buffer, Size)
+  else
+    Result := '';
+end;
+
+{------------------------------------------------------------------------------}
+
 procedure SetupDialog(Dlg: TForm; const ACaption: string; AWidth, AHeight: Integer);
 begin
   Dlg.Caption := ACaption;
@@ -421,6 +436,9 @@ begin
     for I := 0 to kMaxMachines - 1 do
     begin
       FRows[I].NameEdit := NewEdit(FDialog, 12, 72 + I * 30, 150, Format('Machine %d', [I + 1]));
+      // la première ligne : cet ordinateur, que la reprise reconnaîtra à son nom
+      if (I = 0) and (LocalComputerName <> '') then
+        FRows[I].NameEdit.Text := LocalComputerName;
       FRows[I].SpeedEdit := NewEdit(FDialog, 172, 72 + I * 30, 60, '1');
       FRows[I].SpeedEdit.Tag := I;
       FRows[I].SpeedEdit.OnExit := SpeedExit;
@@ -584,7 +602,7 @@ begin
       FMachineList.Items.Add(Format('%s : images %d à %d', [Machines[I].Name, Machines[I].FirstSegment *
         kSegmentFrames, (Machines[I].LastSegment + 1) * kSegmentFrames - 1]));
     if FMachineList.Items.Count > 0 then
-      FMachineList.ItemIndex := 0;
+      FMachineList.ItemIndex := Max(0, MachineIndexByName(Machines, LocalComputerName));
     FByRange := TRadioButton.Create(FDialog);
     FByRange.Parent := FDialog;
     FByRange.SetBounds(12, 56, 100, 20);
@@ -606,6 +624,7 @@ begin
     FWhole.Checked := Length(Machines) = 0;
     NewLabel(FDialog, 12, 150, 456, 36, 'Les morceaux déjà présents dans le dossier ne sont pas recalculés. ' +
       'La vidéo n''est assemblée que si la plage couvre toute la vidéo.').WordWrap := True;
+    NewLabel(FDialog, 12, 214, 280, 18, 'Cette machine : ' + LocalComputerName);
     Ok := NewButton(FDialog, 303, 210, 80, 'OK', mrNone);
     Ok.OnClick := OkClick;
     Cancel := NewButton(FDialog, 389, 210, 80, 'Annuler', mrCancel);

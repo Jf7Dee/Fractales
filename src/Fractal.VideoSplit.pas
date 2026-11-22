@@ -51,6 +51,10 @@ function ShouldConfirmReplaceParts(IsPreview: Boolean): Boolean;
 // Texte affiché quand un rendu est interrompu ; IsPartial : une plage, non la vidéo entière
 function CancelledCaption(IsPartial: Boolean): string;
 
+// La machine dont le nom est Name (l'ordinateur où l'on reprend), sans tenir compte de la casse ni des espaces autour ;
+// -1 si aucune
+function MachineIndexByName(const Machines: TSplitMachines; const Name: string): Integer;
+
 implementation
 
 const
@@ -231,6 +235,17 @@ begin
     Result := 'Interrompu : « Reprendre des morceaux… » (ou la proposition au prochain démarrage) reprend cette plage.'
   else
     Result := 'Interrompu : relancer la même vidéo reprendra où elle s''est arrêtée.';
+end;
+
+{------------------------------------------------------------------------------}
+
+function MachineIndexByName(const Machines: TSplitMachines; const Name: string): Integer;
+begin
+  if Trim(Name) <> '' then
+    for Result := 0 to High(Machines) do
+      if SameText(Trim(Machines[Result].Name), Trim(Name)) then
+        Exit;
+  Result := -1;
 end;
 
 end.

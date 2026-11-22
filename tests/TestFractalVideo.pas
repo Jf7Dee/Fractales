@@ -153,6 +153,7 @@ type
     procedure TestProfileOnlyTouchesNoParts;
     procedure TestShouldConfirmReplaceParts;
     procedure TestCancelledCaption;
+    procedure TestMachineIndexByName;
   end;
 
 implementation
@@ -2963,6 +2964,25 @@ begin
   CheckTrue(Pos('relancer la même vidéo', CancelledCaption(False)) > 0, 'vidéo entière');
   CheckEquals(0, Pos('relancer', CancelledCaption(True)), 'plage');
   CheckTrue(Pos('Reprendre des morceaux', CancelledCaption(True)) > 0, 'plage');
+end;
+
+{------------------------------------------------------------------------------}
+
+// La machine de repartition.txt qui porte le nom Windows de l'ordinateur, sans tenir compte de la casse ni des espaces
+procedure TTestVideoSplit.TestMachineIndexByName;
+var
+  Machines: TSplitMachines;
+begin
+  SetLength(Machines, 3);
+  Machines[0].Name := 'Machine 1';
+  Machines[1].Name := 'BUREAU-PC';
+  Machines[2].Name := ' Salon ';
+  CheckEquals(1, MachineIndexByName(Machines, 'bureau-pc'), 'casse');
+  CheckEquals(2, MachineIndexByName(Machines, 'SALON'), 'espaces');
+  CheckEquals(-1, MachineIndexByName(Machines, 'PORTABLE'), 'absente');
+  CheckEquals(-1, MachineIndexByName(Machines, ''), 'nom vide');
+  SetLength(Machines, 0);
+  CheckEquals(-1, MachineIndexByName(Machines, 'BUREAU-PC'), 'aucune machine');
 end;
 
 {------------------------------------------------------------------------------}
