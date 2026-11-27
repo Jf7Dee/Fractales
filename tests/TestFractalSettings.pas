@@ -25,6 +25,8 @@ type
     procedure TestCorruptSessionNotLoaded;
     procedure TestSaveSessionToMissingFolderFailsSilently;
     procedure TestInterruptedRenders;
+    procedure TestInterruptedRenderRange;
+    procedure TestInterruptedRenderWithoutRange;
   end;
 
 implementation
@@ -329,6 +331,8 @@ begin
   R.IsPreview := False;
   R.Divisor := 0;
   R.ScenarioFile := 'D:\Scénarios\Plongée.fscn';
+  R.FirstSegment := 0;
+  R.LastSegment := -1;
   AddInterruptedRender(FileName, R);
   R.OutputFile := 'C:\Temp\Fractales apercu.mp4';
   R.IsPreview := True;
@@ -356,6 +360,49 @@ begin
   L := LoadInterruptedRenders(FileName);
   CheckEquals(1, Length(L), 'ligne abîmée oubliée');
   CheckEquals('E:\a.mp4', L[0].OutputFile);
+  SysUtils.DeleteFile(FileName);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Une plage de morceaux survit à l'écriture et à la relecture
+procedure TTestSettings.TestInterruptedRenderRange;
+var
+  FileName: string;
+  R: TInterruptedRender;
+  L: TInterruptedRenders;
+begin
+  FileName := TestTempFolder + 'settings-interrupted-range.ini';
+  SysUtils.DeleteFile(FileName);
+  R.OutputFile := 'E:\Vidéos\Plage.mp4';
+  R.IsPreview := False;
+  R.Divisor := 0;
+  R.ScenarioFile := 'D:\Scénarios\Plage.fscn';
+  R.FirstSegment := 3;
+  R.LastSegment := 7;
+  AddInterruptedRender(FileName, R);
+  L := LoadInterruptedRenders(FileName);
+  CheckEquals(1, Length(L));
+  CheckEquals(3, L[0].FirstSegment);
+  CheckEquals(7, L[0].LastSegment);
+  CheckEquals('D:\Scénarios\Plage.fscn', L[0].ScenarioFile);
+  SysUtils.DeleteFile(FileName);
+end;
+
+{------------------------------------------------------------------------------}
+
+// Une entrée écrite à 4 champs (avant les plages) est relue comme toute la vidéo
+procedure TTestSettings.TestInterruptedRenderWithoutRange;
+var
+  FileName: string;
+  L: TInterruptedRenders;
+begin
+  FileName := TestTempFolder + 'settings-interrupted-norange.ini';
+  WriteText(FileName, '[RendusInterrompus]'#13#10'Rendu1=E:.mp4|0|0|D:.fscn'#13#10);
+  L := LoadInterruptedRenders(FileName);
+  CheckEquals(1, Length(L));
+  CheckEquals(0, L[0].FirstSegment);
+  CheckEquals(-1, L[0].LastSegment);
   SysUtils.DeleteFile(FileName);
 end;
 

@@ -4,7 +4,7 @@ object VideoForm: TVideoForm
   BorderIcons = [biSystemMenu, biMinimize]
   BorderStyle = bsToolWindow
   Caption = 'Vid'#233'o'
-  ClientHeight = 546
+  ClientHeight = 580
   ClientWidth = 760
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
@@ -351,6 +351,24 @@ object VideoForm: TVideoForm
     Caption = 'Revoir l'#39'aper'#231'u'
     TabOrder = 15
     OnClick = btnReplayClick
+  end
+  object btnSplit: TButton
+    Left = 412
+    Top = 546
+    Width = 168
+    Height = 25
+    Caption = 'R'#233'partir...'
+    TabOrder = 17
+    OnClick = btnSplitClick
+  end
+  object btnResumeParts: TButton
+    Left = 584
+    Top = 546
+    Width = 168
+    Height = 25
+    Caption = 'Reprendre des morceaux...'
+    TabOrder = 18
+    OnClick = btnResumePartsClick
   end
   object gbColors: TGroupBox
     Left = 412

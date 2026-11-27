@@ -83,6 +83,8 @@
 		<DCCReference Include="src\Fractal.VideoScenario.pas"/>
 		<DCCReference Include="src\Fractal.VideoEncoder.pas"/>
 		<DCCReference Include="src\Fractal.VideoRender.pas"/>
+		<DCCReference Include="src\Fractal.VideoSplit.pas"/>
+		<DCCReference Include="src\VideoSplitDlg.pas"/>
 		<DCCReference Include="src\VideoFrm.pas">
 			<Form>VideoForm</Form>
 		</DCCReference>
